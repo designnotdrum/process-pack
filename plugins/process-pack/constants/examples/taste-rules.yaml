@@ -1,0 +1,147 @@
+# Worked examples of taste rules — see skills/taste-rules/SKILL.md for the
+# required anatomy (default stance -> applicability gate -> named exceptions
+# -> escape hatch) that every rule below follows.
+#
+# This file is an example, not a schema. Copy it into a real constants file
+# and edit freely; add rules as corrections repeat, remove ones that don't
+# apply to your context.
+
+rules:
+
+  # Adapted from a skill by Marius (no-compat-scaffolding). The applicability
+  # gate below is unchanged from the source: it correctly softens the strong
+  # "roll forward, no scaffolding" stance for repos that have real external
+  # consumers or shipped binaries in the wild.
+  - id: no-compat-scaffolding
+    title: No compatibility scaffolding in single-deployment, pre-1.0 tools
+    default_stance: >
+      Do not introduce, without express in-session permission: compatibility
+      adapters or wrappers around old call signatures; legacy fallback paths
+      ("if the new field is missing, use the old behavior"); repair gates
+      that detect and fix historical states; dual read/write paths for a
+      schema or API transition; deprecated aliases kept "just in case";
+      versioned internal API surfaces (v1/v2) with no external consumer.
+    applicability_gate:
+      condition: >
+        The strong "roll forward, no scaffolding" form applies only once the
+        repo is confirmed single-deployment and pre-1.0. Check all four
+        before relying on the strong form:
+      checks:
+        - "Release status: no version tags or published releases past v0.x."
+        - "Public surface: the API/CLI has no consumers outside the owning team's own machines — no published package, no plugin marketplace listing, no external users."
+        - "Persisted state: no user data exists in the wild that an old binary would need to keep reading after a rollback."
+        - "Deployment model: exactly one live instance exists; there is no side-by-side multi-version deployment."
+      if_any_check_fails: >
+        Treat compatibility as a genuine engineering tradeoff and present the
+        options instead of assuming either direction.
+    named_exceptions:
+      - "Security fixes follow their own rules — never break a shipped security boundary for the sake of tidiness or scaffolding removal."
+      - "Features that haven't shipped yet (introduced within the current change or an unreleased branch) need zero compatibility handling — there is no installed base to protect."
+    migrations_are_one_time_and_forward: >
+      When legacy state genuinely exists (shipped releases, real user
+      databases): migrate it forward once — at startup or in a migration
+      step — to the new form, then delete the legacy reading path. Delete it
+      in the same change when every consumer migrates atomically; when
+      persisted data or version-skipping users make that unsafe, keep the
+      read-and-migrate path temporarily but bounded — state in code and in
+      the change description exactly when it gets removed, and file a task
+      for the removal. A permanent "understands both forms" path is not a
+      migration; it is scaffolding that never dies. The difference between a
+      migration and scaffolding is the documented removal criterion.
+    done_means_deleted: >
+      When removing a pattern, done means deleted: search for remaining
+      references, aliases, feature gates, and legacy tests before declaring
+      the removal complete. Legacy tests for removed behavior are removed
+      with it, not kept passing against a shim.
+    escape_hatch: >
+      Adding compatibility scaffolding anyway requires express in-session
+      permission — state what would break without it, for whom, and for how
+      long. "A hypothetical old client might exist" does not meet the bar.
+    standing_review_response: >
+      When an automated reviewer flags a "breaking change" or requests a
+      compatibility adapter: evaluate against deployment reality first — who
+      actually runs an old version of this? For a confirmed
+      single-deployment, pre-1.0 tool the answer is usually nobody. Reply
+      with that reasoning (who was checked, what the applicability gate
+      found) instead of silently adding the adapter, and instead of silently
+      dismissing the comment without a reply.
+
+  - id: plain-language-writing
+    title: Write in plain, concrete language — no self-coined jargon
+    default_stance: >
+      Do not invent a name for a concept and then refer back to it as if it
+      were established shorthand ("the ratchet", "Move 1", "the loop
+      pattern") inside prose meant for a reader who wasn't in the room when
+      it was coined. Say the plain thing directly instead of pointing at a
+      private label for it.
+    applicability_gate:
+      condition: "Applies to anything a reader outside this session will read:"
+      checks:
+        - "External-facing text: PR descriptions, ticket comments, docs, commit messages, design write-ups."
+        - "Any text a delegate or a different session will consume without the coining conversation attached."
+    named_exceptions:
+      - "Established, widely-known technical terms are not self-coined jargon — use the field's real name for a real thing."
+      - "A glossary section that explicitly defines a term before using it is not the violation this rule targets; the violation is unlabeled reuse."
+    escape_hatch: >
+      If a person explicitly asks for a coined shorthand in this session (a
+      project codename, a running joke, a deliberately named pattern), use
+      it for that session — it still doesn't travel into external-facing
+      text without being defined there too.
+
+  - id: merge-commits-not-squash
+    title: Merge with real merge commits — never squash
+    default_stance: >
+      Land approved work with a real merge commit that preserves the
+      branch's individual commits. Do not squash-merge.
+    applicability_gate:
+      condition: "Applies to every merge of reviewed work into a shared branch, in every repo, regardless of how many commits the branch has."
+      checks:
+        - "The merge tool or command supports a non-squash merge strategy."
+    named_exceptions:
+      - "None by default — this is a standing preference, not a situational one."
+    escape_hatch: >
+      Squash only with express, in-session permission for that specific
+      merge.
+    standing_review_response: >
+      When a platform default or an automated suggestion proposes a squash
+      merge: override it explicitly to a real merge commit rather than
+      accepting the default silently.
+
+  - id: reuse-before-invent
+    title: Reuse existing patterns before inventing a new component
+    default_stance: >
+      Before writing a new helper, test utility, abstraction, or component,
+      search the codebase for one that already does the job or something
+      close to it. Conform to the existing pattern rather than introducing a
+      novel one that solves the same problem a different way.
+    applicability_gate:
+      condition: "Applies whenever the task could plausibly be solved by something already in the codebase — most feature work, most test scaffolding, most utility code."
+      checks:
+        - "A search for the capability (by name, by behavior, by the problem it solves) turns up an existing implementation, even a partial one."
+    named_exceptions:
+      - "The existing pattern is demonstrably wrong for the new case, with the reason stated — not just a preference for a different approach."
+      - "The existing pattern is itself flagged for removal or is mid-migration to a replacement — follow the replacement, not the thing being retired."
+    escape_hatch: >
+      Introducing a genuinely new pattern instead of reusing an existing one
+      requires stating why the existing one doesn't fit and getting explicit
+      in-session agreement before building it.
+
+  - id: hookify-the-verifiable
+    title: Prefer a deterministic hook over prompt guidance for anything a script can verify
+    default_stance: >
+      When a rule's violation can be checked mechanically (a grep, a path
+      comparison, a diff scan, a status code), implement it as a hook or
+      script gate rather than relying on a prompt instruction to be
+      remembered and followed correctly every time.
+    applicability_gate:
+      condition: "Applies when the check is objective and computable from the state available at the moment of the action (the command about to run, the diff about to be committed, the files about to be touched)."
+      checks:
+        - "The condition can be stated as a pass/fail test, not a judgment call."
+        - "The information needed to check it is available at the point of interception — no outside judgment or missing context required."
+    named_exceptions:
+      - "Judgment calls that need context beyond the immediate action (weighing tradeoffs, interpreting intent) stay as prompt guidance — a hook can verify a fact, not make a judgment call."
+    escape_hatch: >
+      Skipping the hook and relying on prompt guidance alone for a verifiable
+      rule requires an explicit, stated reason in-session (for example, the
+      check would need infrastructure that doesn't exist yet) — not just
+      convenience.
