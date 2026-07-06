@@ -88,6 +88,36 @@ convenience:
    "Choose file," and it renders identically to the served case. This is the
    path to test if you're verifying a build offline.
 
+## Watching and publishing automatically
+
+`watch-publish.sh` in this directory closes the loop between "the board
+changed" and "the person following along remotely can see the new state,"
+without anyone re-running a build and a publish step by hand on every
+transition:
+
+```bash
+./watch-publish.sh --board /path/to/board.json --publish-cmd '<command> {file}'
+```
+
+- It watches the given `board.json`, and whenever its content actually
+  changes, copies it into `public/board.json`, runs `pnpm build`, and runs
+  `--publish-cmd` against the rebuilt `dist/index.html` (the literal token
+  `{file}` in the command is replaced with that file's path).
+- It has no idea what "publish" means — the exact command is supplied by
+  whatever is starting it (an orchestrator resolving the channel named in
+  personal constants; see the `lane-board` skill), never hardcoded here.
+  With no command given, pass `--dry-run` and it still rebuilds, printing
+  the file's path instead of handing it to anything.
+- It self-quiesces: once the board's own `updatedAt` has gone idle for more
+  than `--idle-hours` (default 24), it stops polling and exits instead of
+  running forever against a session that already ended. This reads the
+  board's real timestamp, not process uptime — see the `lane-board` skill's
+  rule that every board timestamp is a real clock read.
+- `--once` runs a single check-and-maybe-publish cycle instead of looping
+  (useful for a cron-style invocation or for testing); `--dry-run` skips the
+  actual publish call while still exercising the idle check, the
+  change-detection, and the rebuild. `--help` prints the full option list.
+
 ## Design notes
 
 - **No drag-and-drop editing.** This is a read-only viewer — board.json is

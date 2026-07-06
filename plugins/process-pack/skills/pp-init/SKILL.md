@@ -54,11 +54,43 @@ specific name, account, or repo-specific detail, that's the two-layer
 rule being violated somewhere else — flag it, don't silently work around
 it by also duplicating the fact into a constants file.
 
-## Personal interview (≤10 questions)
+## Infer-First: Mine Before You Ask
+
+Whenever this interview is pointed at one or more actual repos — rather than
+run with nothing to look at yet — mine what's inferable from them before
+asking a single question. Whatever can be inferred, lead with it: present
+every mined finding as a prefilled default, labeled as inferred, for the
+person to confirm or correct, rather than asking the question cold. A
+question asked blind when the repo already had the answer sitting in it is a
+worse interview than one that opens with "here's what was found."
+
+Mine, per repo pointed at:
+
+- **Git identities and remotes.** The repo's own git config (`user.name`,
+  `user.email`) and its configured remotes (which host, which account/org the
+  remote path names). Prefills the matching context's identity questions
+  below instead of asking them cold.
+- **Tracker references.** Recent commit messages, change-request titles, and
+  branch names, scanned for a recurring reference pattern — an issue-key
+  format, a tracker CLI already configured in the environment. Prefills the
+  tool-mapping question below.
+- **CI check names.** The names of jobs/checks defined in CI workflow files
+  today. Bring the full list as candidates for the never-wait question in the
+  repo interview — mining surfaces names, a human still says which of them
+  are actually quota-dead; it is not an auto-classification.
+- **Lint/format configuration.** Whether a linter or formatter config already
+  exists, and what it enforces. Its presence (or absence) is itself a partial
+  answer to the repo interview's gotcha and convention questions.
+- **Existing docs.** Anything already covering onboarding, architecture, or
+  contribution process, read before asking a question a doc already answers.
+
+## Personal interview (≤11 questions)
 
 Ask these, adapting wording to what you already know from the repo/session
 you're in — skip any question whose answer is already evident and confirm
-instead of re-asking:
+instead of re-asking. Where mining (above) found a prefilled default, present
+it as the default and ask for confirmation or correction rather than asking
+cold:
 
 1. What contexts do you operate under (for example: a personal context
    and a separate one issued by an organization you work for)? For each,
@@ -86,6 +118,15 @@ instead of re-asking:
 10. Any standing communication preferences an orchestrator acting on your
     behalf should always apply (tone, when to interrupt vs. batch
     updates, how it should handle long-running async work)?
+11. For each context, what do you use for tickets, docs, and comms — and
+    what channel do you publish through when something needs to be viewed
+    outside this conversation? Offer the standing publishing menu: a local
+    file (always available, no setup required), an artifact rendered inside
+    a running assistant session (only applies there), a single-file share
+    host with a size cap, an agent-oriented instant-publish service (a free
+    tier with a short expiry, or a permanent tier through an API key), or a
+    fully custom command. Record whichever applies per context, defaulting
+    to the local-file option when nothing else is configured or wanted.
 
 ## Org interview (≤10 questions)
 
@@ -108,18 +149,22 @@ instead of re-asking:
 
 ## Repo interview (≤10 questions)
 
-Before asking, scan what you can: CI workflow files, package/build
+Before asking, mine what's inferable (see "Infer-First: Mine Before You
+Ask," above): git identities and remotes, tracker references in commit/PR/
+branch history, CI workflow check names, lint/format configs, package/build
 scripts, existing docs, and recent PR history. Bring a draft list of
-gotchas, checks, and stubs you already spotted to the interview instead
-of asking blind — ask to confirm/correct/extend what you found, not to
-generate it from nothing.
+gotchas, checks, stubs, and tool-mapping candidates you already found to the
+interview instead of asking blind — ask to confirm/correct/extend what you
+found, not to generate it from nothing.
 
 1. What recurring gotchas trip up a fresh contributor or agent here?
    (List each with a one-line description and, if you have one, a
    pointer to where it's evident.)
 2. Are any CI checks known to be quota-dead, rate-limited, or otherwise
    unable to resolve on a useful timeline regardless of the change's
-   correctness? Name each and what should happen when it's pending.
+   correctness? Bring the CI check names found while mining as candidates —
+   mining surfaces names, it doesn't verdict them — and name each one
+   confirmed, plus what should happen when it's pending.
 3. Does this repo use local-only stubs or mocks that must never reach a
    real commit? What marks them (a comment tag, a filename convention, a
    flag)?
@@ -183,5 +228,8 @@ When an interview finishes, report:
 - The result of schema validation (pass, or what's still missing).
 - Any answer you refused to write into constants because it was actually
   skill-layer, and where you pointed it instead.
+- Which answers came from mining — presented as a prefilled default and then
+  confirmed or corrected — versus asked fresh with nothing to go on, so the
+  person can see what the interview figured out on its own.
 - Any correction-miner candidates produced, clearly separated from the
   interview output above and marked as unadopted.

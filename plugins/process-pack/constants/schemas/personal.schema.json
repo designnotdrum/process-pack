@@ -116,6 +116,56 @@
           "preference": { "type": "string", "description": "The preference itself, stated as a rule." }
         }
       }
+    },
+    "publishing": {
+      "$ref": "#/$defs/publishing_channel",
+      "description": "Default channel a skill uses whenever it needs to publish something (a rendered board, a research index, a review) for a person to view outside this conversation. Applies whenever no more specific `tool_mapping` entry for the active context overrides it."
+    },
+    "tool_mapping": {
+      "type": "array",
+      "description": "Which concrete tool this person uses for each work-tracking surface, per operating context — so a skill that files or tracks work reads this instead of defaulting to whichever CLI happens to be on hand. One entry per context named in `contexts` above; a context with no entry here falls back to the top-level `publishing` field for publishing and has no tracked default for the others.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["context"],
+        "properties": {
+          "context": { "type": "string", "description": "Which context (by name, from `contexts`) this mapping applies to." },
+          "tickets": { "type": "string", "description": "The tracker of record for filing and reading work items in this context, and how it's reached (e.g. via a specific CLI rather than its web UI)." },
+          "docs": { "type": "string", "description": "Where design docs and specs are written and read in this context." },
+          "comms": { "type": "string", "description": "Where status updates and questions are posted in this context, if anywhere beyond direct conversation." },
+          "publishing": {
+            "$ref": "#/$defs/publishing_channel",
+            "description": "Overrides the top-level `publishing` field for this context specifically, if this context needs to publish differently (e.g. one context allows an external channel, another never leaves internal systems)."
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "publishing_channel": {
+      "type": "object",
+      "description": "A pluggable publishing channel. A skill never names a specific one of these in its own text — it reads this block and degrades to the local-file floor when the block is absent or `channel` is \"none\".",
+      "additionalProperties": false,
+      "properties": {
+        "channel": {
+          "type": "string",
+          "enum": ["none", "local_file", "claude_artifact", "subspace_html_share", "heredotnow", "custom_command"],
+          "description": "\"none\" (or omitting this block) always falls back to a local file with its path printed — the zero-dependency floor every skill can rely on with no configuration at all. \"claude_artifact\" only applies inside a session of the assistant product that offers it. \"subspace_html_share\" publishes a single self-contained file and caps out around 1MB. \"heredotnow\" is agent-oriented instant publishing (an installable CLI skill or an API); see `heredotnow_mode` for its two tiers. \"custom_command\" runs whatever command this person supplies."
+        },
+        "custom_command": {
+          "type": ["string", "null"],
+          "description": "Required when channel is \"custom_command\": the exact command template to run to publish a file (e.g. one that takes a file path and prints back the resulting URL)."
+        },
+        "heredotnow_mode": {
+          "type": "string",
+          "enum": ["anonymous", "api_key"],
+          "description": "Only meaningful when channel is \"heredotnow\". \"anonymous\" is the free tier (published pages expire after 24h); \"api_key\" makes the publish permanent, using a key looked up via a credentials tool at the point of use, never stored here."
+        },
+        "fallback_note": {
+          "type": "string",
+          "description": "Optional standing note on what the local-file fallback should look like for this person (a preferred directory, a naming convention) — used whenever the configured channel is absent or fails."
+        }
+      }
     }
   }
 }
