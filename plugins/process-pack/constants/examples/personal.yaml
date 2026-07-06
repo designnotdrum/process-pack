@@ -13,25 +13,25 @@ contexts:
   - name: personal
     description: Personal projects, side builds, and anything not owned by an employer.
     git_identity:
-      name: Nick Mason
+      name: Jordan Example
       email: jordan@personal.example
-      host_account: designnotdrum
+      host_account: jordan-personal
     runtime_config_dir: ~/.claude
 
   - name: work
     description: Employer-owned repos and tasks.
     git_identity:
-      name: Nick Mason
+      name: Jordan Example
       email: jordan@employer.example
       host_account: jordan-work
-    runtime_config_dir: ~/.claude-pikl
+    runtime_config_dir: ~/.claude-work
 
 account_walls:
   - name: work-config-runtime-billing
     kind: billing
     owning_context: work
     rule: >-
-      The work runtime config directory (~/.claude-pikl) bills the employer
+      The work runtime config directory (~/.claude-work) bills the employer
       account. Never launch it for personal tasks, even when it would be
       convenient (e.g. it's already running).
     on_violation_risk: >-
@@ -71,7 +71,7 @@ model_tiers:
 merge_policy:
   strategy: merge_commit
   squash_allowed: false
-  commit_trailer: "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+  commit_trailer: "Co-Authored-By: Example Agent <agent@example.com>"
   review_triage_required: true
 
 communication_preferences:
