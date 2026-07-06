@@ -75,6 +75,8 @@ merge_policy:
   review_triage_required: true
 
 communication_preferences:
+  - topic: visual review artifacts
+    preference: deliver as a single HTML gallery page (local path or published single-file share), never loose image files — the reviewer's client does not render sent images inline
   - topic: async work
     preference: >-
       Background-watching long-running work is the orchestrator's job.
