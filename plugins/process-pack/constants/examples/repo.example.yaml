@@ -75,3 +75,12 @@ standing_review_responses:
       Single-deployment repos don't carry a public API's migration cost.
       An adapter here would be unremovable scaffolding with no removal
       criterion — permanent, not temporary.
+
+adversarial_pre_merge_review:
+  reviewer_identity: >-
+    this repo's designated red-team CLI agent, run as a fully separate
+    process/session from whatever authored the change — never the
+    authoring agent re-invoked in a new context window
+  extra_risk_criteria:
+    - "any change to the shared authentication/session middleware (`src/common/auth/`)"
+    - "any change to the release/publish script that ships a build to this repo's deploy path"

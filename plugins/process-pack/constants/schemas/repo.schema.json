@@ -102,6 +102,22 @@
           "rationale": { "type": "string", "description": "Why this repo's policy overrides the reviewer's default suggestion." }
         }
       }
+    },
+    "adversarial_pre_merge_review": {
+      "type": "object",
+      "description": "This repo's configuration for the verification-gates adversarial-pre-merge-review gate: who performs the independent review, and any risk criteria this repo adds on top of the pack's base list (deploy-path, security-adjacent, data-migration, explicitly-flagged).",
+      "additionalProperties": false,
+      "properties": {
+        "reviewer_identity": {
+          "type": "string",
+          "description": "The independent agent/tool that performs the adversarial pass for this repo. Must name a genuinely different agent/tool than whatever authors changes here — never the authoring agent/tool re-invoked in a fresh context."
+        },
+        "extra_risk_criteria": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Additional conditions, on top of the pack's base risk criteria, that trigger the mandatory pre-merge adversarial review for this repo."
+        }
+      }
     }
   }
 }

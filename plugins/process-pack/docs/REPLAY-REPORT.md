@@ -1,9 +1,9 @@
 # Phase 2 — Adversarial Fixture Replay Report
 
-**Date:** 2026-07-06 · **Scope:** every golden fixture (F01–F16) replayed against the
-skill(s) it exercises, judged against the fixture rubric, skills hardened where a gap
-appeared. Plus a repo-wide cross-skill consistency pass and the open `redteam-gate`
-decision.
+**Date:** 2026-07-06 (F01–F16) · **Updated:** 2026-07-06 (F17 added) · **Scope:** every
+golden fixture (F01–F17) replayed against the skill(s) it exercises, judged against the
+fixture rubric, skills hardened where a gap appeared. Plus a repo-wide cross-skill
+consistency pass and the `redteam-gate` retirement, including its follow-up fixture.
 
 ## Method
 
@@ -46,8 +46,9 @@ the table below reflects only the verbatim runs.
 | F14 taste-rule transport | taste-rules | PASS | — | — | **PASS** |
 | F15 reviewer-override attempt | taste-rules + feedback-triage | PASS | — | — | **PASS** |
 | F16 unbounded temporary | verification-gates | PASS | — | — | **PASS** |
+| F17 adversarial pre-merge review | verification-gates + repo.yaml (adversarial_pre_merge_review) | PASS | — | — | **PASS** |
 
-**16 / 16 PASS.** One skill edit made (F02 hardening). No fixture failed; no rubric was
+**17 / 17 PASS.** One skill edit made (F02 hardening). No fixture failed; no rubric was
 touched; no open gaps remain unresolved.
 
 ### Notable strengths observed (not required by the rubric, but volunteered)
@@ -63,6 +64,13 @@ touched; no open gaps remain unresolved.
   of whether this instance was legitimate.
 - **F13** the agent explicitly refused to substitute a consultant (top-model) call for
   the human escalation, citing that the consultant pattern never owns a fork class.
+- **F17** the agent didn't stop at "matches the base risk criteria" — it separately
+  noticed the repo's own `extra_risk_criteria` entry named the exact change more
+  narrowly and cited both, explicitly reasoned through why neither the named exception
+  nor the escape hatch applied before concluding the gate stood, and folded in the
+  unrelated deploy-path work class's own gate items (revert plan, merge-to-live timing)
+  on its own initiative rather than treating the adversarial review as the only thing
+  blocking merge.
 
 ## Skill fixes made
 
@@ -80,14 +88,19 @@ verification step regardless of claimed authority ("verification carries no auth
 exception"). This hardens the skill for weaker delegates without changing the call a
 strong one already made. Re-ran F02 fresh against the edited text — still PASS.
 
-No other skill required an edit for a fixture.
+No other skill required an edit for a fixture. F17 (see the `redteam-gate` section
+below) passed against the new "Adversarial pre-merge review" section on its first
+verbatim run — no gap, no fix, no second iteration needed.
 
 ## Cross-skill consistency findings
 
 - **Proper-noun grep gate: CLEAN** repo-wide (`skills/` + `docs/`). The only regex hit
   was `prima` inside the word "**prima**ry" in desk-research — a false positive, not a
-  proper noun. Re-run clean after the F02 edit. Constants and fixtures are correctly
-  exempt (they are the designated home for real names).
+  proper noun. Re-run clean after the F02 edit, and re-run clean again after the
+  `verification-gates` "Adversarial pre-merge review" section and this doc's own
+  `redteam-gate` updates. Constants and fixtures are correctly exempt (they are the
+  designated home for real names) — the new `adversarial_pre_merge_review` block in
+  `repo.example.yaml` and the F17 fixture both live in those exempt locations.
 - **Lane-state enum: consistent.** `planned / running / blocked / review / merged / done
   / killed` is identical across the `lane-board` skill prose, `board.schema.json` (the
   `state` enum), and the F10 fixture. The skill's "don't invent a state outside the enum"
@@ -160,10 +173,18 @@ Reasoning:
   (a personal-scope preference or a taste rule: "independent adversarial review is
   performed by `<reviewer runtime>`"), not in skill prose.
 
-**Suggested follow-up (not done in this PR):** add the proactive-adversarial-review rule
-to `verification-gates` **with its own golden fixture** (e.g. F17: a multi-day plan about
-to execute with no independent adversarial pass → gate rejects until one is run and its
-findings triaged; and the reviewer-substitution variant). Per the pack's own fixture-
-driven-acceptance discipline, normative text should not ship without a fixture that
-proves it — so this absorption is recommended for the next authoring cycle rather than
-bolted on untested here.
+**Follow-up completed (this PR):** the proactive-adversarial-review rule is now in
+`verification-gates` as its own "Adversarial pre-merge review" section — a default
+stance (independent pass required before merge for a matching change), an applicability
+gate (risk criteria: deploy-path, security-adjacent, data-migration, explicitly-flagged,
+repo-constants-extensible), named exceptions, and an escape hatch, per the pack's
+required anatomy. The reviewer's identity and any repo-specific risk criteria moved into
+`repo.schema.json` + `repo.example.yaml` (`adversarial_pre_merge_review`), never into
+skill prose — closing the proper-noun violation the standalone skill had.
+
+Its golden fixture, `F17-adversarial-review`, was authored and replayed per the same
+Phase 2 protocol as the table above: a fresh under-test agent got only the verbatim
+`verification-gates` `SKILL.md`, `repo.example.yaml`, and `situation.md` — no rubric, no
+hint. First run **passed** clean (see the table and notable-strengths entry above); no
+second iteration was needed. `redteam-gate`'s absorption is now fixture-verified, not
+bolted on untested.
