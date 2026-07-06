@@ -1,0 +1,98 @@
+# process-pack constants — personal scope (worked example)
+#
+# Schema: ../schemas/personal.schema.json
+#
+# This is a real, filled example: the pack owner's own setup. Per the pack's
+# two-layer rule, this is the ONE place person-specific data belongs — skills
+# stay generic, this file carries the specifics. Constants never contain
+# secrets: names and labels only, no tokens/keys/passwords.
+
+version: "1.0"
+
+contexts:
+  - name: personal
+    description: Personal projects, side builds, and anything not owned by an employer.
+    git_identity:
+      name: Nick Mason
+      email: jordan@personal.example
+      host_account: designnotdrum
+    runtime_config_dir: ~/.claude
+
+  - name: work
+    description: Employer-owned repos and tasks.
+    git_identity:
+      name: Nick Mason
+      email: jordan@employer.example
+      host_account: jordan-work
+    runtime_config_dir: ~/.claude-pikl
+
+account_walls:
+  - name: work-config-runtime-billing
+    kind: billing
+    owning_context: work
+    rule: >-
+      The work runtime config directory (~/.claude-pikl) bills the employer
+      account. Never launch it for personal tasks, even when it would be
+      convenient (e.g. it's already running).
+    on_violation_risk: >-
+      Stop; use the personal config dir instead, or ask before proceeding
+      if a personal task genuinely needs a work-side capability.
+
+  - name: analytics-org-per-side
+    kind: account_scope
+    rule: >-
+      Each context has its own analytics org/project. A task's analytics
+      queries must stay on that context's org — never mix personal-project
+      analytics with the employer's analytics org, in either direction.
+    on_violation_risk: >-
+      Stop and confirm which org the active session is bound to before
+      running any query; switch orgs explicitly rather than assuming.
+
+  - name: design-reference-tool-subscription
+    kind: tool_subscription
+    owning_context: personal
+    rule: >-
+      Design-reference tool subscriptions (e.g. a personal design-tool
+      account) are personal. When a work-side runtime needs the same
+      capability, copy the configuration across — never bridge the
+      running instance from one context into the other.
+
+model_tiers:
+  trivial: haiku
+  standard: sonnet
+  judgment: opus
+  consultant: >-
+    Single, targeted calls to the top-of-line model at named decision
+    points only (architecture contract wording, candidate-direction
+    synthesis, incident forensics summary) — never as the resident
+    orchestrator. Delegates default to standard/trivial; only escalate to
+    judgment or consultant for an explicit reason.
+
+merge_policy:
+  strategy: merge_commit
+  squash_allowed: false
+  commit_trailer: "Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
+  review_triage_required: true
+
+communication_preferences:
+  - topic: async work
+    preference: >-
+      Background-watching long-running work is the orchestrator's job.
+      When async work is kicked off (subagents, background builds, cron),
+      monitor it and report back; never ask the human to check in or ping.
+
+  - topic: delegate model selection
+    preference: >-
+      Every dispatch names its tier explicitly (trivial/standard/judgment/
+      consultant). Never default a delegate to the top-of-line model out
+      of convenience — that budget is reserved for named judgment moments.
+
+  - topic: writing style
+    preference: >-
+      Plain, concrete, reader-first prose. No self-coined jargon that gets
+      referred back to as though it were established terminology.
+
+  - topic: review handling
+    preference: >-
+      Address automated code-review comments unprompted. A PR isn't done
+      until its review comments are triaged, not just until checks are green.

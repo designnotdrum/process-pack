@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://process-pack/schemas/org.schema.json",
+  "title": "org",
+  "description": "Per-organization constants: where autonomy stops and who/what gets pulled in, compliance boundaries, and billing ownership above the level of any single repo. Names and labels only — never secrets.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "escalation_targets"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Schema version this file was written against, e.g. \"1.0\"."
+    },
+    "org_name": {
+      "type": "string",
+      "description": "Label for the org/organization this file describes. Optional — omit if a single file covers a generic default."
+    },
+    "escalation_targets": {
+      "type": "array",
+      "description": "Fork classes that always escalate to a human rather than being resolved autonomously, and who/where to escalate to.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["trigger_class", "target"],
+        "properties": {
+          "trigger_class": {
+            "type": "string",
+            "description": "The named class of fork that always escalates, e.g. an architecture-contract decision, a production-data mutation, removing a user-facing control, spend outside a declared budget, a root-cause verdict that contradicts the ticket, or a wall crossing."
+          },
+          "target": { "type": "string", "description": "Who or what channel/role receives the escalation for this trigger class." },
+          "channel": { "type": "string", "description": "How the escalation is delivered (e.g. a named channel type, a ticket comment, a direct message) without naming a specific tool instance." }
+        }
+      }
+    },
+    "compliance_walls": {
+      "type": "array",
+      "description": "Org-wide constraints skills must never route around: data handling, licensing, access-scope rules.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "rule"],
+        "properties": {
+          "name": { "type": "string", "description": "Short label for the constraint." },
+          "rule": { "type": "string", "description": "The rule in one sentence." },
+          "applies_to": { "type": "string", "description": "What this constraint governs: a data class, a repo class, a role, etc." }
+        }
+      }
+    },
+    "billing_boundaries": {
+      "type": "array",
+      "description": "Which party pays for which shared/org-scoped runtime or tool, beyond what any one person's wall already covers.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["resource", "payer", "rule"],
+        "properties": {
+          "resource": { "type": "string", "description": "The runtime, seat, or tool class this boundary covers." },
+          "payer": { "type": "string", "description": "Which org/entity is the correct payer for this resource." },
+          "rule": { "type": "string", "description": "The standing rule for when this resource may be invoked, and by whom." }
+        }
+      }
+    },
+    "protected_branches_or_repos": {
+      "type": "array",
+      "description": "Org-wide repo/branch classes nobody pushes to directly, independent of any single repo's own protected-paths list.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pattern", "rule"],
+        "properties": {
+          "pattern": { "type": "string", "description": "A repo or branch name/glob this applies to." },
+          "rule": { "type": "string", "description": "What's required before it can be touched (e.g. named approval role)." }
+        }
+      }
+    }
+  }
+}

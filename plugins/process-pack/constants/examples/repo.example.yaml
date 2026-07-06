@@ -1,0 +1,77 @@
+# process-pack constants — repo scope (worked example)
+#
+# Schema: ../schemas/repo.schema.json
+#
+# Real, filled example modeled on an actual repo's landmines. Lives at
+# <repo>/.process/repo.yaml in a real consuming repo (or a CLAUDE.md
+# section where a whole file is overkill) — shipped here under
+# constants/examples/ as the pack's reference instance. Constants never
+# contain secrets: names and labels only.
+
+version: "1.0"
+repo_name: component-monkey-app
+
+gotchas:
+  - id: pnpm-cache-looks-missing-but-isnt
+    description: >-
+      CI often looks like it's missing a package-manager cache step. Check
+      the existing workflow jobs before adding one — it's usually already
+      configured under a differently named job, and a second cache step
+      just adds noise.
+    evidence_pointer: .github/workflows/ci.yml
+
+  - id: required-check-name-drift
+    description: >-
+      Renaming a CI job changes the "required check" name seen by branch
+      protection and any merge-queue ruleset. A rename that isn't
+      cross-checked against every consumer of the old name silently
+      un-gates the branch.
+    evidence_pointer: repo branch-protection settings + ruleset config
+
+never_wait_checks:
+  - name: visual-regression status (screenshot/Chromatic-style check)
+    reason: >-
+      Quota-dead: the shared visual-regression provider's free/shared
+      quota is frequently exhausted, so this check sits pending
+      indefinitely. Pending here is not a signal about the change's
+      correctness — it is a signal about the provider's quota.
+    matcher: "check name containing 'visual-regression' or the provider's name"
+
+verification_gate_extensions:
+  - work_class: CI/workflow change
+    extra_requirements:
+      - "measured before/after (pass rate or wall-clock) from real workflow runs, with linked run IDs"
+      - "one live end-to-end run through the changed path, not just a dry-run"
+      - "the required-check name checked against every consumer (gate jobs, merge-queue rulesets) after any rename"
+
+  - work_class: mobile feature (work overlay)
+    extra_requirements:
+      - "every UI state smoked on a simulator from a named checklist"
+      - "local-only stubs reverted (see stub_patterns below) before commit"
+      - "platform metadata deploy verified, not assumed from a green build"
+
+stub_patterns:
+  - name: sim-push-notification-stub
+    marker: "grep for the marker comment `// STUB:` or the flag `USE_LOCAL_NOTIFICATION_STUB`"
+    description: >-
+      Local-only stand-in for a push-notification call that needs a real
+      device/service; used during simulator development.
+    removal_criterion: >-
+      Reverted before any commit that will be pushed. A staged diff
+      containing the marker blocks the commit (see the stub-guard hook).
+
+protected_paths:
+  - path: "generated/**"
+    reason: generated output from a codegen step; hand edits are silently overwritten on the next run
+    override: regenerate via the codegen command instead of hand-editing
+
+standing_review_responses:
+  - trigger_pattern: "automated reviewer flags a breaking-change / requests a compatibility adapter"
+    response: >-
+      This repo ships a single deployment target with no external
+      consumers pinned to the previous shape; the change rolls forward
+      without a compatibility shim.
+    rationale: >-
+      Single-deployment repos don't carry a public API's migration cost.
+      An adapter here would be unremovable scaffolding with no removal
+      criterion — permanent, not temporary.

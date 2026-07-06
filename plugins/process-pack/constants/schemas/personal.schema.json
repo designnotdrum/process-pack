@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://process-pack/schemas/personal.schema.json",
+  "title": "personal",
+  "description": "Per-person constants: the identities, walls, tiering, and standing preferences an orchestrator applies across every repo and org it works in. Names and labels only — never secrets, tokens, or credential values.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "contexts", "model_tiers", "merge_policy"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Schema version this file was written against, e.g. \"1.0\"."
+    },
+    "contexts": {
+      "type": "array",
+      "description": "The distinct hats this person wears (e.g. personal vs employer-issued). Every git identity, wall, and preference below is scoped to one of these context names.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "git_identity"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Short context label used elsewhere in this file and in repo/org constants, e.g. \"personal\" or \"work\"."
+          },
+          "description": {
+            "type": "string",
+            "description": "One line on what this context covers."
+          },
+          "git_identity": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "email"],
+            "properties": {
+              "name": { "type": "string", "description": "git user.name for commits made in this context." },
+              "email": { "type": "string", "description": "git user.email for commits made in this context." },
+              "host_account": { "type": "string", "description": "Code-hosting username/handle attached to this context (e.g. a GitHub login)." }
+            }
+          },
+          "runtime_config_dir": {
+            "type": "string",
+            "description": "Optional: the config/home directory a runtime should use when operating in this context (e.g. an alternate CLI config path), if this person runs more than one instance of the same tool."
+          }
+        }
+      }
+    },
+    "account_walls": {
+      "type": "array",
+      "description": "Boundaries that must never be crossed by convenience: a runtime billed to the wrong party, an account-scoped tool touching the wrong side. Each wall names the resource, which context owns it, and what to do when a task's context doesn't match.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "rule"],
+        "properties": {
+          "name": { "type": "string", "description": "Short label for the wall, e.g. the tool or resource class it protects." },
+          "kind": {
+            "type": "string",
+            "enum": ["billing", "account_scope", "tool_subscription", "other"],
+            "description": "What kind of boundary this is: who pays, which org/account a tool is scoped to, or a personal subscription that must not be bridged to another runtime."
+          },
+          "owning_context": { "type": "string", "description": "Which context (by name, from `contexts`) legitimately owns this resource." },
+          "rule": { "type": "string", "description": "The standing rule in one sentence, e.g. \"never invoked for the other context's tasks\" or \"copy config across, never bridge the running instance\"." },
+          "on_violation_risk": { "type": "string", "description": "What to do when a task in the wrong context needs this resource: stop and present options, never improvise around it." }
+        }
+      }
+    },
+    "model_tiers": {
+      "type": "object",
+      "description": "Which model class to reach for at each judgment level. Every dispatch should be able to name its tier.",
+      "additionalProperties": false,
+      "required": ["trivial", "standard", "judgment"],
+      "properties": {
+        "trivial": { "type": "string", "description": "Model/tier for mechanical, low-judgment work (bulk edits, boilerplate)." },
+        "standard": { "type": "string", "description": "Default model/tier for ordinary delegate work." },
+        "judgment": { "type": "string", "description": "Model/tier for work requiring real judgment (architecture, ambiguous tradeoffs)." },
+        "consultant": {
+          "type": "string",
+          "description": "How the top-of-line model is used, if at all: a small number of single, named-decision-point calls — never as the resident orchestrator. Describe the pattern, not a name."
+        }
+      }
+    },
+    "merge_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "commit_trailer"],
+      "properties": {
+        "strategy": {
+          "type": "string",
+          "enum": ["merge_commit", "squash", "rebase"],
+          "description": "The default merge strategy for this person's PRs. \"merge_commit\" means real merge commits, never squashed."
+        },
+        "squash_allowed": {
+          "type": "boolean",
+          "description": "Whether squash merging is ever acceptable. Defaults to false when strategy is merge_commit."
+        },
+        "commit_trailer": {
+          "type": "string",
+          "description": "Exact trailer text appended to commits made by an agent on this person's behalf (e.g. a co-authorship line)."
+        },
+        "review_triage_required": {
+          "type": "boolean",
+          "description": "Whether triaging automated review-bot comments counts as part of \"done\" for a PR, separate from checks passing."
+        }
+      }
+    },
+    "communication_preferences": {
+      "type": "array",
+      "description": "Standing preferences about how the orchestrator should communicate, independent of any one task.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["topic", "preference"],
+        "properties": {
+          "topic": { "type": "string", "description": "What the preference is about, e.g. tone, interruption threshold, notification cadence." },
+          "preference": { "type": "string", "description": "The preference itself, stated as a rule." }
+        }
+      }
+    }
+  }
+}
