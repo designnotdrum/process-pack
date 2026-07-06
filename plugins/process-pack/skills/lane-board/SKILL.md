@@ -16,6 +16,16 @@ When more than one lane of work is running, "what's going on" has to be answerab
 - Schema: see the board schema shipped in this pack's constants. Each lane carries an id, a title, an owner (agent or human), a model (when the owner is an agent), a state (`planned` / `running` / `blocked` / `review` / `merged` / `done` / `killed`), a phase, its dependencies, an associated change request if one exists, what it's blocked on if anything, start and last-updated timestamps, and what's next for it. Board-level fields: a session identifier, a last-updated timestamp, and freeform notes.
 - Keep state values to the fixed enum. A lane that doesn't fit an existing state is a sign the lane needs splitting, not a sign the enum needs a value invented on the spot.
 
+## Every Timestamp Is a Real Clock Read
+
+Every timestamp written to the board — the board's own `updatedAt`, and a lane's `startedAt` and `updatedAt` — is the literal output of reading the actual clock at the moment of that write (for example, running `date -u +%Y-%m-%dT%H:%M:%SZ` and using exactly what it prints), never estimated, rounded to a clean number, or backfilled from a rough sense of "about an hour ago."
+
+- **Applies to every write, regardless of size.** A one-line phase update gets the same real clock read as a merge. There is no "small enough to approximate" exception — the field either holds a value a clock actually produced at write time, or it doesn't get written yet.
+- **A round timestamp on the board is a defect, not a coincidence.** A value ending in flat zeros, or one that lines up suspiciously neatly with when the surrounding conversation happened to mention a time, is itself evidence it was invented rather than read — treat it as something to fix on sight, whether you're about to write it or you find it already sitting in the file.
+- **This is not cosmetic.** The stale-warning logic — and any rendered view's "3h ago" — keys directly off `updatedAt`. An invented timestamp doesn't just look sloppy; it corrupts the one signal a person checking in from outside the conversation actually relies on to tell a lane that's still moving from one that's gone quiet.
+- **No named exception.** If a real clock genuinely isn't reachable in the current environment, leave the timestamp field unset and say so in notes — an honestly absent value is not a violation of this rule; a guessed one always is.
+- **No escape hatch needed.** Reading a clock costs nothing and blocks nothing; there is no legitimate reason a human would grant an exception to skip it.
+
 ## The "What's Running / Kill X" Query Pattern
 
 Both questions are answered by querying the board, not by running a fresh sweep:
@@ -43,6 +53,10 @@ Keep the surrounding mechanics of the ceremony as they were: where a checkpoint 
 
 The board tells you what's running and for how long; it doesn't by itself tell you how to manage a person's attention around that wait. That protocol — estimating durations, front-loading questions, confirming handoffs, batching updates, running a queue when more than one thread is active — is a compact sibling reference in this skill's own directory: see `attention-protocol.md`. Apply it whenever a lane, or the board as a whole, represents meaningful wait time for whoever is watching it.
 
+## Publishing the Board
+
+When a human wants to follow a run remotely rather than checking in on demand, start the pack's watch-and-publish script pointed at this board's file. It rebuilds a rendered view whenever the board actually changes and hands the result to the channel named in personal constants (`publishing`, or a `tool_mapping` entry's `publishing` override for the active context) — falling back to a local file with its path printed when no channel is configured — and quiets itself once the board has gone idle rather than polling a finished run forever. This skill never names which channel that is; it only says to start the publisher and let it read the channel from constants. Don't hand-roll a one-off render-and-send in its place — that's the exact duplication the script exists to remove.
+
 ## Red Flags (fail conditions)
 
 - A lane transition happened and the board wasn't updated before the next dispatch
@@ -52,3 +66,5 @@ The board tells you what's running and for how long; it doesn't by itself tell y
 - A handoff written while the board it points to was stale
 - A lane state value invented outside the fixed enum
 - Status reported with lane ids, phase numbers, or schema jargon left in for a non-technical reader
+- A board timestamp that was estimated, rounded, or backfilled instead of read from a real clock at write time
+- A skill or report naming a specific publisher instead of reading the channel from constants

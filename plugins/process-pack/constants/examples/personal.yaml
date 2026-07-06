@@ -98,3 +98,39 @@ communication_preferences:
     preference: >-
       Address automated code-review comments unprompted. A PR isn't done
       until its review comments are triaged, not just until checks are green.
+
+# Default publishing channel: used whenever a skill needs to publish
+# something (a rendered board, a research index, a review) for viewing
+# outside this conversation, and no tool_mapping entry below overrides it
+# for the active context. "channel" is read by skills generically — none of
+# them name this value in their own text.
+publishing:
+  channel: subspace_html_share
+  fallback_note: >-
+    When no channel is configured, or the configured one fails, write a
+    local HTML file under ~/scratch/published/ and print the full path —
+    never silently drop the publish step.
+
+# Per-context tool mapping: what this person uses for tickets/docs/comms/
+# publishing in each context, so a skill that files or tracks work reads
+# this instead of defaulting to whichever CLI happens to be on hand.
+tool_mapping:
+  - context: personal
+    tickets: >-
+      personal issue tracker workspace, read and filed via its CLI (never
+      its web UI, which needs an interactive login this runtime doesn't have)
+    docs: markdown design docs committed alongside the relevant repo
+    comms: direct conversation with the person; no separate channel to post to
+    publishing:
+      channel: subspace_html_share
+
+  - context: work
+    tickets: the employer's own issue tracker, read and filed via its CLI
+    docs: the employer's internal docs tool
+    comms: the employer's team-chat tool, posted to the relevant project channel
+    publishing:
+      channel: local_file
+      fallback_note: >-
+        Employer-owned work never publishes to an external channel;
+        write the local file under the employer's own shared drive path
+        instead and print it there.

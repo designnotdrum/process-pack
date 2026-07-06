@@ -30,6 +30,11 @@ When writing a review for someone else to execute, sort your own comments into t
 
 A bucket assignment is not permanent. When new information supersedes an earlier call — research answers a needs-decision item, a parked item's blocking decision finally lands, a fix-now turns out to hide a real decision — send an explicit descope or rescope message to every lane whose work depends on the old bucket, immediately, not folded into the next routine status update. Silence at this moment is how a lane burns real time building against a bucket assignment that no longer holds.
 
+## Filing and Publishing Consult the Mapping
+
+- A parked-with-reason item that needs a durable record beyond this conversation — a follow-up someone should pick up later, a decision to revisit — gets filed in the tracker of record for the active context, read from constants' `tool_mapping`, never whichever tracker CLI happens to already be open. A follow-up filed in the wrong tracker looks done from here and is invisible to whoever actually owns the right one.
+- When an outgoing review is delivered as a rendered document rather than inline comments, publish it via the channel named in constants (`publishing`, or a `tool_mapping` entry's override for the active context), falling back to a local file with its path printed when none is configured — never a specific tool named in this skill's own text.
+
 ## Companion: Standing Review Responses
 
 Some reviewer objections are predictable and already have a pre-authorized answer on file — for example, an automated reviewer flags a breaking change as risky on a project whose standing policy is to roll forward without a compatibility shim. Before triaging a repeat or automated reviewer's comment into needs-decision, check the project's standing-responses list (kept with its other standing corrections, in the project's own constants). If the objection matches an entry there, the right bucket is fix-now-with-a-reasoned-reply: post the standing response with its reasoning attached. Don't silently comply against standing policy just because a reviewer asked, and don't silently dismiss the comment either — the response goes on the record either way. Only genuinely new objections go to needs-decision.
@@ -42,3 +47,4 @@ Some reviewer objections are predictable and already have a pre-authorized answe
 - A bucket that changed mid-flight with no descope message sent to affected lanes
 - An outgoing review sent as a flat comment list instead of four labeled buckets
 - A standing-response-eligible reviewer comment either silently complied with or silently dismissed instead of answered on the record
+- A follow-up or parked item filed in whatever tracker happened to be open instead of the one named in constants' `tool_mapping`

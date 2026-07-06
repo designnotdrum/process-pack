@@ -46,6 +46,10 @@ Each candidate direction states all of:
 - Its fit against the project's own existing constraints (checked against what the project has already decided or already built, not just judged as generically sound)
 - A cheapest-from-current-state note: given where the project actually stands today, what is the least additional work required to get this candidate live. A direction that requires ripping out existing work says so plainly, next to a direction that is one small change away — these are not presented as equivalent effort just because both are "candidates."
 
+## Sharing the Deliverables
+
+When a person needs to view the index, synthesis, or candidate directions somewhere other than this conversation, publish them via the channel named in personal constants (`publishing`, or a `tool_mapping` entry's `publishing` override for the active context) — never a specific tool named in this skill's own text. When no channel is configured, or the configured one fails, fall back to a local file with its full path printed; that floor needs no setup and is always available.
+
 ## Check-Own-Spec-First Rule
 
 Before treating any external finding as a reason to change direction, check whether the project's own spec, design doc, or a prior recorded decision already covers it. Present "the spec already answers this" findings first and separately from genuinely new external findings. A not-required-after-all discovery buried inside a pile of new research wastes the reader's time re-deciding something already settled.
