@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://process-pack/schemas/board.schema.json",
+  "title": "Lane Board",
+  "description": "The standing state file for a multi-lane work session. Written by the orchestrator on every lane transition. Renderers read this file; they never write it.",
+  "type": "object",
+  "required": ["session", "updatedAt", "lanes"],
+  "additionalProperties": false,
+  "properties": {
+    "session": {
+      "type": "string",
+      "description": "Stable identifier for the work session this board belongs to."
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of the most recent write to this file. Must be bumped on every write."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Freeform board-level notes (e.g. session-wide blockers, decisions in flight). Not a per-lane field."
+    },
+    "lanes": {
+      "type": "array",
+      "description": "One entry per active or historical lane in this session.",
+      "items": { "$ref": "#/$defs/lane" }
+    }
+  },
+  "$defs": {
+    "lane": {
+      "type": "object",
+      "required": ["id", "title", "owner", "state", "updatedAt"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$",
+          "description": "Stable short identifier for the lane, unique within the board."
+        },
+        "title": {
+          "type": "string",
+          "description": "One-line human-readable description of what the lane is doing."
+        },
+        "owner": {
+          "type": "object",
+          "required": ["type", "name"],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": ["agent", "human"],
+              "description": "Whether the lane is being executed by an agent/delegate or by a person."
+            },
+            "name": {
+              "type": "string",
+              "description": "Role-scoped label for the owner (e.g. 'delegate', 'reviewer', 'coordinator'), not a proper noun."
+            }
+          }
+        },
+        "model": {
+          "type": ["string", "null"],
+          "description": "Model tier or identifier running the lane, if the owner is an agent. Null for human-owned lanes."
+        },
+        "state": {
+          "enum": [
+            "planned",
+            "running",
+            "blocked",
+            "review",
+            "merged",
+            "done",
+            "killed"
+          ],
+          "description": "Fixed lifecycle enum. A lane that doesn't fit one of these needs to be split, not given a new ad hoc value."
+        },
+        "phase": {
+          "type": ["string", "integer", "null"],
+          "description": "Which wave/phase of the larger plan this lane belongs to, if the session has phases."
+        },
+        "deps": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Lane ids this lane depends on (must reach a mergeable state before this lane can proceed)."
+        },
+        "pr": {
+          "type": ["string", "null"],
+          "description": "Identifier or URL for the lane's associated change request, if one has been opened."
+        },
+        "blockedOn": {
+          "type": ["string", "null"],
+          "description": "Free-text description of the specific thing blocking this lane. Required in practice whenever state is 'blocked'."
+        },
+        "startedAt": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Timestamp the lane transitioned into 'running' for the first time. Null for lanes still 'planned'."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of the most recent transition for this lane specifically."
+        },
+        "next": {
+          "type": ["string", "null"],
+          "description": "One-line statement of the next concrete action for this lane."
+        }
+      }
+    }
+  }
+}
