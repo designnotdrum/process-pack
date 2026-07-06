@@ -1,0 +1,10 @@
+{
+  "_comment": "Example schema. Copy this file to <repo-root>/.process/stub-guard.config.json and list the repo's declared local-only stub markers. Generate it from (or keep it in sync with) the stub-pattern declarations in the repo's own constants; hand-editing it directly is also fine — the schema is intentionally small.",
+
+  "stub_patterns": [
+    "LOCAL-ONLY-STUB",
+    "FAKE-.*-STUB"
+  ],
+
+  "override_env_var": "PROCESS_PACK_ALLOW_STUB_COMMIT"
+}

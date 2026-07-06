@@ -1,0 +1,12 @@
+{
+  "_comment": "Example schema. Generate this file from the wall declarations in your constants (which context bills which wallet, which config dir belongs to which context), or hand-edit it directly — the schema is intentionally small. Copy this file to wall-guard.config.json next to the script, or point WALL_GUARD_CONFIG at a copy elsewhere.",
+
+  "active_context_env_var": "CLAUDE_CONFIG_DIR",
+  "default_config_dir": "~/.claude",
+  "override_env_var": "PROCESS_PACK_ALLOW_CROSS_CONFIG",
+
+  "known_contexts": [
+    { "label": "personal", "config_dir": "~/.claude" },
+    { "label": "work", "config_dir": "~/.claude-work" }
+  ]
+}
