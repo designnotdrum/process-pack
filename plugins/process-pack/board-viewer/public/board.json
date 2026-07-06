@@ -1,0 +1,107 @@
+{
+  "board": {
+    "session": "demo-session",
+    "updatedAt": "2026-07-06T15:10:00-04:00",
+    "notes": "Sample board for board-viewer. Generic lane ids and placeholder data only — see README for how an orchestrator produces the real thing."
+  },
+  "lanes": [
+    {
+      "id": "lane-a",
+      "title": "Lane A — foundation",
+      "owner": "agent-1",
+      "model": "large-model",
+      "state": "done",
+      "phase": "phase-1",
+      "deps": [],
+      "pr": "#140",
+      "blockedOn": "",
+      "startedAt": "2026-07-04T09:15:00-04:00",
+      "updatedAt": "2026-07-05T11:40:00-04:00",
+      "next": ""
+    },
+    {
+      "id": "lane-b",
+      "title": "Lane B — schema",
+      "owner": "agent-2",
+      "model": "large-model",
+      "state": "merged",
+      "phase": "phase-1",
+      "deps": [],
+      "pr": "#141",
+      "blockedOn": "",
+      "startedAt": "2026-07-04T09:20:00-04:00",
+      "updatedAt": "2026-07-05T16:05:00-04:00",
+      "next": ""
+    },
+    {
+      "id": "lane-c",
+      "title": "Lane C — build pipeline",
+      "owner": "agent-3",
+      "model": "small-model",
+      "state": "running",
+      "phase": "phase-2",
+      "deps": ["lane-a"],
+      "pr": "",
+      "blockedOn": "",
+      "startedAt": "2026-07-05T13:00:00-04:00",
+      "updatedAt": "2026-07-06T15:05:00-04:00",
+      "next": "finish streaming edge case, then open PR"
+    },
+    {
+      "id": "lane-d",
+      "title": "Lane D — integration",
+      "owner": "agent-4",
+      "model": "small-model",
+      "state": "blocked",
+      "phase": "phase-2",
+      "deps": ["lane-c"],
+      "pr": "",
+      "blockedOn": "lane-c hasn't merged yet",
+      "startedAt": "2026-07-06T09:00:00-04:00",
+      "updatedAt": "2026-07-06T14:50:00-04:00",
+      "next": "retry once lane-c is green"
+    },
+    {
+      "id": "lane-e",
+      "title": "Lane E — docs pass",
+      "owner": "agent-5",
+      "model": "fast-model",
+      "state": "review",
+      "phase": "phase-2",
+      "deps": ["lane-a", "lane-b"],
+      "pr": "#142",
+      "blockedOn": "",
+      "startedAt": "2026-07-05T16:30:00-04:00",
+      "updatedAt": "2026-07-06T10:15:00-04:00",
+      "next": "awaiting second reviewer pass"
+    },
+    {
+      "id": "lane-f",
+      "title": "Lane F — polish",
+      "owner": "agent-6",
+      "model": "fast-model",
+      "state": "planned",
+      "phase": "phase-3",
+      "deps": ["lane-d"],
+      "pr": "",
+      "blockedOn": "",
+      "startedAt": null,
+      "updatedAt": null,
+      "next": "queued behind lane-d"
+    },
+    {
+      "id": "lane-g",
+      "title": "Lane G — spike (abandoned)",
+      "owner": "agent-2",
+      "model": "small-model",
+      "state": "killed",
+      "phase": "phase-1",
+      "deps": [],
+      "pr": "",
+      "blockedOn": "",
+      "startedAt": "2026-07-04T10:00:00-04:00",
+      "updatedAt": "2026-07-04T15:00:00-04:00",
+      "next": "superseded by lane-b, no further work"
+    }
+  ]
+}

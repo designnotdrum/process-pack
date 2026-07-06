@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+/*
+ * Dark-mode-first. The viewer is meant to be read at a glance, often on a
+ * phone, often by someone who wasn't in the room — quiet colors, dense
+ * layout, no motion for its own sake.
+ */
+:root {
+  color-scheme: dark;
+
+  --bg: #0b0c0f;
+  --bg-raised: #14161b;
+  --bg-sunken: #07080a;
+  --border: #262a33;
+  --border-soft: #1a1d24;
+  --text: #e6e8ec;
+  --text-muted: #8b909c;
+  --text-faint: #5b606c;
+
+  --state-planned: #6b7280;
+  --state-running: #3b82f6;
+  --state-blocked: #ef4444;
+  --state-review: #eab308;
+  --state-merged: #22c55e;
+  --state-done: #14b8a6;
+  --state-killed: #78716c;
+
+  --warn-bg: #3a2a0d;
+  --warn-border: #7c5a17;
+  --warn-text: #fbbf24;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: var(--state-running);
+  color: #fff;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
