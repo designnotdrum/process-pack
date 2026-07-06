@@ -1,33 +1,130 @@
 @import "tailwindcss";
 
 /*
- * Dark-mode-first. The viewer is meant to be read at a glance, often on a
- * phone, often by someone who wasn't in the room — quiet colors, dense
- * layout, no motion for its own sake.
+ * Three-state theme: "system" (default — follows prefers-color-scheme),
+ * or an explicit "light"/"dark" override toggled in the header and
+ * persisted to localStorage (see lib/theme.ts + the anti-flash inline
+ * script in index.html).
+ *
+ * Both palettes are designed on their own terms, not inverted from one
+ * another — dark is near-black with a cool tint, light is paper-white with
+ * a warm tint, neither pure #000/#fff — but they share the same structural
+ * roles (three surfaces, three text weights, seven state colors, one warn
+ * accent) so components never need to know which theme is active, and
+ * every state color has a per-theme variant tuned to hold AA contrast
+ * against that theme's surfaces.
+ *
+ * Raw palettes are prefixed "light-" and "dark-"; the semantic tokens
+ * below (bg, text, the seven state colors, ...) just point at one or the
+ * other, so a palette only needs to change in one place.
  */
 :root {
+  --light-bg: #f6f5f1;
+  --light-bg-raised: #ffffff;
+  --light-bg-sunken: #ebe8e1;
+  --light-border: #ddd9cf;
+  --light-border-soft: #e9e6de;
+  --light-text: #23221e;
+  --light-text-muted: #6b6a62;
+  --light-text-faint: #96948a;
+  --light-state-planned: #57606a;
+  --light-state-running: #1d4ed8;
+  --light-state-blocked: #b91c1c;
+  --light-state-review: #92400e;
+  --light-state-merged: #15803d;
+  --light-state-done: #0f766e;
+  --light-state-killed: #57534e;
+  --light-warn-bg: #fef3c7;
+  --light-warn-border: #f2c14e;
+  --light-warn-text: #78350f;
+
+  --dark-bg: #0b0c0f;
+  --dark-bg-raised: #14161b;
+  --dark-bg-sunken: #07080a;
+  --dark-border: #262a33;
+  --dark-border-soft: #1a1d24;
+  --dark-text: #e6e8ec;
+  --dark-text-muted: #8b909c;
+  --dark-text-faint: #5b606c;
+  --dark-state-planned: #6b7280;
+  --dark-state-running: #3b82f6;
+  --dark-state-blocked: #ef4444;
+  --dark-state-review: #eab308;
+  --dark-state-merged: #22c55e;
+  --dark-state-done: #14b8a6;
+  --dark-state-killed: #78716c;
+  --dark-warn-bg: #3a2a0d;
+  --dark-warn-border: #7c5a17;
+  --dark-warn-text: #fbbf24;
+
+  /* Semantic tokens: default to light. */
+  color-scheme: light;
+  --bg: var(--light-bg);
+  --bg-raised: var(--light-bg-raised);
+  --bg-sunken: var(--light-bg-sunken);
+  --border: var(--light-border);
+  --border-soft: var(--light-border-soft);
+  --text: var(--light-text);
+  --text-muted: var(--light-text-muted);
+  --text-faint: var(--light-text-faint);
+  --state-planned: var(--light-state-planned);
+  --state-running: var(--light-state-running);
+  --state-blocked: var(--light-state-blocked);
+  --state-review: var(--light-state-review);
+  --state-merged: var(--light-state-merged);
+  --state-done: var(--light-state-done);
+  --state-killed: var(--light-state-killed);
+  --warn-bg: var(--light-warn-bg);
+  --warn-border: var(--light-warn-border);
+  --warn-text: var(--light-warn-text);
+}
+
+/* System mode, OS prefers dark — unless an explicit "light" override is set. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: var(--dark-bg);
+    --bg-raised: var(--dark-bg-raised);
+    --bg-sunken: var(--dark-bg-sunken);
+    --border: var(--dark-border);
+    --border-soft: var(--dark-border-soft);
+    --text: var(--dark-text);
+    --text-muted: var(--dark-text-muted);
+    --text-faint: var(--dark-text-faint);
+    --state-planned: var(--dark-state-planned);
+    --state-running: var(--dark-state-running);
+    --state-blocked: var(--dark-state-blocked);
+    --state-review: var(--dark-state-review);
+    --state-merged: var(--dark-state-merged);
+    --state-done: var(--dark-state-done);
+    --state-killed: var(--dark-state-killed);
+    --warn-bg: var(--dark-warn-bg);
+    --warn-border: var(--dark-warn-border);
+    --warn-text: var(--dark-warn-text);
+  }
+}
+
+/* Explicit "dark" override, regardless of OS setting. */
+html[data-theme="dark"] {
   color-scheme: dark;
-
-  --bg: #0b0c0f;
-  --bg-raised: #14161b;
-  --bg-sunken: #07080a;
-  --border: #262a33;
-  --border-soft: #1a1d24;
-  --text: #e6e8ec;
-  --text-muted: #8b909c;
-  --text-faint: #5b606c;
-
-  --state-planned: #6b7280;
-  --state-running: #3b82f6;
-  --state-blocked: #ef4444;
-  --state-review: #eab308;
-  --state-merged: #22c55e;
-  --state-done: #14b8a6;
-  --state-killed: #78716c;
-
-  --warn-bg: #3a2a0d;
-  --warn-border: #7c5a17;
-  --warn-text: #fbbf24;
+  --bg: var(--dark-bg);
+  --bg-raised: var(--dark-bg-raised);
+  --bg-sunken: var(--dark-bg-sunken);
+  --border: var(--dark-border);
+  --border-soft: var(--dark-border-soft);
+  --text: var(--dark-text);
+  --text-muted: var(--dark-text-muted);
+  --text-faint: var(--dark-text-faint);
+  --state-planned: var(--dark-state-planned);
+  --state-running: var(--dark-state-running);
+  --state-blocked: var(--dark-state-blocked);
+  --state-review: var(--dark-state-review);
+  --state-merged: var(--dark-state-merged);
+  --state-done: var(--dark-state-done);
+  --state-killed: var(--dark-state-killed);
+  --warn-bg: var(--dark-warn-bg);
+  --warn-border: var(--dark-warn-border);
+  --warn-text: var(--dark-warn-text);
 }
 
 * {

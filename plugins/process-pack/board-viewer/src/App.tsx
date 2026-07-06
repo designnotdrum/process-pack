@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type BoardData, parseBoard, safeParseJson } from "./lib/board";
+import { applyTheme, getStoredTheme, setStoredTheme, type ThemeMode } from "./lib/theme";
 import { DropZone } from "./components/DropZone";
 import { GanttView } from "./components/GanttView";
 import { Header, type ViewMode } from "./components/Header";
@@ -12,7 +13,20 @@ export default function App() {
   const [data, setData] = useState<BoardData | null>(null);
   const [reason, setReason] = useState<string | null>(null);
   const [view, setView] = useState<ViewMode>("gantt");
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => getStoredTheme());
   const headerFileInput = useRef<HTMLInputElement>(null);
+
+  // The inline script in index.html already applied any stored override
+  // before first paint (avoids a flash); this just keeps React and the DOM
+  // in sync if that ever drifts (e.g. hot reload during development).
+  useEffect(() => {
+    applyTheme(themeMode);
+  }, [themeMode]);
+
+  const handleThemeChange = useCallback((mode: ThemeMode) => {
+    setStoredTheme(mode);
+    setThemeMode(mode);
+  }, []);
 
   const applyText = useCallback((text: string) => {
     const { value, error: jsonError } = safeParseJson(text);
@@ -106,7 +120,9 @@ export default function App() {
             board={data.board}
             laneCount={data.lanes.length}
             onRequestFile={() => headerFileInput.current?.click()}
+            onThemeChange={handleThemeChange}
             onViewChange={setView}
+            themeMode={themeMode}
             view={view}
           />
           <main className="min-h-0 flex-1">
