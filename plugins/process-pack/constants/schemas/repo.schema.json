@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://process-pack/schemas/repo.schema.json",
+  "title": "repo",
+  "description": "Per-repo constants: the landmines, waits, gates, stubs, and protected paths specific to one codebase. Lives at <repo>/.process/repo.yaml (or a CLAUDE.md section where a file is overkill). Names and labels only — never secrets.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Schema version this file was written against, e.g. \"1.0\"."
+    },
+    "repo_name": {
+      "type": "string",
+      "description": "Label for the repo this file describes. Optional in a template; required in a real instance."
+    },
+    "gotchas": {
+      "type": "array",
+      "description": "Recurring landmines that trip up a fresh contributor or agent in this repo, so a delegate doesn't have to rediscover them.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "description"],
+        "properties": {
+          "id": { "type": "string", "description": "Short stable identifier for this gotcha." },
+          "description": { "type": "string", "description": "What trips people up and why." },
+          "evidence_pointer": { "type": "string", "description": "Where to look to confirm it (a path, a command, a doc section)." }
+        }
+      }
+    },
+    "never_wait_checks": {
+      "type": "array",
+      "description": "Checks that are known to be quota-dead, rate-limited, or otherwise structurally unable to resolve in a useful timeframe — excluded from the done-decision rather than waited on.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "reason"],
+        "properties": {
+          "name": { "type": "string", "description": "The check's name as it appears wherever checks are reported." },
+          "reason": { "type": "string", "description": "Why it's quota-dead or otherwise unwaitable (e.g. a shared quota exhausted, a known-broken external dependency)." },
+          "matcher": { "type": "string", "description": "A pattern that identifies this check programmatically, if one exists." }
+        }
+      }
+    },
+    "verification_gate_extensions": {
+      "type": "array",
+      "description": "Extra done-criteria this repo adds on top of the pack's default gate list for a given work class.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["work_class", "extra_requirements"],
+        "properties": {
+          "work_class": { "type": "string", "description": "The work class being extended, e.g. a CI/workflow change, a deploy-path change, a mobile feature." },
+          "extra_requirements": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Additional evidence this repo requires before that work class counts as done."
+          }
+        }
+      }
+    },
+    "stub_patterns": {
+      "type": "array",
+      "description": "Local-only stub/mock markers that must never reach a real commit, and what identifies them.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "marker", "removal_criterion"],
+        "properties": {
+          "name": { "type": "string", "description": "Short label for the stub pattern." },
+          "marker": { "type": "string", "description": "A grep-able pattern (comment tag, filename convention, flag name) that identifies the stub in a diff." },
+          "description": { "type": "string", "description": "What the stub replaces and why it exists locally." },
+          "removal_criterion": { "type": "string", "description": "The condition under which the stub must be reverted before commit/merge." }
+        }
+      }
+    },
+    "protected_paths": {
+      "type": "array",
+      "description": "Paths that must never be edited without explicit sign-off: generated code, vendored deps, infra applied elsewhere.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "reason"],
+        "properties": {
+          "path": { "type": "string", "description": "A path or glob." },
+          "reason": { "type": "string", "description": "Why it's protected." },
+          "override": { "type": "string", "description": "What's required to touch it anyway, if anything." }
+        }
+      }
+    },
+    "standing_review_responses": {
+      "type": "array",
+      "description": "Pre-authorized replies to predictable automated-reviewer objections, so a delegate can respond with reasoning instead of silently complying against this repo's own policy.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["trigger_pattern", "response"],
+        "properties": {
+          "trigger_pattern": { "type": "string", "description": "The predictable objection an automated reviewer raises." },
+          "response": { "type": "string", "description": "The standing, pre-approved reply, stated with its reasoning." },
+          "rationale": { "type": "string", "description": "Why this repo's policy overrides the reviewer's default suggestion." }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,71 @@
+# process-pack constants — org scope (worked example)
+#
+# Schema: ../schemas/org.schema.json
+#
+# Real, filled example covering the two orgs this person's agents operate
+# under (their own small agent-org, and the employer they contract to).
+# Constants never contain secrets: names and labels only.
+
+version: "1.0"
+org_name: two-context agent org (personal + employer)
+
+escalation_targets:
+  - trigger_class: architecture-contract change
+    target: the human operator
+    channel: direct review before merge, not after
+
+  - trigger_class: production-data mutation
+    target: the human operator
+    channel: explicit approval gate before executing, no improvisation around it
+
+  - trigger_class: removing a user-facing control
+    target: the human operator
+    channel: flagged in the standing lane board before the change ships
+
+  - trigger_class: spend outside declared budget
+    target: the human operator
+    channel: flagged in the standing lane board / sitrep
+
+  - trigger_class: root-cause verdict contradicting the ticket
+    target: the human operator
+    channel: reported inline with the contradiction, not silently resolved
+
+  - trigger_class: any resource-wall crossing with no safe path
+    target: the human operator
+    channel: stop and present options (personal credentials / free alternative / explicit approval)
+
+compliance_walls:
+  - name: no-PII-in-shared-state
+    rule: >-
+      Tickets, board files, and memory entries never contain end-user PII;
+      redact before writing to any board, ticket, or memory file.
+    applies_to: all agent-written artifacts
+
+  - name: no-secrets-in-constants
+    rule: >-
+      Constants files (personal/org/repo scope) carry names and labels
+      only. Credentials are looked up via a credentials tool at the point
+      of use, never embedded in a constants file, memory, or a commit.
+    applies_to: all constants scopes
+
+billing_boundaries:
+  - resource: work-config runtime (employer-side config directory)
+    payer: employer org
+    rule: only invoked for employer-owned repos and tasks
+
+  - resource: personal-config runtime (default config directory)
+    payer: personal account
+    rule: default for all non-employer work
+
+  - resource: shared homelab compute (local models, self-hosted services)
+    payer: personal account
+    rule: >-
+      Usable by either context for read-only or dev work, but any billed
+      API call it proxies to a third party must still respect the
+      per-context wall it's running under.
+
+protected_branches_or_repos:
+  - pattern: main on employer-owned repos
+    rule: >-
+      Requires the standing review-and-merge convention (real merge
+      commit, review comments triaged) before merge; no direct pushes.
