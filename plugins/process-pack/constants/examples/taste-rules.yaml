@@ -73,7 +73,11 @@ rules:
       were established shorthand ("the ratchet", "Move 1", "the loop
       pattern") inside prose meant for a reader who wasn't in the room when
       it was coined. Say the plain thing directly instead of pointing at a
-      private label for it.
+      private label for it. Same rule in status updates and conversation:
+      the reader sees your messages, not your files — anything you created
+      yourself (placeholder names, file conventions, lane labels) gets
+      introduced by its function on first mention, never referenced by its
+      internal name as if already known.
     applicability_gate:
       condition: "Applies to anything a reader outside this session will read:"
       checks:
