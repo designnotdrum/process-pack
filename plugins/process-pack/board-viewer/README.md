@@ -99,10 +99,15 @@ convenience:
   components rather than a wired-up drag-and-drop widget library. This is
   what keeps the single-file build small.
 - **No date library, no icon library.** The date math this needs (place a
-  point on a day-scale timeline, print "3h ago") is a few dozen lines of
+  point on a time-scale timeline, print "3h ago") is a few dozen lines of
   plain `Date` arithmetic; the half-dozen icons are inline SVG. Both were
   cheap enough to hand-write and each removed a dependency with real
   transitive weight.
-- **Dark-mode-first.** Built for a phone screen glanced at mid-meeting, not
-  a monitor — quiet colors, dense rows, small type, no motion beyond what a
-  hover needs.
+- **Three-state theme, no flash.** System (follows `prefers-color-scheme`)
+  by default, with a Light/Dark override in the header persisted to
+  `localStorage`. Both palettes are hand-designed CSS custom properties in
+  `index.css` (see `lib/theme.ts`) — dark isn't light-inverted or vice
+  versa — and a small inline script in `index.html` applies a stored
+  override before first paint. Built for a phone screen glanced at
+  mid-meeting as much as a monitor — quiet colors, dense rows, small type,
+  no motion beyond what a hover needs.
