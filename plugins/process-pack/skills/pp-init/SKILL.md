@@ -84,6 +84,20 @@ Mine, per repo pointed at:
 - **Existing docs.** Anything already covering onboarding, architecture, or
   contribution process, read before asking a question a doc already answers.
 
+## Wall check before writing
+
+Mining reads identity; it does not act on it. Before writing any file,
+compare the mined git identity and host account against the context the
+current session is billed to. If they differ - you are onboarding one
+context from a session that belongs to another (a work context from a
+personal session, or the reverse) - stop and run the resource-wall
+preflight before writing anything, and do not invoke the other context's
+runtime or config to finish the job. Reading a repo is safe; generating
+that context's constants, installing, or running under it from the wrong
+session is the wall. Write the file only once the session context matches
+the file's context, or the person has explicitly confirmed the
+cross-context write is what they intend.
+
 ## Personal interview (≤11 questions)
 
 Ask these, adapting wording to what you already know from the repo/session
@@ -225,7 +239,11 @@ When an interview finishes, report:
 
 - Which file(s) were written and their paths.
 - The field list that got filled vs. left at a default/placeholder.
-- The result of schema validation (pass, or what's still missing).
+- The result of schema validation (pass, or what's still missing), and
+  which path produced it: an automated schema validator, or the by-hand
+  field check used when no validator was installed. When it fell back to
+  the hand check, say so plainly and name what to install to automate it
+  next time, so a silent degrade never reads as an automated pass.
 - Any answer you refused to write into constants because it was actually
   skill-layer, and where you pointed it instead.
 - Which answers came from mining — presented as a prefilled default and then
