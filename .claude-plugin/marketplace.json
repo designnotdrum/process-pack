@@ -1,12 +1,12 @@
 {
   "name": "process-pack",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "owner": { "name": "Nick Mason" },
   "plugins": [
     {
       "name": "process-pack",
       "description": "A model-portable way of working for agent orchestration: delegation contracts, lane planning, verification gates, resource walls, taste rules, and a live lane board. Generic skills + per-person/repo/org constants.",
-      "version": "0.1.0",
+      "version": "1.1.0",
       "source": "./plugins/process-pack",
       "author": { "name": "Nick Mason" },
       "keywords": ["orchestration", "delegation", "process", "skills", "verification"]
