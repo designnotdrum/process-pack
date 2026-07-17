@@ -81,11 +81,12 @@ flowchart LR
 
 ## What's in the box
 
-**12 skills, grouped by when they fire:**
+**13 skills, grouped by when they fire:**
 
 *Plan & dispatch*
 - **`lane-planner`** - before more than one delegate runs against a repo: the ownership table (one owner per file, phase gating, merge order) that has to exist before dispatch, not after a collision.
 - **`dispatch-brief`** - the delegate-brief compiler. A ten-block contract (isolation, verify-then-act, never-wait list, merge policy, anti-stall clause, mandated report format, out-of-scope). Highest-leverage skill in the pack.
+- **`stub-first-planning`** - before writing a spec, plan, or long brief a human has to approve: gate the full artifact behind a tight 5-problem / 5-solution stub they'll actually read, approve the stub, then elaborate and adversarially review. Stops the two-page spec nobody reads.
 - **`resource-wall-preflight`** - before any command that touches an external runtime, account, or billing surface: which wallet, which org, which identity. Stops at a wall instead of working around it.
 
 *Run & track*
