@@ -90,6 +90,28 @@ Named exceptions: none for the high-stakes surfaces — they never auto-apply.
 
 Escape hatch: a person with authority over the design system may, in session, accept a proposal on the spot; that acceptance is the gate being satisfied, not bypassed.
 
+## The Swing
+
+A panel that only tunes existing tokens can only move within the system it already has, which cannot by itself produce the move that makes work memorable. So the panel allows exactly one channel for a move that is *not* token-bound — and fences it hard, because an unprompted "make it wow" is the most reliable way to produce slop.
+
+Default stance: propose no Swing. A Swing is offered only when a specific, grounded opportunity clears every fence below; the resting state is zero.
+
+Applicability gate — a Swing is allowed only when all of these hold:
+- **Permitted tier.** The active model tier is the one constants name as permitted to propose off-system moves (the standard-or-higher / judgment tier). On a weaker tier, no Swing is ever proposed.
+- **Grounded.** It traces to a cited source — a prior-art example from this direction's own research, or the artifact's stated job — not invented novelty.
+- **Cost-bearing.** It names a real trade: added complexity, off-system maintenance, brand risk, a one-off someone owns. A proposal that is all upside is disqualified.
+
+Form and limits:
+- **Not a knob.** A Swing is a bet, not a fine-tune. It lives in a Swing zone, visually and structurally separate from the token knobs, so a bet is never read as a slider.
+- **Scarce.** Zero or one per artifact. More than one is a tic, not a read.
+- **Human-only.** It is surfaced for a person's decision and nothing else. It never self-applies, never commits, never becomes a token or a rule.
+
+Named exceptions: none. The fences do not relax for an idea that feels strong; a strong idea still needs the citation, the cost, and the permitted tier.
+
+Escape hatch: a person may accept a surfaced Swing in session, which turns it into ordinary design work to be built and tested — it still does not auto-promote to a token or rule.
+
+Keep this section separable: it is the highest-variance part of the panel and the first thing to disable if it produces noise. The token machinery works without it.
+
 ## Red flags (fail conditions)
 
 - A panel produced for an artifact with no eye-tunable surface (a flow diagram, a state machine, a copy deck).
