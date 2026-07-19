@@ -139,6 +139,21 @@
           }
         }
       }
+    },
+    "frontend_polish": {
+      "type": "object",
+      "description": "Optional. A frontend-polish / live-UI-iteration capability the design lane hands playground craft and off-system Swings to. A skill never names a specific one in its own text — it reads this block and degrades to a plain, functional playground when the block is absent or `skill` is \"none\".",
+      "additionalProperties": false,
+      "properties": {
+        "skill": {
+          "type": "string",
+          "description": "Label of the polish skill/tool that fills the slot, or \"none\". \"none\" (or omitting this block) means the design lane still emits a plain functional playground with no external polish step."
+        },
+        "note": {
+          "type": "string",
+          "description": "Optional standing note on how the slot is used or what its absence should fall back to."
+        }
+      }
     }
   },
   "$defs": {

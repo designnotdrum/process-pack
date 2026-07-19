@@ -98,7 +98,7 @@ session is the wall. Write the file only once the session context matches
 the file's context, or the person has explicitly confirmed the
 cross-context write is what they intend.
 
-## Personal interview (≤11 questions)
+## Personal interview (≤12 questions)
 
 Ask these, adapting wording to what you already know from the repo/session
 you're in — skip any question whose answer is already evident and confirm
@@ -141,6 +141,14 @@ cold:
     tier with a short expiry, or a permanent tier through an API key), or a
     fully custom command. Record whichever applies per context, defaulting
     to the local-file option when nothing else is configured or wanted.
+12. Do you have a frontend-polish / live-UI-iteration capability the design
+    lane should hand live-playground craft and off-system proposals to? The
+    design lane produces live tuning playgrounds, and is markedly better with
+    such a capability filling the slot, but never requires one — with the slot
+    empty it still emits a plain, functional playground. Record the capability
+    if you have one, or leave the slot at "none". If a recommended capability
+    is named in your existing constants, offer it as the default here rather
+    than asking cold.
 
 ## Org interview (≤10 questions)
 
@@ -251,3 +259,5 @@ When an interview finishes, report:
   person can see what the interview figured out on its own.
 - Any correction-miner candidates produced, clearly separated from the
   interview output above and marked as unadopted.
+- Whether a frontend-polish capability slot was filled or left at "none", and
+  the note that the design lane degrades gracefully when it is empty.
