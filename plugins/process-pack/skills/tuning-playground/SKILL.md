@@ -66,7 +66,7 @@ Escape hatch: a person may explicitly ask to see a specific polish facet early; 
 
 It is cheap, textual, and lives inside the design deliverable. It is the whole panel at wireframe, and the source of truth the live playground renders at polish.
 
-**Live playground** — emitted at polish altitude only. One self-contained HTML file: inline CSS and JS, no external assets, safe under a strict content-security policy. Each knob is bound to a CSS variable on a live instance of the prototype, so turning it changes the artifact in place. Deliver it through the publishing channel named in constants — read that value generically and degrade to the local-file floor when it is absent; never name a specific publishing tool here. The playground carries a **commit** action for settling values (see Loop closure).
+**Live playground** — emitted at polish altitude only. One self-contained HTML file: inline CSS and JS, no external assets, safe under a strict content-security policy. Each knob is bound to a CSS variable on a live instance of the prototype, so turning it changes the artifact in place. Deliver it through the publishing channel named in constants — read that value generically and degrade to the local-file floor when it is absent; never name a specific publishing tool here. The playground carries a **commit** action for settling values (see Loop closure) and an optional free-form note that rides along with the commit (see The free-form note).
 
 When a frontend-polish capability is named in constants, hand the playground's craft to it; when the slot is empty, still emit a plain, functional playground yourself. The panel never blocks on a polish tool being present.
 
@@ -89,6 +89,16 @@ Applicability gate: a value that touches brand, accessibility, or a legal surfac
 Named exceptions: none for the high-stakes surfaces — they never auto-apply.
 
 Escape hatch: a person with authority over the design system may, in session, accept a proposal on the spot; that acceptance is the gate being satisfied, not bypassed.
+
+## The free-form note
+
+Knobs capture only what the token system can name. The thing a person most wants to say — that a screen still feels wrong in a way no slider holds — is exactly what the knobs cannot carry. So the playground offers one optional free-form note that rides along with the commit, for whoever reads it next.
+
+Default stance: the note is off until asked for, empty by default, and never required. It is toggled on only when there is something to add.
+
+What it is: a single free-text field, passed along verbatim with the committed values as its own labeled block, so the reader sees the settled knobs and the note together.
+
+What it is not: it is not a knob and it is not classified. It routes to nothing on its own — not a token, not a rule, not a proposal — because it is context for the reader, not a value to apply. A note that names a recurring correction may later seed a candidate taste rule, but only through the same human-adopts path as any other reason; the note itself is never auto-promoted.
 
 ## The Swing
 
@@ -119,3 +129,4 @@ Keep this section separable: it is the highest-variance part of the panel and th
 - A knob that tunes one property of a token-group the system binds together, breaking the cluster.
 - More than six knobs on one panel.
 - A knob with no default, or no one-line statement of what it trades.
+- A free-form note treated as a value to apply — classified, routed to a token or rule, or auto-promoted instead of passed along as context.
