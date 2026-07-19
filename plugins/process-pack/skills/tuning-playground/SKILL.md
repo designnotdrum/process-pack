@@ -70,6 +70,26 @@ It is cheap, textual, and lives inside the design deliverable. It is the whole p
 
 When a frontend-polish capability is named in constants, hand the playground's craft to it; when the slot is empty, still emit a plain, functional playground yourself. The panel never blocks on a polish tool being present.
 
+## Loop closure
+
+The playground's **commit** action is where a settled value stops being ephemeral. For each committed knob, classify the value, then route it. Never route a value without its captured reason.
+
+Classify each settled value as exactly one of:
+
+- **Local override.** The eye demanded this value here, once, against the local context. It stays in the artifact, logged with its reason. It is never promoted to a rule and never changes the token — an override is a stand-in for something the eye saw, and promoting it would mistake the approximation for the point. Its *reason* may be offered as a candidate taste rule about when the override applies (see below), but the value itself stays local.
+- **Token retune.** The token's default was wrong, not just wrong here. Propose the new value as a change to that token in the design system, as a reviewable change proposal — not an in-place edit.
+- **New token.** The artifact exposed a gap the system had no token for. Propose adding the token to the system, as a reviewable change proposal.
+
+Route the value to the design system (retune and new-token cases) and route the reason to the taste rules, separately: the value is *what*, the taste rule is *when and why*. A reason worth keeping becomes a **candidate** taste rule in the pack's rule anatomy (default stance, applicability gate, named exceptions, escape hatch) — offered for a human to adopt, never written straight into a live rules file. This mirrors how standing corrections are surfaced as candidates elsewhere in this pack: the skill proposes; a person adopts.
+
+Default stance: every commit is a review-gated proposal, not an applied change.
+
+Applicability gate: a value that touches brand, accessibility, or a legal surface is always routed as a proposal needing explicit review, regardless of how settled it seems. Read which surfaces are high-stakes from constants where the project names them.
+
+Named exceptions: none for the high-stakes surfaces — they never auto-apply.
+
+Escape hatch: a person with authority over the design system may, in session, accept a proposal on the spot; that acceptance is the gate being satisfied, not bypassed.
+
 ## Red flags (fail conditions)
 
 - A panel produced for an artifact with no eye-tunable surface (a flow diagram, a state machine, a copy deck).
