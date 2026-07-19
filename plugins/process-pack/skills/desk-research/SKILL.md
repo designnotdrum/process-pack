@@ -46,6 +46,10 @@ Each candidate direction states all of:
 - Its fit against the project's own existing constraints (checked against what the project has already decided or already built, not just judged as generically sound)
 - A cheapest-from-current-state note: given where the project actually stands today, what is the least additional work required to get this candidate live. A direction that requires ripping out existing work says so plainly, next to a direction that is one small change away — these are not presented as equivalent effort just because both are "candidates."
 
+### Tuning Panel (optional)
+
+For each candidate direction that has an eye-tunable, token-bound surface at the current altitude, produce a tuning panel per the tuning-playground skill: a facet spec at wireframe altitude or higher, and a live playground at polish. Skip the panel, out loud, for any direction whose open questions are structure, flow, or copy rather than eye-decidable tokens. The panel is never required — it is offered when the direction has a last mile a designer would tune by hand, and omitted otherwise.
+
 ## Sharing the Deliverables
 
 When a person needs to view the index, synthesis, or candidate directions somewhere other than this conversation, publish them via the channel named in personal constants (`publishing`, or a `tool_mapping` entry's `publishing` override for the active context) — never a specific tool named in this skill's own text. When no channel is configured, or the configured one fails, fall back to a local file with its full path printed; that floor needs no setup and is always available.

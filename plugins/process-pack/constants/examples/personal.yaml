@@ -134,3 +134,13 @@ tool_mapping:
         Employer-owned work never publishes to an external channel;
         write the local file under the employer's own shared drive path
         instead and print it there.
+
+# Optional frontend-polish capability slot: the design lane hands live-playground
+# craft and off-system Swings to this when present, and degrades to a plain
+# functional playground when it is "none". A skill never names this value in its
+# own text — it reads the slot generically. (Examples are where real names belong.)
+frontend_polish:
+  skill: impeccable
+  note: >-
+    Fills the live-UI-iteration slot for the tuning-playground design lane.
+    When absent, the design lane still emits a plain, self-contained playground.
