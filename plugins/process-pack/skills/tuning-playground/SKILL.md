@@ -46,6 +46,30 @@ Cap the panel at six knobs. It is a focusing tool, not a mixing board. Needing m
 
 These are shapes to reason from. The specific token names always come from the project, never from this list.
 
+## Altitude decides the form
+
+Design changes shape as it climbs, and a knob offered at the wrong altitude is noise, not help. Gate the panel's form by the direction's current altitude:
+
+Default stance: emit a facet spec once the work is at wireframe altitude or higher; emit a live playground only at polish altitude.
+
+Applicability gate: read the direction's declared altitude (the design phase states it). At wireframe altitude, the tunable facets are structural — hierarchy weight, density, what leads. At polish altitude, they are the fine facets — exact spacing, color temperature, motion, typographic scale. A facet from a higher altitude than the work has reached is withheld and named as belonging later.
+
+Named exceptions: none. Do not expose polish knobs at wireframe to "save a step" — a value tuned against an unsettled structure is thrown away when the structure moves.
+
+Escape hatch: a person may explicitly ask to see a specific polish facet early; show that one, labeled as provisional against unsettled structure, and hold the rest.
+
+## The two artifacts
+
+**Facet spec** — emitted always, once at wireframe altitude or higher. A structured list, one row per facet:
+
+`facet · control (slider | enum | toggle) · range or options · default · why (what moving it trades) · token(s) it binds`
+
+It is cheap, textual, and lives inside the design deliverable. It is the whole panel at wireframe, and the source of truth the live playground renders at polish.
+
+**Live playground** — emitted at polish altitude only. One self-contained HTML file: inline CSS and JS, no external assets, safe under a strict content-security policy. Each knob is bound to a CSS variable on a live instance of the prototype, so turning it changes the artifact in place. Deliver it through the publishing channel named in constants — read that value generically and degrade to the local-file floor when it is absent; never name a specific publishing tool here. The playground carries a **commit** action for settling values (see Loop closure).
+
+When a frontend-polish capability is named in constants, hand the playground's craft to it; when the slot is empty, still emit a plain, functional playground yourself. The panel never blocks on a polish tool being present.
+
 ## Red flags (fail conditions)
 
 - A panel produced for an artifact with no eye-tunable surface (a flow diagram, a state machine, a copy deck).
