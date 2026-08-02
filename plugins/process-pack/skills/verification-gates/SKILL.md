@@ -63,6 +63,11 @@ A repo's own constants may name additional risk criteria on top of this base lis
 - A preview URL, or equivalent staged artifact, reflecting the change — not only a local diff.
 - Updated tests that assert the new intent. Deleting an assertion that contradicted the new design is not the same as replacing it with one that confirms the new design; the gate requires the replacement.
 
+### User-visible or behavioural UI change
+- **A recording of the reported symptom no longer happening**, driven in a real browser against a deployed preview. Not a tour of the feature and not the happy path in general: if the complaint was "clicking does nothing", the artifact shows a mouse click working. GIF renders inline in a PR comment and is the format to reach for.
+- The interaction exercised the way a user does it. A passing test that renders the real component is good evidence of logic; it is not evidence that the control can be operated. Three separate fixes have shipped green on unit tests while the interface stayed broken, because the failure lived in CSS, in hit-testing, and in an effect's dependency array — none of which a jsdom test observes.
+- If the recording could not be produced, the PR says so and names the fallback used. A silent omission reads as "not checked", because it usually is.
+
 ### Deploy-path change
 - Watch the change's own merge through to the platform's deployment dashboard reaching a ready/live state. Do not declare done at merge time.
 - Record the wall-clock time from merge to live.
