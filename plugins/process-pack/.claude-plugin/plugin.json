@@ -1,5 +1,5 @@
 {
   "name": "process-pack",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Model-portable orchestration process: skills are generic, constants carry the specifics."
 }

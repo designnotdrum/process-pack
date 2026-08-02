@@ -81,7 +81,7 @@ flowchart LR
 
 ## What's in the box
 
-**13 skills, grouped by when they fire:**
+**14 skills, grouped by when they fire:**
 
 *Plan & dispatch*
 - **`lane-planner`** - before more than one delegate runs against a repo: the ownership table (one owner per file, phase gating, merge order) that has to exist before dispatch, not after a collision.
@@ -98,6 +98,7 @@ flowchart LR
 - **`escalation-policy`** - names the decision classes that always stop for a human, and how to rent a top-tier model as a consultant at a named decision point rather than as the resident driver.
 - **`verification-gates`** - definition of done per work class (CI change, flaky-test fix, design round, removal/migration), plus a standing adversarial pre-merge review rule.
 - **`feedback-triage`** - splits every review item into one of four buckets before any work starts, so parked items don't get silently rebuilt.
+- **`fix-what-you-find`** - when a defect surfaces in work already open, fix it there instead of filing a ticket. Filing is the exception, gated to four named blockers (a human decision, missing access, a lane collision, or genuine size) - "out of scope," "pre-existing," and "non-blocking" are not blockers.
 
 *Taste & upkeep*
 - **`taste-rules`** - reads your standing corrections from constants (merge policy, style rules, reuse-existing-patterns) and carries them into every brief and review.
