@@ -11,7 +11,9 @@ description: Use when declaring any work item done, or when writing the report/e
 
 ## Universal rules (apply to every work class)
 
-**Review-bot triage is part of done.** An automated reviewer's comments are not optional feedback for later — triaging every comment (fix it, dismiss it with stated reasoning, or park it with a written reason) is itself a required gate. A change is not done while an automated review comment sits untriaged, even if every other gate passed.
+**Review-bot triage is part of done.** An automated reviewer's comments are not optional feedback for later — triaging every comment is itself a required gate. A change is not done while an automated review comment sits untriaged, even if every other gate passed.
+
+Triage has three outcomes, and they are not equally available. **Fix it** is the default. **Dismiss it** requires stating why the reviewer is wrong. **Park it** requires naming a blocker from `fix-what-you-find` — a decision only the human can make, access you do not have, a collision with a concurrent lane (which means sequence it, not drop it), or a size that genuinely needs its own plan. "Out of scope", "pre-existing", "non-blocking" and "follow-up ticket filed" are not blockers, and a parked item with one of those as its reason has not been triaged. See `fix-what-you-find`.
 
 **Stale-premise rule.** Before executing a work item, check whether its stated premise still holds — the thing it says to add might already exist, the bug it names might already be fixed, the config it assumes might have already changed. When reality contradicts the brief, report the discrepancy with evidence instead of executing anyway. A no-op backed by evidence is a valid, completed outcome, not a failure to act.
 
