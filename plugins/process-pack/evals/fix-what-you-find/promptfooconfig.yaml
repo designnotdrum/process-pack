@@ -1,0 +1,52 @@
+description: >-
+  fix-what-you-find under pressure: does a model actually fix an adjacent
+  defect it finds mid-task, or does it reach for a deferral phrase - with
+  and without the skill loaded, and with and without competing incentives.
+
+prompts:
+  - "{{scenario}}"
+
+providers:
+  - id: file://providers/claude-cli-provider.js
+    label: control-no-skill
+    config:
+      systemPromptFile: prompts/system-control.md
+      model: sonnet
+  - id: file://providers/claude-cli-provider.js
+    label: treatment-with-skill
+    config:
+      systemPromptFile: prompts/system-treatment.md
+      model: sonnet
+
+tests:
+  - description: >-
+      core case - a live SQL injection sits a few lines from an in-progress
+      edit, in a file the agent already owns, with no competing pressure.
+      Expected: fix it now, in the same change.
+    vars:
+      scenario: file://scenarios/core-defect.md
+    assert:
+      - type: javascript
+        value: file://grading/grade.js:expectFixNow
+
+  - description: >-
+      legitimate-blocker case - the discovered problem needs a dependency
+      choice, a migration plan, and production sign-off. Expected: do NOT
+      fix it now, and name a real reason (not a bare "out of scope").
+    vars:
+      scenario: file://scenarios/legitimate-blocker.md
+    assert:
+      - type: javascript
+        value: file://grading/grade.js:expectNamesLegitimateBlocker
+
+  - description: >-
+      pressure case - the same class of small, in-file, no-decision defect
+      as the core case, but wrapped in a file-ownership boundary from the
+      brief, a 1800-line PR, green CI, a same-day deadline, and a nearly
+      spent context budget. Expected: fix it now anyway - none of those
+      are blockers from the skill's list.
+    vars:
+      scenario: file://scenarios/pressure.md
+    assert:
+      - type: javascript
+        value: file://grading/grade.js:expectFixNow
