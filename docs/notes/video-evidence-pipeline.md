@@ -51,8 +51,12 @@ works. Both halves need re-testing rather than inheriting.
   the current tool, so it is worth re-confirming against the installed version
   before the map depends on it.
 
-- **Version correction.** There is no Playwright 1.159.0. Latest on npm is
-  **1.62.1**. `[verified today]` Any ticket citing 1.159 is citing nothing.
+- **Version.** The screencast API is attributed to **1.59.0**, which exists
+  (1.59.0 and 1.59.1 are published). Latest on npm is **1.62.1**.
+  `[verified today]` An earlier note in this thread cited 1.159.0; that was a
+  typo for 1.59.0, not a real release. Which minor first shipped `screencast`
+  is still `[unverified]` — confirm against the changelog before a ticket
+  depends on a floor version.
 
 ## What Playwright does not give us
 
