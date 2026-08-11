@@ -1,5 +1,5 @@
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import type { RecordingResult, Scenario, StepStamp } from './types.js'
 import {
@@ -59,6 +59,12 @@ async function applyBypassRoute(ctx: BrowserContext, origin: string, secret: str
   } catch {
     throw new Error(`protectedOrigin ${JSON.stringify(origin)} is not a valid URL`)
   }
+  // The bypass secret travels in a request header. Over plaintext http it is readable by
+  // anything on the path, so refuse rather than leak it. Loopback is exempt for local work.
+  const loopback = ['localhost', '127.0.0.1', '::1'].includes(target.hostname)
+  if (target.protocol !== 'https:' && !loopback) {
+    throw new Error(`protectedOrigin must be https (got ${target.protocol}//) — the bypass secret would be sent in cleartext`)
+  }
 
   await ctx.route('**/*', route => {
     let url: URL | null = null
@@ -108,6 +114,13 @@ export async function record(scenario: Scenario, options: RecordOptions): Promis
   const name = safeName(scenario.name)
   await mkdir(options.outDir, { recursive: true })
   const videoPath = path.join(options.outDir, `${name}.webm`)
+  // Clear artifacts from a previous run of the same scenario, so a failure now cannot
+  // leave yesterday's video sitting next to today's failure screenshot.
+  await Promise.all([
+    rm(videoPath, { force: true }),
+    rm(videoPath.replace(/\.webm$/, '.mp4'), { force: true }),
+    rm(path.join(options.outDir, `${name}-FAILED.png`), { force: true }),
+  ])
 
   // Handles are declared out here so the finally block can close whatever was created.
   // Previously a throw from newContext() or newPage() left an orphaned browser process.

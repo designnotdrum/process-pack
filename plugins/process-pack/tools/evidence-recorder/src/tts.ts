@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { writeFile } from 'node:fs/promises'
+import { writeFile, mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 
 const run = promisify(execFile)
@@ -149,13 +149,35 @@ export async function renderCaptions(
   const voice: Voice = apiKey ? 'elevenlabs' : 'say'
   const voiceId = options.voiceId ?? 'JBFqnCBsd6RMkjVDRZzb'
 
+  // Exported, so it must not assume narrate() already made the directory.
+  await mkdir(options.outDir, { recursive: true })
+
+  // Indexes become filenames. Duplicates would have two concurrent renders writing the
+  // same file while both Clips claim it.
+  const seen = new Set<number>()
+  for (const c of captions) {
+    if (!Number.isInteger(c.index) || c.index < 0) throw new Error(`caption index must be a non-negative integer, got ${c.index}`)
+    if (seen.has(c.index)) throw new Error(`duplicate caption index ${c.index}`)
+    seen.add(c.index)
+  }
+
   await assertPrerequisites(voice)
 
-  return mapWithLimit(captions, MAX_CONCURRENT, async ({ index, caption }) => {
-    const ext = voice === 'elevenlabs' ? 'mp3' : 'wav'
-    const audioPath = path.join(options.outDir, `caption-${String(index).padStart(2, '0')}.${ext}`)
-    if (voice === 'elevenlabs') await renderWithElevenLabs(caption, audioPath, apiKey!, voiceId)
-    else await renderWithSay(caption, audioPath)
-    return { index, caption, audioPath, durationSec: await probeDuration(audioPath), voice }
-  })
+  const written: string[] = []
+  try {
+    return await mapWithLimit(captions, MAX_CONCURRENT, async ({ index, caption }) => {
+      const ext = voice === 'elevenlabs' ? 'mp3' : 'wav'
+      const audioPath = path.join(options.outDir, `caption-${String(index).padStart(2, '0')}.${ext}`)
+      if (voice === 'elevenlabs') await renderWithElevenLabs(caption, audioPath, apiKey!, voiceId)
+      else await renderWithSay(caption, audioPath)
+      written.push(audioPath)
+      return { index, caption, audioPath, durationSec: await probeDuration(audioPath), voice }
+    })
+  } catch (error) {
+    // In-flight workers keep writing after the first rejection. Without this, a failed
+    // batch leaves a mix of complete and partial clips that a retry could mistake for a
+    // finished render.
+    await Promise.all(written.map(f => rm(f, { force: true }).catch(() => {})))
+    throw error
+  }
 }

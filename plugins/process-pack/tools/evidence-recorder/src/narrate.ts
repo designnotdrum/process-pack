@@ -102,6 +102,9 @@ export async function narrate(options: NarrateOptions): Promise<NarrateResult> {
     throw new Error(`the narrated output would overwrite the source recording (${options.videoPath}); choose a different --out`)
   }
 
+  // The CLI accepts an arbitrary output path, whose directory may not exist yet.
+  await mkdir(path.dirname(outPath), { recursive: true })
+
   const inputs = ['-i', options.videoPath, ...placements.flatMap(p => ['-i', p.audioPath])]
   const delays = placements
     .map((p, i) => `[${i + 1}:a]adelay=${Math.round(p.startSec * 1000)}|${Math.round(p.startSec * 1000)}[a${i}]`)

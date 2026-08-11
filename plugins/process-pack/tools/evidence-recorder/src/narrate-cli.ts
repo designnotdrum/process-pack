@@ -35,15 +35,20 @@ const outPath = flagValue(args, '--out') ? path.resolve(flagValue(args, '--out')
 // Collect positionals WITHOUT the values that belong to flags — otherwise `--out <dir>`
 // donates its value to the steps-file slot and narration parses the wrong file.
 const flagsWithValues = ['--out']
+const knownFlags = ['--say']
 const positional: string[] = []
 for (let i = 1; i < args.length; i++) {
   const a = args[i]!
   if (a.startsWith('-')) {
-    if (flagsWithValues.includes(a)) i++
+    if (flagsWithValues.includes(a)) { i++; continue }
+    // Unrecognised options are rejected, not ignored: `--sya` would otherwise silently
+    // narrate with the paid voice, and `--outx foo` would donate `foo` to the steps slot.
+    if (!knownFlags.includes(a)) usage()
     continue
   }
   positional.push(a)
 }
+if (positional.length > 1) usage()
 const stepsPath = positional[0]
   ? path.resolve(positional[0])
   : videoPath.replace(/\.(webm|mp4)$/i, '.steps.json')

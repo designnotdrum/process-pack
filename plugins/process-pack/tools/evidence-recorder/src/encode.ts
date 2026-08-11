@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { stat, rm } from 'node:fs/promises'
+import path from 'node:path'
 
 const run = promisify(execFile)
 
@@ -23,10 +24,12 @@ export async function fileSize(path: string): Promise<number> {
   return (await stat(path)).size
 }
 
+/** Proves ffmpeg exists AND carries the encoder reencode actually uses. A build without
+ *  libx264 would otherwise be reported usable and fail opaquely on an oversized file. */
 export async function ffmpegAvailable(): Promise<boolean> {
   try {
-    await run('ffmpeg', ['-version'])
-    return true
+    const { stdout } = await run('ffmpeg', ['-hide_banner', '-encoders'])
+    return /\blibx264\b/.test(stdout)
   } catch {
     return false
   }
@@ -39,7 +42,13 @@ export async function ffmpegAvailable(): Promise<boolean> {
  * on small UI text, so it is not used either.
  */
 export async function reencode(input: string): Promise<string> {
-  const output = input.replace(/\.webm$/, '.mp4')
+  // Case-insensitive, with a fallback suffix: a `.WEBM` or extensionless input would
+  // otherwise leave output === input, making ffmpeg convert in place and the failure
+  // cleanup below delete the source recording.
+  const output = /\.webm$/i.test(input) ? input.replace(/\.webm$/i, '.mp4') : `${input}.mp4`
+  if (path.resolve(output) === path.resolve(input)) {
+    throw new Error(`cannot re-encode ${input} in place`)
+  }
   try {
     await run('ffmpeg', [
       '-y',

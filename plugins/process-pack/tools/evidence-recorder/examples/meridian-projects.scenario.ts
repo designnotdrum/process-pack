@@ -22,9 +22,13 @@ if (!ORIGIN) {
   throw new Error('EVIDENCE_PROTECTED_ORIGIN is required for this scenario (the preview origin to record).')
 }
 
+// Normalised, so a value with a trailing slash does not produce `//projects` and a value
+// carrying a path or query does not produce an unintended URL.
+const PROJECTS_URL = new URL('/projects', ORIGIN).toString()
+
 const scenario: Scenario = {
   name: 'meridian-projects',
-  url: `${ORIGIN}/projects`,
+  url: PROJECTS_URL,
 
   ready: async page => {
     // Not sitting on the auth provider's form.
@@ -41,18 +45,25 @@ const scenario: Scenario = {
     // page still keeps one persistent pulse element, so this allows a couple rather than
     // demanding zero — and pairs it with a body-text floor, because "few skeletons" is
     // also true of a blank page.
-    const { skeletons, textLength } = await page.evaluate(() => ({
-      skeletons: document.querySelectorAll('[class*="animate-pulse"],[data-slot="skeleton"],[class*="skeleton"]').length,
-      textLength: document.body?.innerText.trim().length ?? 0,
-    }))
-    return skeletons <= 2 && textLength > 120
+    // Feature-specific, not generic: the projects heading proves this view rendered, and
+    // the skeleton bound proves its content arrived. Thresholds alone would pass on an
+    // authenticated error page or an app shell.
+    const heading = await page.getByRole('heading', { name: /projects/i }).first().isVisible().catch(() => false)
+    if (!heading) return false
+
+    const skeletons = await page.evaluate(
+      () => document.querySelectorAll('[class*="animate-pulse"],[data-slot="skeleton"],[class*="skeleton"]').length,
+    )
+    return skeletons <= 2
   },
 
   steps: [
     {
       caption: 'The projects area, loaded as a signed-in user.',
       run: async page => {
-        await page.waitForTimeout(2500)
+        // Hold on the loaded list long enough to read it. `ready` already proved it
+        // rendered, so this is dwell time for the viewer, not a wait for state.
+        await page.waitForTimeout(2000)
       },
     },
     {
@@ -61,8 +72,12 @@ const scenario: Scenario = {
       // something that does not show what the caption claims.
       caption: 'Showing which account this session belongs to.',
       run: async page => {
-        await page.getByText(/Sign out/i).first().waitFor({ state: 'visible', timeout: 5_000 })
-        await page.getByText(/Sign out/i).first().hover()
+        // Assert the identity itself, not the generic control beside it — a session can
+        // show "Sign out" without ever revealing whose session it is, which would let the
+        // caption promise something the recording does not contain.
+        const identity = page.getByText(/@/).first()
+        await identity.waitFor({ state: 'visible', timeout: 5_000 })
+        await identity.hover()
         await page.waitForTimeout(2000)
       },
     },

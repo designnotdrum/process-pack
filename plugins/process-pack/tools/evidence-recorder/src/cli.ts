@@ -41,7 +41,10 @@ function validateScenario(value: unknown, from: string): Scenario {
   if (!s || typeof s !== 'object') usage(`${from} does not export a scenario object.`)
   if (typeof s.name !== 'string' || !s.name.trim()) usage(`${from}: scenario needs a non-empty \`name\`.`)
   safeName(s.name)
-  if (typeof s.url !== 'string' || !/^https?:\/\//i.test(s.url)) {
+  // Parsed, not pattern-matched: `http://` passes a prefix test but is not a usable URL.
+  let parsed: URL | null = null
+  try { parsed = typeof s.url === 'string' ? new URL(s.url) : null } catch { parsed = null }
+  if (!parsed || !['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
     usage(`${from}: scenario \`url\` must be an absolute http(s) URL, got ${JSON.stringify(s.url)}.`)
   }
   if (typeof s.ready !== 'function') {
@@ -57,6 +60,19 @@ function validateScenario(value: unknown, from: string): Scenario {
 
 const args = process.argv.slice(2)
 if (args.length === 0 || args[0]!.startsWith('-')) usage()
+
+// Reject anything unrecognised rather than ignoring it. A typo like `--headedd` or
+// `--out=dir` would otherwise run with defaults and look like it worked.
+const KNOWN_WITH_VALUE = ['--out']
+const KNOWN_FLAGS = ['--headed']
+for (let i = 1; i < args.length; i++) {
+  const a = args[i]!
+  if (KNOWN_WITH_VALUE.includes(a)) { i++; continue }
+  if (KNOWN_FLAGS.includes(a)) continue
+  if (a.startsWith('-')) usage(`Unknown option ${a}.`)
+  usage(`Unexpected argument ${JSON.stringify(a)} — this command takes one scenario file.`)
+}
+if (args.filter(a => a === '--out').length > 1) usage('--out was given more than once.')
 
 const scenarioPath = path.resolve(args[0]!)
 const outDir = path.resolve(flagValue(args, '--out') ?? 'out')
