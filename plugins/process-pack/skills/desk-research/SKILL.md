@@ -54,6 +54,19 @@ For each candidate direction that has an eye-tunable, token-bound surface at the
 
 When a person needs to view the index, synthesis, or candidate directions somewhere other than this conversation, publish them via the channel named in personal constants (`publishing`, or a `tool_mapping` entry's `publishing` override for the active context) — never a specific tool named in this skill's own text. When no channel is configured, or the configured one fails, fall back to a local file with its full path printed; that floor needs no setup and is always available.
 
+### Reference Images Must Be Legible, Not Merely Present
+
+When the references are visual — screenshots, UI captures, layouts — embed each one inline next to its index entry as a data URI, never as a text link. A reviewer studying visual references browses them to think; a list of links is not a research deliverable to them.
+
+Legibility is the requirement, not inclusion. In visual research the detail inside the screenshot *is* the content: the UI text, the spacing, the state treatment. A thumbnail too small to read fails the deliverable completely, however complete its captions.
+
+- **Never downscale below the source.** Source resolution is the ceiling on what a reader can ever see; anything given away is unrecoverable. If a size cap forces a tradeoff, spend it on compression quality, not pixel dimensions.
+- **Store each payload exactly once** and reference it — as a CSS custom property or equivalent. The grid scales it down for layout; a lightbox shows it at natural size. One copy serves both, which is what makes full resolution affordable.
+- **Give every reference a lightbox**: click to full size, the caption travelling with the image, keyboard dismissal and navigation, focus trapped and returned, real button triggers, usable on a phone. No external library.
+- **Do not crop to a fixed height** in the gallery. Cropping hides the region that carried the point. Letterbox instead.
+
+Verify legibility by opening the artifact and reading the smallest text in a reference, not by confirming the file is embedded. "The image is present" and "the image is usable" are different claims, and only the second one is the deliverable.
+
 ## Check-Own-Spec-First Rule
 
 Before treating any external finding as a reason to change direction, check whether the project's own spec, design doc, or a prior recorded decision already covers it. Present "the spec already answers this" findings first and separately from genuinely new external findings. A not-required-after-all discovery buried inside a pile of new research wastes the reader's time re-deciding something already settled.
@@ -61,6 +74,7 @@ Before treating any external finding as a reason to change direction, check whet
 ## Red Flags (fail conditions)
 
 - A cited or reused artifact that was never scripted-verified
+- A visual reference shipped at a size the reviewer cannot read detail in, or downscaled below its source
 - A candidate direction missing its tradeoffs or its fit-against-constraints check
 - A research question with no traceable decision behind it
 - An outlier or counter-example silently folded into the consensus line instead of named
