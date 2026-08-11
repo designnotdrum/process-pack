@@ -1,0 +1,116 @@
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { mkdir, readFile } from 'node:fs/promises'
+import path from 'node:path'
+import { renderCaptions, probeDuration, type Clip } from './tts.js'
+import type { StepStamp } from './types.js'
+
+const run = promisify(execFile)
+
+export interface NarrateOptions {
+  videoPath: string
+  stepsPath: string
+  outPath?: string
+  apiKey?: string
+  forceSay?: boolean
+}
+
+export interface Placement extends Clip {
+  startSec: number
+  /** True when the clip could not start at its step because the previous one was still speaking. */
+  delayed: boolean
+}
+
+export interface NarrateResult {
+  outPath: string
+  voice: 'elevenlabs' | 'say'
+  usedFallback: boolean
+  placements: Placement[]
+  videoDurationSec: number
+  audioEndSec: number
+  /** Seconds of still frame appended so the final caption is not cut off. */
+  paddedSec: number
+}
+
+/**
+ * Place each clip at its step's recorded start time.
+ *
+ * When a caption runs longer than its step, the next clip starts when this one finishes
+ * rather than at its own step time. Overlapping narration is unintelligible, and the
+ * alternatives are worse: truncating drops the words that explain the step, and slowing
+ * the video desynchronises every later stamp. Late-but-complete is the least-bad failure,
+ * and the delay is reported so a scenario with chronically long captions is visible rather
+ * than silently drifting.
+ */
+export function placeClips(clips: Clip[], steps: StepStamp[]): Placement[] {
+  const byIndex = new Map(steps.map(s => [s.index, s]))
+  const ordered = [...clips].sort((a, b) => a.index - b.index)
+  const placements: Placement[] = []
+  let cursor = 0
+
+  for (const clip of ordered) {
+    const step = byIndex.get(clip.index)
+    if (!step) throw new Error(`no step stamp for caption ${clip.index}; the steps file does not match this recording`)
+    const wanted = step.startMs / 1000
+    const startSec = Math.max(wanted, cursor)
+    placements.push({ ...clip, startSec, delayed: startSec > wanted + 0.001 })
+    cursor = startSec + clip.durationSec
+  }
+  return placements
+}
+
+export async function narrate(options: NarrateOptions): Promise<NarrateResult> {
+  const stepsFile = JSON.parse(await readFile(options.stepsPath, 'utf8')) as { steps: StepStamp[] }
+  const steps = stepsFile.steps
+  if (!steps?.length) throw new Error(`${options.stepsPath} contains no steps`)
+
+  const workDir = path.join(path.dirname(options.videoPath), 'narration')
+  await mkdir(workDir, { recursive: true })
+
+  const clips = await renderCaptions(
+    steps.map(s => ({ index: s.index, caption: s.caption })),
+    { outDir: workDir, apiKey: options.apiKey, forceSay: options.forceSay },
+  )
+
+  const placements = placeClips(clips, steps)
+  const videoDurationSec = await probeDuration(options.videoPath)
+  const audioEndSec = Math.max(...placements.map(p => p.startSec + p.durationSec))
+
+  // If the narration outlasts the footage, hold the final frame rather than cutting the
+  // last caption off mid-sentence. A truncated explanation is worse than a still frame.
+  const paddedSec = Math.max(0, audioEndSec - videoDurationSec)
+
+  const outPath = options.outPath ?? options.videoPath.replace(/\.(webm|mp4)$/, '-narrated.mp4')
+
+  const inputs = ['-i', options.videoPath, ...placements.flatMap(p => ['-i', p.audioPath])]
+  const delays = placements
+    .map((p, i) => `[${i + 1}:a]adelay=${Math.round(p.startSec * 1000)}|${Math.round(p.startSec * 1000)}[a${i}]`)
+    .join(';')
+  const mixInputs = placements.map((_, i) => `[a${i}]`).join('')
+  const videoFilter = paddedSec > 0
+    ? `[0:v]tpad=stop_mode=clone:stop_duration=${paddedSec.toFixed(2)}[v]`
+    : `[0:v]null[v]`
+  const filter = `${videoFilter};${delays};${mixInputs}amix=inputs=${placements.length}:normalize=0[a]`
+
+  await run('ffmpeg', [
+    '-y', '-loglevel', 'error',
+    ...inputs,
+    '-filter_complex', filter,
+    '-map', '[v]', '-map', '[a]',
+    '-c:v', 'libx264', '-crf', '28', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-b:a', '128k',
+    '-movflags', '+faststart',
+    outPath,
+  ])
+
+  const voice = clips[0]?.voice ?? 'say'
+  return {
+    outPath,
+    voice,
+    usedFallback: voice === 'say',
+    placements,
+    videoDurationSec,
+    audioEndSec,
+    paddedSec,
+  }
+}

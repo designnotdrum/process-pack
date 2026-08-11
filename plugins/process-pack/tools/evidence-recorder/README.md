@@ -64,6 +64,34 @@ If `ready` never passes, the recorder **refuses to record**, writes `<name>-FAIL
 the point of failure, and exits non-zero. A missing recording is a visible problem; a
 recording of loading placeholders is an invisible one.
 
+## Narration
+
+```sh
+bun src/narrate-cli.ts out/my-scenario.webm          # ElevenLabs if a key is present
+bun src/narrate-cli.ts out/my-scenario.webm --say    # force the free local voice
+```
+
+Reads `<name>.steps.json`, renders one audio clip per caption, places each at its step's
+recorded start time, and muxes to `<name>-narrated.mp4`.
+
+**Voice.** ElevenLabs when `ELEVENLABS_API_KEY` is set, otherwise the local macOS voice.
+The fallback is always **stated in the output**, never silent — a robot voice is acceptable
+evidence, a downgrade nobody noticed is not.
+
+**WAV and MP3 only, never m4a.** Measured: AAC adds ~106ms of encoder padding, so a clip
+measured as m4a reports longer than it sounds. Narration placed from that number drifts a
+tenth of a second per caption and accumulates, presenting as "the voice slowly falls
+behind" — miserable to diagnose after the fact.
+
+**When a caption runs longer than its step**, the next clip starts when the previous one
+finishes rather than at its own step time, and the run reports which captions were delayed.
+Overlapping narration is unintelligible; truncating drops the words that explain the step;
+slowing the video desynchronises every later stamp. Late-but-complete is the least-bad
+failure, and it is reported so chronic drift is visible rather than silent.
+
+**If narration outlasts the footage**, the final frame is held so the last caption finishes
+instead of being cut off mid-sentence.
+
 ## Design notes, each measured rather than assumed
 
 - **`page.screencast` only; never `recordVideo`.** Screencast alone provides both the
