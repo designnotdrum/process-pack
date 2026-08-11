@@ -31,12 +31,15 @@ const scenario: Scenario = {
     const signedIn = await page.getByText(/Sign out/i).isVisible().catch(() => false)
     if (!signedIn) return false
 
-    // The actual gate: the loading skeletons must be gone. Anything less records
-    // placeholders and calls it evidence.
-    const skeletons = await page.evaluate(
-      () => document.querySelectorAll('[class*="animate-pulse"],[data-slot="skeleton"],[class*="skeleton"]').length,
-    )
-    return skeletons === 0
+    // The actual gate: content has arrived and the placeholders are gone. A fully loaded
+    // page still keeps one persistent pulse element, so this allows a couple rather than
+    // demanding zero — and pairs it with a body-text floor, because "few skeletons" is
+    // also true of a blank page.
+    const { skeletons, textLength } = await page.evaluate(() => ({
+      skeletons: document.querySelectorAll('[class*="animate-pulse"],[data-slot="skeleton"],[class*="skeleton"]').length,
+      textLength: document.body?.innerText.trim().length ?? 0,
+    }))
+    return skeletons <= 2 && textLength > 120
   },
 
   steps: [
