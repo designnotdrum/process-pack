@@ -62,7 +62,19 @@ export function placeClips(clips: Clip[], steps: StepStamp[]): Placement[] {
 export async function narrate(options: NarrateOptions): Promise<NarrateResult> {
   const stepsFile = JSON.parse(await readFile(options.stepsPath, 'utf8')) as { steps: StepStamp[] }
   const steps = stepsFile.steps
-  if (!steps?.length) throw new Error(`${options.stepsPath} contains no steps`)
+  if (!Array.isArray(steps) || steps.length === 0) throw new Error(`${options.stepsPath} contains no steps`)
+
+  // The steps file is JSON on disk and may be hand-edited. A NaN or negative startMs
+  // becomes a nonsense `adelay` argument, and duplicate indexes silently attach a caption
+  // to the wrong timestamp via the lookup map.
+  const seen = new Set<number>()
+  for (const s of steps) {
+    if (!Number.isInteger(s?.index) || s.index < 0) throw new Error(`${options.stepsPath}: step index must be a non-negative integer`)
+    if (seen.has(s.index)) throw new Error(`${options.stepsPath}: duplicate step index ${s.index}`)
+    seen.add(s.index)
+    if (!Number.isFinite(s.startMs) || s.startMs < 0) throw new Error(`${options.stepsPath}: step ${s.index} has a non-finite or negative startMs`)
+    if (typeof s.caption !== 'string' || !s.caption.trim()) throw new Error(`${options.stepsPath}: step ${s.index} has an empty caption`)
+  }
 
   const workDir = path.join(path.dirname(options.videoPath), 'narration')
   await mkdir(workDir, { recursive: true })
@@ -80,7 +92,15 @@ export async function narrate(options: NarrateOptions): Promise<NarrateResult> {
   // last caption off mid-sentence. A truncated explanation is worse than a still frame.
   const paddedSec = Math.max(0, audioEndSec - videoDurationSec)
 
-  const outPath = options.outPath ?? options.videoPath.replace(/\.(webm|mp4)$/, '-narrated.mp4')
+  // ffmpeg cannot read and write the same file. Without this, an input whose extension is
+  // not lowercase .webm/.mp4 leaves outPath === videoPath and corrupts the source.
+  const derived = /\.(webm|mp4)$/i.test(options.videoPath)
+    ? options.videoPath.replace(/\.(webm|mp4)$/i, '-narrated.mp4')
+    : `${options.videoPath}-narrated.mp4`
+  const outPath = options.outPath ?? derived
+  if (path.resolve(outPath) === path.resolve(options.videoPath)) {
+    throw new Error(`the narrated output would overwrite the source recording (${options.videoPath}); choose a different --out`)
+  }
 
   const inputs = ['-i', options.videoPath, ...placements.flatMap(p => ['-i', p.audioPath])]
   const delays = placements

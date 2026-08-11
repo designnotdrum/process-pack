@@ -20,13 +20,33 @@ Environment:
 const args = process.argv.slice(2)
 if (!args.length || args[0]!.startsWith('-')) usage()
 
+/** Reads a flag's value, rejecting a missing one or the next flag masquerading as it. */
+function flagValue(list: string[], flag: string): string | undefined {
+  const i = list.indexOf(flag)
+  if (i < 0) return undefined
+  const value = list[i + 1]
+  if (value === undefined || value.startsWith('-')) usage()
+  return value
+}
+
 const videoPath = path.resolve(args[0]!)
-const positional = args.slice(1).filter(a => !a.startsWith('--'))
+const outPath = flagValue(args, '--out') ? path.resolve(flagValue(args, '--out')!) : undefined
+
+// Collect positionals WITHOUT the values that belong to flags — otherwise `--out <dir>`
+// donates its value to the steps-file slot and narration parses the wrong file.
+const flagsWithValues = ['--out']
+const positional: string[] = []
+for (let i = 1; i < args.length; i++) {
+  const a = args[i]!
+  if (a.startsWith('-')) {
+    if (flagsWithValues.includes(a)) i++
+    continue
+  }
+  positional.push(a)
+}
 const stepsPath = positional[0]
   ? path.resolve(positional[0])
-  : videoPath.replace(/\.(webm|mp4)$/, '.steps.json')
-const outIndex = args.indexOf('--out')
-const outPath = outIndex >= 0 ? path.resolve(args[outIndex + 1]!) : undefined
+  : videoPath.replace(/\.(webm|mp4)$/i, '.steps.json')
 
 try {
   const result = await narrate({

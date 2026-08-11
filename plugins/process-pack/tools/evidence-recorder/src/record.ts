@@ -29,18 +29,51 @@ const VIEWPORT = { width: 1280, height: 720 }
 const DEFAULT_READY_TIMEOUT = 30_000
 
 /**
+ * Scenario modules are arbitrary code, so their `name` is untrusted input as far as the
+ * filesystem is concerned. A name of `../../etc/thing` would otherwise write the video,
+ * the steps file and the failure screenshot outside `outDir`.
+ */
+export function safeName(name: string): string {
+  const cleaned = name.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/^[.-]+/, '').slice(0, 80)
+  if (!cleaned) throw new Error(`scenario name ${JSON.stringify(name)} contains no usable characters`)
+  return cleaned
+}
+
+/**
  * Apply the deployment-protection header to the protected origin ONLY.
  *
  * Playwright's `extraHTTPHeaders` is context-wide, which sends the header cross-origin to
  * the auth provider too. A custom header forces a CORS preflight the provider does not
  * allow, so its script fails to load and the app renders a blank page — while cookies and
  * the URL path still look correct. Routing per-origin also stops the secret being
- * transmitted to a third party on every request.
+ * transmitted to a third party.
+ *
+ * Match on parsed origin, never `startsWith`: a prefix test on `https://example.com` also
+ * matches `https://example.com.evil.test`, which would hand the bypass secret to whoever
+ * owns that domain.
  */
 async function applyBypassRoute(ctx: BrowserContext, origin: string, secret: string) {
+  let target: URL
+  try {
+    target = new URL(origin)
+  } catch {
+    throw new Error(`protectedOrigin ${JSON.stringify(origin)} is not a valid URL`)
+  }
+
   await ctx.route('**/*', route => {
-    const url = route.request().url()
-    if (url.startsWith(origin)) {
+    let url: URL | null = null
+    try {
+      url = new URL(route.request().url())
+    } catch {
+      url = null
+    }
+    const sameOrigin =
+      url !== null &&
+      url.protocol === target.protocol &&
+      url.hostname === target.hostname &&
+      url.port === target.port
+
+    if (sameOrigin) {
       route.continue({ headers: { ...route.request().headers(), 'x-vercel-protection-bypass': secret } })
     } else {
       route.continue()
@@ -69,27 +102,32 @@ async function waitForReady(page: Page, scenario: Scenario, timeoutMs: number): 
 
 export async function record(scenario: Scenario, options: RecordOptions): Promise<RecordingResult> {
   if (!(await ffmpegAvailable())) {
-    // Only fatal if we end up needing it; warn early so it is not a surprise at the end.
     console.warn('[recorder] ffmpeg not found — re-encoding will be unavailable if the recording is oversized')
   }
 
+  const name = safeName(scenario.name)
   await mkdir(options.outDir, { recursive: true })
-  const videoPath = path.join(options.outDir, `${scenario.name}.webm`)
+  const videoPath = path.join(options.outDir, `${name}.webm`)
 
-  const browser: Browser = await chromium.launch({ headless: options.headless ?? true })
-  const ctx = await browser.newContext({
-    viewport: VIEWPORT,
-    ...(options.storageStatePath ? { storageState: options.storageStatePath } : {}),
-  })
-
-  if (options.protectedOrigin && options.bypassSecret) {
-    await applyBypassRoute(ctx, options.protectedOrigin, options.bypassSecret)
-  }
-
-  const page = await ctx.newPage()
+  // Handles are declared out here so the finally block can close whatever was created.
+  // Previously a throw from newContext() or newPage() left an orphaned browser process.
+  let browser: Browser | null = null
+  let ctx: BrowserContext | null = null
+  let page: Page | null = null
   const stamps: StepStamp[] = []
 
   try {
+    browser = await chromium.launch({ headless: options.headless ?? true })
+    ctx = await browser.newContext({
+      viewport: VIEWPORT,
+      ...(options.storageStatePath ? { storageState: options.storageStatePath } : {}),
+    })
+
+    if (options.protectedOrigin && options.bypassSecret) {
+      await applyBypassRoute(ctx, options.protectedOrigin, options.bypassSecret)
+    }
+
+    page = await ctx.newPage()
     await page.goto(scenario.url, { waitUntil: 'domcontentloaded', timeout: 60_000 })
 
     // Readiness is asserted BEFORE recording starts. Recording a page that never became
@@ -113,7 +151,9 @@ export async function record(scenario: Scenario, options: RecordOptions): Promis
 
     await page.screencast.stop()
     await ctx.close()
+    ctx = null
     await browser.close()
+    browser = null
 
     let finalPath = videoPath
     let container: 'webm' | 'mp4' = 'webm'
@@ -128,12 +168,16 @@ export async function record(scenario: Scenario, options: RecordOptions): Promis
       if (bytes > SIZE_CEILING_BYTES) throw new RecordingTooLargeError(bytes, durationMs)
     }
 
-    return { scenario: scenario.name, videoPath: finalPath, container, bytes, durationMs, steps: stamps, reencoded }
+    return { scenario: name, videoPath: finalPath, container, bytes, durationMs, steps: stamps, reencoded }
   } catch (error) {
     // Save a frame at the point of failure. A failed run with no artifact tells the next
     // session nothing about why.
-    await page.screenshot({ path: path.join(options.outDir, `${scenario.name}-FAILED.png`) }).catch(() => {})
-    await browser.close().catch(() => {})
+    if (page) {
+      await page.screenshot({ path: path.join(options.outDir, `${name}-FAILED.png`) }).catch(() => {})
+    }
     throw error
+  } finally {
+    if (ctx) await ctx.close().catch(() => {})
+    if (browser) await browser.close().catch(() => {})
   }
 }

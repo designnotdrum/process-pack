@@ -14,7 +14,13 @@ import type { Scenario } from '../src/types.js'
  * success here: an expired session showing a sign-in form, and a session whose
  * organisation context never resolved, which renders loading skeletons indefinitely.
  */
-const ORIGIN = process.env.EVIDENCE_PROTECTED_ORIGIN ?? ''
+const ORIGIN = process.env.EVIDENCE_PROTECTED_ORIGIN
+if (!ORIGIN) {
+  // Without this the url below is the relative string "/projects", which Playwright
+  // resolves against whatever base it has — navigating somewhere unintended instead of
+  // reporting the missing configuration.
+  throw new Error('EVIDENCE_PROTECTED_ORIGIN is required for this scenario (the preview origin to record).')
+}
 
 const scenario: Scenario = {
   name: 'meridian-projects',
@@ -50,9 +56,13 @@ const scenario: Scenario = {
       },
     },
     {
-      caption: 'Opening the account menu to show which user this session belongs to.',
+      // The caption promises the account identity is on screen, so the step asserts it.
+      // Swallowing a failed locator here would let the step "succeed" while recording
+      // something that does not show what the caption claims.
+      caption: 'Showing which account this session belongs to.',
       run: async page => {
-        await page.getByText(/Sign out/i).first().hover().catch(() => {})
+        await page.getByText(/Sign out/i).first().waitFor({ state: 'visible', timeout: 5_000 })
+        await page.getByText(/Sign out/i).first().hover()
         await page.waitForTimeout(2000)
       },
     },

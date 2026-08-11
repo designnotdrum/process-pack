@@ -15,6 +15,35 @@ export interface Clip {
   voice: Voice
 }
 
+/** ElevenLabs' documented concurrency is 10 on Creator, 20 on Pro. Stay under the floor. */
+const MAX_CONCURRENT = 5
+const REQUEST_TIMEOUT_MS = 30_000
+
+async function assertExecutable(command: string, args: string[], hint: string): Promise<void> {
+  try {
+    await run(command, args)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') throw new Error(`${command} is not installed or not on PATH. ${hint}`)
+    throw error
+  }
+}
+
+/** Checked once before a batch, so a missing prerequisite is named rather than surfacing
+ *  as a raw execFile error from inside one of N parallel renders. */
+export async function assertPrerequisites(voice: Voice): Promise<void> {
+  await assertExecutable('ffprobe', ['-version'], 'Install ffmpeg (which provides ffprobe) to measure clip durations.')
+  if (voice === 'say') {
+    if (process.platform !== 'darwin') {
+      throw new Error(
+        `The local voice fallback uses macOS \`say\`, and this is ${process.platform}. ` +
+        `Set ELEVENLABS_API_KEY to narrate on this platform.`,
+      )
+    }
+    await assertExecutable('/usr/bin/say', ['-v', '?'], 'Expected macOS `say` at /usr/bin/say.')
+  }
+}
+
 /**
  * Measure a rendered clip. Both providers go down this one path.
  *
@@ -31,7 +60,9 @@ export async function probeDuration(file: string): Promise<number> {
     file,
   ])
   const seconds = Number.parseFloat(stdout.trim())
-  if (!Number.isFinite(seconds)) throw new Error(`could not read a duration from ${file}`)
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw new Error(`could not read a usable duration from ${file}`)
+  }
   return seconds
 }
 
@@ -51,18 +82,32 @@ async function renderWithSay(text: string, outPath: string): Promise<void> {
  * model; a 15-caption run costs roughly $0.07. Output is mp3 so the duration is honest.
  */
 async function renderWithElevenLabs(text: string, outPath: string, apiKey: string, voiceId: string): Promise<void> {
-  const response = await fetch(
-    `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`,
-    {
-      method: 'POST',
-      headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, model_id: 'eleven_flash_v2_5' }),
-    },
-  )
-  if (!response.ok) {
-    throw new Error(`ElevenLabs returned ${response.status}: ${(await response.text()).slice(0, 200)}`)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  try {
+    const response = await fetch(
+      // Encoded: a caller-supplied id containing `/`, `?` or `#` would otherwise retarget
+      // the request.
+      `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`,
+      {
+        method: 'POST',
+        headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, model_id: 'eleven_flash_v2_5' }),
+        signal: controller.signal,
+      },
+    )
+    if (!response.ok) {
+      throw new Error(`ElevenLabs returned ${response.status}: ${(await response.text()).slice(0, 200)}`)
+    }
+    await writeFile(outPath, Buffer.from(await response.arrayBuffer()))
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`ElevenLabs did not respond within ${REQUEST_TIMEOUT_MS / 1000}s for caption: "${text.slice(0, 60)}"`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
   }
-  await writeFile(outPath, Buffer.from(await response.arrayBuffer()))
 }
 
 export interface RenderOptions {
@@ -73,8 +118,24 @@ export interface RenderOptions {
   forceSay?: boolean
 }
 
+/** Bounded parallelism. Unbounded `Promise.all` over a long scenario bursts a paid API
+ *  past its concurrency limit, and one rejection abandons clips already written. */
+async function mapWithLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let next = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const i = next++
+      if (i >= items.length) return
+      results[i] = await fn(items[i]!)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
 /**
- * Render captions to audio, in parallel.
+ * Render captions to audio.
  *
  * Falls back to `say` when no key is present — and the caller is expected to state that in
  * the run output. A robot voice is acceptable evidence; a silent downgrade nobody noticed
@@ -88,13 +149,13 @@ export async function renderCaptions(
   const voice: Voice = apiKey ? 'elevenlabs' : 'say'
   const voiceId = options.voiceId ?? 'JBFqnCBsd6RMkjVDRZzb'
 
-  return Promise.all(
-    captions.map(async ({ index, caption }) => {
-      const ext = voice === 'elevenlabs' ? 'mp3' : 'wav'
-      const audioPath = path.join(options.outDir, `caption-${String(index).padStart(2, '0')}.${ext}`)
-      if (voice === 'elevenlabs') await renderWithElevenLabs(caption, audioPath, apiKey!, voiceId)
-      else await renderWithSay(caption, audioPath)
-      return { index, caption, audioPath, durationSec: await probeDuration(audioPath), voice }
-    }),
-  )
+  await assertPrerequisites(voice)
+
+  return mapWithLimit(captions, MAX_CONCURRENT, async ({ index, caption }) => {
+    const ext = voice === 'elevenlabs' ? 'mp3' : 'wav'
+    const audioPath = path.join(options.outDir, `caption-${String(index).padStart(2, '0')}.${ext}`)
+    if (voice === 'elevenlabs') await renderWithElevenLabs(caption, audioPath, apiKey!, voiceId)
+    else await renderWithSay(caption, audioPath)
+    return { index, caption, audioPath, durationSec: await probeDuration(audioPath), voice }
+  })
 }

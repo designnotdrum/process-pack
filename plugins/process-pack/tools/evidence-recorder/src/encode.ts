@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { stat } from 'node:fs/promises'
+import { stat, rm } from 'node:fs/promises'
 
 const run = promisify(execFile)
 
@@ -40,16 +40,23 @@ export async function ffmpegAvailable(): Promise<boolean> {
  */
 export async function reencode(input: string): Promise<string> {
   const output = input.replace(/\.webm$/, '.mp4')
-  await run('ffmpeg', [
-    '-y',
-    '-loglevel', 'error',
-    '-i', input,
-    '-c:v', 'libx264',
-    '-crf', String(CRF),
-    '-preset', 'veryfast',
-    '-pix_fmt', 'yuv420p',
-    output,
-  ])
+  try {
+    await run('ffmpeg', [
+      '-y',
+      '-loglevel', 'error',
+      '-i', input,
+      '-c:v', 'libx264',
+      '-crf', String(CRF),
+      '-preset', 'veryfast',
+      '-pix_fmt', 'yuv420p',
+      output,
+    ])
+  } catch (error) {
+    // ffmpeg may have created the destination before failing. Leaving a partial file
+    // behind lets a retry or an artifact scan mistake it for a finished recording.
+    await rm(output, { force: true }).catch(() => {})
+    throw error
+  }
   return output
 }
 
