@@ -30,7 +30,8 @@ function flagValue(list: string[], flag: string): string | undefined {
 }
 
 const videoPath = path.resolve(args[0]!)
-const outPath = flagValue(args, '--out') ? path.resolve(flagValue(args, '--out')!) : undefined
+const outFlag = flagValue(args, '--out')
+const outPath = outFlag ? path.resolve(outFlag) : undefined
 
 // Collect positionals WITHOUT the values that belong to flags — otherwise `--out <dir>`
 // donates its value to the steps-file slot and narration parses the wrong file.
@@ -49,9 +50,13 @@ for (let i = 1; i < args.length; i++) {
   positional.push(a)
 }
 if (positional.length > 1) usage()
+// Fallback must not equal the video path for an unusual extension, or narration would
+// try to parse the recording as its own steps file.
 const stepsPath = positional[0]
   ? path.resolve(positional[0])
-  : videoPath.replace(/\.(webm|mp4)$/i, '.steps.json')
+  : (/\.(webm|mp4)$/i.test(videoPath)
+      ? videoPath.replace(/\.(webm|mp4)$/i, '.steps.json')
+      : `${videoPath}.steps.json`)
 
 try {
   const result = await narrate({
@@ -65,7 +70,12 @@ try {
   console.log(`narrated ${result.outPath}`)
   if (result.usedFallback) {
     // Stated, never silent. A downgrade nobody noticed is the failure mode this avoids.
-    console.log('  VOICE: local fallback (no ELEVENLABS_API_KEY present)')
+    // Distinguish "asked for it" from "had to" — claiming the key is missing when the
+    // user passed --say sends them debugging a key that is present and fine.
+    const reason = args.includes('--say')
+      ? '--say was passed'
+      : 'no ELEVENLABS_API_KEY present'
+    console.log(`  VOICE: local fallback (${reason})`)
   } else {
     console.log('  voice: elevenlabs')
   }

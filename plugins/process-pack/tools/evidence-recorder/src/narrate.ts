@@ -60,8 +60,11 @@ export function placeClips(clips: Clip[], steps: StepStamp[]): Placement[] {
 }
 
 export async function narrate(options: NarrateOptions): Promise<NarrateResult> {
-  const stepsFile = JSON.parse(await readFile(options.stepsPath, 'utf8')) as { steps: StepStamp[] }
-  const steps = stepsFile.steps
+  const parsed: unknown = JSON.parse(await readFile(options.stepsPath, 'utf8'))
+  if (!parsed || typeof parsed !== 'object' || !('steps' in parsed)) {
+    throw new Error(`${options.stepsPath} is not a steps file (expected an object with a "steps" array)`)
+  }
+  const steps = (parsed as { steps: StepStamp[] }).steps
   if (!Array.isArray(steps) || steps.length === 0) throw new Error(`${options.stepsPath} contains no steps`)
 
   // The steps file is JSON on disk and may be hand-edited. A NaN or negative startMs

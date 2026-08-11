@@ -123,14 +123,23 @@ export interface RenderOptions {
 async function mapWithLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results = new Array<R>(items.length)
   let next = 0
+  let failure: unknown = null
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (true) {
       const i = next++
-      if (i >= items.length) return
-      results[i] = await fn(items[i]!)
+      if (i >= items.length || failure) return
+      try {
+        results[i] = await fn(items[i]!)
+      } catch (error) {
+        // Record and stop taking work, but let the other workers finish what they hold.
+        // Rejecting immediately would start cleanup while renders are still writing.
+        failure ??= error
+        return
+      }
     }
   })
   await Promise.all(workers)
+  if (failure) throw failure
   return results
 }
 

@@ -136,6 +136,11 @@ export async function record(scenario: Scenario, options: RecordOptions): Promis
       ...(options.storageStatePath ? { storageState: options.storageStatePath } : {}),
     })
 
+    // Half-configured is a mistake, not a default. Proceeding without the header lands on
+    // the protection wall and looks like an auth bug.
+    if (Boolean(options.protectedOrigin) !== Boolean(options.bypassSecret)) {
+      throw new Error('protectedOrigin and bypassSecret must be supplied together')
+    }
     if (options.protectedOrigin && options.bypassSecret) {
       await applyBypassRoute(ctx, options.protectedOrigin, options.bypassSecret)
     }

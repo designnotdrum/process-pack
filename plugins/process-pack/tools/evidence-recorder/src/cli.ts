@@ -29,7 +29,7 @@ function flagValue(args: string[], flag: string): string | undefined {
   const i = args.indexOf(flag)
   if (i < 0) return undefined
   const value = args[i + 1]
-  if (value === undefined || value.startsWith('-')) usage(`${flag} needs a value.`)
+  if (value === undefined || value.startsWith('-') || value.trim() === '') usage(`${flag} needs a value.`)
   return value
 }
 
@@ -102,7 +102,16 @@ try {
   })
 
   const stepsPath = path.join(outDir, `${result.scenario}.steps.json`)
-  await writeFile(stepsPath, JSON.stringify({ scenario: result.scenario, durationMs: result.durationMs, steps: result.steps }, null, 2))
+  try {
+    await writeFile(stepsPath, JSON.stringify({ scenario: result.scenario, durationMs: result.durationMs, steps: result.steps }, null, 2))
+  } catch (error) {
+    // The video exists at this point. Reporting "no recording was produced" would send
+    // someone hunting for a missing file that is sitting right there.
+    console.error(`\nThe recording succeeded (${result.videoPath}) but its step timings could not be written:`)
+    console.error(`  ${error instanceof Error ? error.message : String(error)}`)
+    console.error('Narration needs that file. Fix the write and re-run, or narrate with an explicit steps path.')
+    process.exit(1)
+  }
 
   const mb = (result.bytes / 1048576).toFixed(2)
   console.log(`recorded ${result.videoPath}`)
