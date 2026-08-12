@@ -116,7 +116,12 @@ export async function narrate(options: NarrateOptions): Promise<NarrateResult> {
   const videoFilter = paddedSec > 0
     ? `[0:v]tpad=stop_mode=clone:stop_duration=${paddedSec.toFixed(2)}[v]`
     : `[0:v]null[v]`
-  const filter = `${videoFilter};${delays};${mixInputs}amix=inputs=${placements.length}:normalize=0[a]`
+  // loudnorm to the EBU R128 target used for speech on the web. Without it the local
+  // voice lands around -20 dB mean, which is too quiet for a reviewer watching at low
+  // volume with something else going on — and unheard narration is no narration.
+  const filter =
+    `${videoFilter};${delays};${mixInputs}amix=inputs=${placements.length}:normalize=0[mixed];` +
+    `[mixed]loudnorm=I=-16:TP=-1.5:LRA=11[a]`
 
   await run('ffmpeg', [
     '-y', '-loglevel', 'error',
@@ -124,7 +129,10 @@ export async function narrate(options: NarrateOptions): Promise<NarrateResult> {
     '-filter_complex', filter,
     '-map', '[v]', '-map', '[a]',
     '-c:v', 'libx264', '-crf', '28', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
-    '-c:a', 'aac', '-b:a', '128k',
+    // Normalise to 44.1kHz stereo. The local voice renders 24kHz mono, which plays
+    // unevenly in embedded and browser players; evidence has to play everywhere it is
+    // attached, not just in a desktop video app.
+    '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2',
     '-movflags', '+faststart',
     outPath,
   ])
