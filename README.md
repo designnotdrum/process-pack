@@ -4,7 +4,7 @@
 
 The skills are written to be generic. Every fact that's specific to *you* - your git identities, your model tiers, your repo's landmines, your team's escalation rules - lives in separate constants files that you generate in about ten minutes. One source of process, swappable specifics.
 
-> **Status:** v1.1, pilot-passed. Ran a real production ticket end-to-end (recon → build → three review rounds → merge) with one process correction. All 18 golden fixtures replay clean. Safe to install and use.
+> **Status:** v1.4, pilot-passed. Ran a real production ticket end-to-end (recon → build → three review rounds → merge) with one process correction. 26 golden fixtures, of which F01–F18 have a recorded replay pass; F19–F26 were added later and have not been replayed since. Safe to install and use.
 
 ---
 
@@ -81,7 +81,7 @@ flowchart LR
 
 ## What's in the box
 
-**14 skills, grouped by when they fire:**
+**15 skills, grouped by when they fire:**
 
 *Plan & dispatch*
 - **`lane-planner`** - before more than one delegate runs against a repo: the ownership table (one owner per file, phase gating, merge order) that has to exist before dispatch, not after a collision.
@@ -96,11 +96,12 @@ flowchart LR
 *Decide & verify*
 - **`root-cause-first`** - no fix ships without a stated causal mechanism. A contradicted hypothesis counts as progress, not failure.
 - **`escalation-policy`** - names the decision classes that always stop for a human, and how to rent a top-tier model as a consultant at a named decision point rather than as the resident driver.
-- **`verification-gates`** - definition of done per work class (CI change, flaky-test fix, design round, removal/migration), plus a standing adversarial pre-merge review rule.
+- **`verification-gates`** - definition of done per work class (CI change, flaky-test fix, design round, UI change, removal/migration), plus a standing adversarial pre-merge review rule. UI changes require a narrated recording of the reported symptom no longer happening, the deployment pinned before the observation is trusted, and readiness asserted on the feature itself rather than a proxy for it.
 - **`feedback-triage`** - splits every review item into one of four buckets before any work starts, so parked items don't get silently rebuilt.
 - **`fix-what-you-find`** - when a defect surfaces in work already open, fix it there instead of filing a ticket. Filing is the exception, gated to four named blockers (a human decision, missing access, a lane collision, or genuine size) - "out of scope," "pre-existing," and "non-blocking" are not blockers.
 
 *Taste & upkeep*
+- **`tuning-playground`** - at the polish stage of a design direction, turns a prototype's own tokens into a small panel of eye-decidable knobs a designer drives by hand, then routes what they settle back into the token system and the taste rules.
 - **`taste-rules`** - reads your standing corrections from constants (merge policy, style rules, reuse-existing-patterns) and carries them into every brief and review.
 - **`desk-research`** - grounds a technical or design direction in prior art before you commit: a source index, a synthesis, and candidate directions instead of a pile of links.
 - **`pp-init`** - the onboarding interview above, and the correction-miner that turns recurring corrections into candidate rules.
@@ -110,6 +111,12 @@ flowchart LR
 - **`stub-guard`** - `PreToolUse` on `git commit`. Greps the staged diff for the local-only stub markers your repo declares and blocks the commit with the file list.
 
 **Board viewer** (`board-viewer/`) - renders one `board.json` two ways, a Gantt (lanes over time with dependencies) and a Kanban (columns by state). Data is the contract; this is just a renderer. Publishable as a single file for anyone watching from a phone.
+
+**Evidence recorder** (`tools/evidence-recorder/`) - records a browser scenario as narrated video for a PR, which is what `verification-gates` asks for on a UI change. A scenario is a module of `{ caption, run(page) }` steps; `run` is arbitrary Playwright, and the step array supplies the boundaries the narration is timed against.
+
+Its load-bearing field is `ready()`, which is required and runs *before* recording starts. It must assert something only the working feature renders — every cheap proxy has at some point passed on a page that was not the page under test: HTTP 200 on a sign-in redirect, a session cookie on a blank page, network-idle on an app frozen in skeletons, an absence of skeletons on a signed-out form. When it fails the recorder writes a failure frame, refuses to record, and exits non-zero: a missing recording is a visible problem, a recording of loading placeholders is an invisible one.
+
+Run `examples/demo.scenario.ts` against the bundled static page to see a finished recording in about a minute, with no auth and no secrets.
 
 ---
 
@@ -134,7 +141,7 @@ More docs:
 - **[`docs/case-studies.md`](plugins/process-pack/docs/case-studies.md)** - real sessions kept as worked examples (non-normative).
 - **[`docs/migration-notes.md`](plugins/process-pack/docs/migration-notes.md)** - what in this pack supersedes which earlier loose skills.
 - **[`docs/PILOT-SCORECARD.md`](plugins/process-pack/docs/PILOT-SCORECARD.md)** - the first real run, scored.
-- **[`docs/REPLAY-REPORT.md`](plugins/process-pack/docs/REPLAY-REPORT.md)** - all 18 fixtures, replayed.
+- **[`docs/REPLAY-REPORT.md`](plugins/process-pack/docs/REPLAY-REPORT.md)** - F01–F18, replayed and scored. F19–F26 postdate it.
 
 ---
 

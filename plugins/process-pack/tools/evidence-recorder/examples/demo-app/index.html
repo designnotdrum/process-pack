@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Recorder demo</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --panel: #ffffff;
+    --ink: #14161a;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --red: #d92d20;
+    --green: #067647;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    color: var(--ink); background: var(--bg); height: 100vh; overflow: hidden;
+  }
+  header {
+    height: 56px; background: var(--panel); border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; padding: 0 20px; font-weight: 600;
+  }
+  main { padding: 48px 20px; max-width: 720px; margin: 0 auto; text-align: center; }
+  h1 { font-size: 30px; margin: 0 0 10px; letter-spacing: -0.02em; }
+  p.sub { color: var(--muted); margin: 0 0 32px; }
+  .row { display: flex; gap: 12px; justify-content: center; }
+  button {
+    font: inherit; font-weight: 600; color: #fff; border: 0; border-radius: 8px;
+    padding: 11px 18px; cursor: pointer;
+  }
+  #open-modal { background: var(--red); }
+  #open-sidebar { background: var(--green); }
+
+  /* modal */
+  #overlay {
+    position: fixed; inset: 0; background: rgba(16,18,22,.45);
+    display: none; align-items: center; justify-content: center;
+  }
+  #overlay[data-open="true"] { display: flex; }
+  #modal {
+    background: var(--panel); border-radius: 12px; width: 380px; padding: 24px;
+    box-shadow: 0 20px 40px rgba(0,0,0,.18);
+  }
+  #modal h2 { margin: 0 0 8px; font-size: 22px; letter-spacing: -0.01em; }
+  #modal p { margin: 0 0 20px; color: var(--muted); }
+  #close-modal { background: var(--ink); }
+
+  /* sidebar */
+  #sidebar {
+    position: fixed; top: 0; right: 0; height: 100vh; width: 300px;
+    background: var(--panel); border-left: 1px solid var(--line);
+    transform: translateX(100%); transition: transform .28s ease; padding: 24px;
+    box-shadow: -12px 0 32px rgba(0,0,0,.06);
+  }
+  #sidebar[data-open="true"] { transform: translateX(0); }
+  #sidebar h2 { margin: 0 0 8px; font-size: 22px; letter-spacing: -0.01em; }
+  #sidebar p { color: var(--muted); margin: 0 0 20px; }
+  #close-sidebar { background: var(--ink); }
+</style>
+</head>
+<body>
+  <header>Recorder demo</header>
+
+  <main>
+    <h1>Two controls, two outcomes</h1>
+    <p class="sub">The red button opens a modal. The green button opens a sidebar.</p>
+    <div class="row">
+      <button id="open-modal">Open modal</button>
+      <button id="open-sidebar">Open sidebar</button>
+    </div>
+  </main>
+
+  <div id="overlay" data-open="false">
+    <div id="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <h2 id="modal-title">Modal opened</h2>
+      <p>This dialog was opened by the red button.</p>
+      <button id="close-modal">Close</button>
+    </div>
+  </div>
+
+  <aside id="sidebar" data-open="false" aria-label="Details sidebar">
+    <h2>Sidebar opened</h2>
+    <p>This panel was opened by the green button.</p>
+    <button id="close-sidebar">Close</button>
+  </aside>
+
+<script>
+  const overlay = document.getElementById('overlay')
+  const sidebar = document.getElementById('sidebar')
+  const set = (el, open) => el.dataset.open = String(open)
+
+  document.getElementById('open-modal').onclick = () => set(overlay, true)
+  document.getElementById('close-modal').onclick = () => set(overlay, false)
+  document.getElementById('open-sidebar').onclick = () => set(sidebar, true)
+  document.getElementById('close-sidebar').onclick = () => set(sidebar, false)
+</script>
+</body>
+</html>
