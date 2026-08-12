@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import path from 'node:path'
 import { narrate } from './narrate.js'
-import { listVoices } from './tts.js'
+import { listVoices, DEFAULT_VOICE_NAME } from './tts.js'
 
 function usage(): never {
   console.error(`
@@ -100,8 +100,10 @@ try {
       : 'no ELEVENLABS_API_KEY present'
     console.log(`  VOICE: local fallback (${reason})`)
   } else {
+    // Name the voice actually used. "account default" would be a lie here — the tool has
+    // its own default, and the log has to agree with what a reviewer hears.
     const named = flagValue(args, '--voice') ?? process.env.ELEVENLABS_VOICE_ID
-    console.log(`  voice: elevenlabs${named ? ` (${named})` : ' (account default)'}`)
+    console.log(`  voice: elevenlabs (${named ?? `${DEFAULT_VOICE_NAME}, default`})`)
   }
   for (const p of result.placements) {
     const flag = p.delayed ? '  [delayed: previous caption was still speaking]' : ''

@@ -15,6 +15,15 @@ export interface Clip {
   voice: Voice
 }
 
+/**
+ * "River — Relaxed, Neutral, Informative", ElevenLabs' own narration voice. Chosen for
+ * evidence because neutral wears better across a hundred QA videos than a distinctive
+ * voice does: the reviewer should be listening to what changed, not to the narrator.
+ * Override per-run with --voice, or globally with ELEVENLABS_VOICE_ID.
+ */
+export const DEFAULT_VOICE_ID = 'SAz9YHcvj6GT2YYXdXww'
+export const DEFAULT_VOICE_NAME = 'River'
+
 /** ElevenLabs' documented concurrency is 10 on Creator, 20 on Pro. Stay under the floor. */
 const MAX_CONCURRENT = 5
 const REQUEST_TIMEOUT_MS = 30_000
@@ -214,7 +223,7 @@ export async function renderCaptions(
 ): Promise<Clip[]> {
   const apiKey = options.forceSay ? undefined : options.apiKey
   const voice: Voice = apiKey ? 'elevenlabs' : 'say'
-  const voiceId = options.voiceId ?? 'JBFqnCBsd6RMkjVDRZzb'
+  const voiceId = options.voiceId ?? DEFAULT_VOICE_ID
 
   // Exported, so it must not assume narrate() already made the directory.
   await mkdir(options.outDir, { recursive: true })

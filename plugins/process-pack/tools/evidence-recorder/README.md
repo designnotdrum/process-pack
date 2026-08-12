@@ -81,11 +81,18 @@ evidence, a downgrade nobody noticed is not.
 ```sh
 export ELEVENLABS_API_KEY=...                       # from your secret manager, never a repo file
 bun src/narrate-cli.ts --list-voices                # what this account can use
-bun src/narrate-cli.ts out/x.webm --voice "Rachel"  # by name, or by id
+bun src/narrate-cli.ts out/x.webm                   # default voice: River
+bun src/narrate-cli.ts out/x.webm --voice "Daniel"  # by name (prefix is enough) or id
 export ELEVENLABS_VOICE_ID=...                      # set a default; --voice overrides it
 ```
 
-A voice name is resolved against the account and matched case-insensitively. An ambiguous
+The default is **River**, ElevenLabs' narration voice — neutral wears better across a
+hundred QA videos than a distinctive one, since the reviewer should be listening to what
+changed rather than to the narrator.
+
+A voice name is resolved against the account and matched case-insensitively, widening from
+exact to prefix. Account names carry descriptor suffixes ("River - Relaxed, Neutral,
+Informative"), so `--voice River` is enough. An ambiguous
 name is an error rather than a silent pick — narrating a whole recording in the wrong voice
 is a slow thing to notice, and a cheap thing to prevent.
 
