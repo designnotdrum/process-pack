@@ -143,16 +143,29 @@ export async function resolveVoiceId(voice: string, apiKey: string): Promise<str
   const voices = await listVoices(apiKey)
   const byId = voices.find(v => v.id === voice)
   if (byId) return byId.id
-  const matches = voices.filter(v => v.name.toLowerCase() === voice.toLowerCase())
-  if (matches.length === 1) return matches[0]!.id
-  if (matches.length > 1) {
-    throw new Error(`voice name "${voice}" is ambiguous: ${matches.map(m => m.id).join(', ')} — pass the id`)
+  const q = voice.toLowerCase().trim()
+
+  // Account voice names carry descriptor suffixes ("River - Relaxed, Neutral,
+  // Informative"), so an exact match alone is useless in practice — nobody types that.
+  // Widen progressively, and only ever accept a tier that resolves to exactly one voice.
+  const tiers: { how: string; hits: VoiceSummary[] }[] = [
+    { how: 'exact name', hits: voices.filter(v => v.name.toLowerCase() === q) },
+    { how: 'leading name', hits: voices.filter(v => v.name.toLowerCase().split(' - ')[0]!.trim() === q) },
+    { how: 'name prefix', hits: voices.filter(v => v.name.toLowerCase().startsWith(q)) },
+    { how: 'name contains', hits: voices.filter(v => v.name.toLowerCase().includes(q)) },
+  ]
+
+  for (const tier of tiers) {
+    if (tier.hits.length === 1) return tier.hits[0]!.id
+    if (tier.hits.length > 1) {
+      throw new Error(
+        `voice "${voice}" is ambiguous by ${tier.how}: ${tier.hits.map(h => h.name).join(' | ')}. ` +
+        `Narrating a whole recording in the wrong voice is slow to notice — pass a longer name or the id.`,
+      )
+    }
   }
-  const near = voices.filter(v => v.name.toLowerCase().includes(voice.toLowerCase()))
-  throw new Error(
-    `no voice named "${voice}" on this account.` +
-    (near.length ? ` Did you mean: ${near.map(v => v.name).join(', ')}?` : ' Run with --list-voices to see what is available.'),
-  )
+
+  throw new Error(`no voice matching "${voice}" on this account. Run with --list-voices to see what is available.`)
 }
 
 export interface RenderOptions {
