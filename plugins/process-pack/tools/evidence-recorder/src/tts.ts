@@ -110,6 +110,51 @@ async function renderWithElevenLabs(text: string, outPath: string, apiKey: strin
   }
 }
 
+export interface VoiceSummary {
+  id: string
+  name: string
+  category?: string
+  description?: string
+}
+
+/** Lists the voices available to this key, so a voice can be chosen by name. */
+export async function listVoices(apiKey: string): Promise<VoiceSummary[]> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  try {
+    const r = await fetch('https://api.elevenlabs.io/v2/voices?page_size=100', {
+      headers: { 'xi-api-key': apiKey },
+      signal: controller.signal,
+    })
+    if (!r.ok) throw new Error(`ElevenLabs returned ${r.status} listing voices: ${(await r.text()).slice(0, 200)}`)
+    const body = await r.json() as { voices?: { voice_id: string; name: string; category?: string; description?: string }[] }
+    return (body.voices ?? []).map(v => ({ id: v.voice_id, name: v.name, category: v.category, description: v.description }))
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Accepts either a voice id or a name. Names are matched case-insensitively, and an
+ * ambiguous name is an error rather than a silent pick — narrating a whole recording in
+ * the wrong voice is a slow thing to notice.
+ */
+export async function resolveVoiceId(voice: string, apiKey: string): Promise<string> {
+  const voices = await listVoices(apiKey)
+  const byId = voices.find(v => v.id === voice)
+  if (byId) return byId.id
+  const matches = voices.filter(v => v.name.toLowerCase() === voice.toLowerCase())
+  if (matches.length === 1) return matches[0]!.id
+  if (matches.length > 1) {
+    throw new Error(`voice name "${voice}" is ambiguous: ${matches.map(m => m.id).join(', ')} — pass the id`)
+  }
+  const near = voices.filter(v => v.name.toLowerCase().includes(voice.toLowerCase()))
+  throw new Error(
+    `no voice named "${voice}" on this account.` +
+    (near.length ? ` Did you mean: ${near.map(v => v.name).join(', ')}?` : ' Run with --list-voices to see what is available.'),
+  )
+}
+
 export interface RenderOptions {
   outDir: string
   apiKey?: string

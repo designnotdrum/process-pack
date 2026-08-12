@@ -1,23 +1,45 @@
 #!/usr/bin/env node
 import path from 'node:path'
 import { narrate } from './narrate.js'
+import { listVoices } from './tts.js'
 
 function usage(): never {
   console.error(`
-narrate-evidence <video> [steps.json] [--out <file>] [--say]
+narrate-evidence <video> [steps.json] [--out <file>] [--say] [--voice <name|id>]
+narrate-evidence --list-voices
 
-  <video>       A recording produced by record-evidence
-  [steps.json]  Defaults to <video-basename>.steps.json alongside it
-  --say         Force the free local voice even if a key is present
+  <video>         A recording produced by record-evidence
+  [steps.json]    Defaults to <video-basename>.steps.json alongside it
+  --say           Force the free local voice even if a key is present
+  --voice <v>     Voice name or id (default: ELEVENLABS_VOICE_ID, else the API default)
+  --list-voices   Print the voices available to this key, then exit
 
 Environment:
   ELEVENLABS_API_KEY   Preferred voice. Without it the local voice is used and
                        the fallback is stated in the output — never silently.
+  ELEVENLABS_VOICE_ID  Default voice, overridden by --voice.
 `.trim())
   process.exit(2)
 }
 
 const args = process.argv.slice(2)
+
+if (args.includes('--list-voices')) {
+  const key = process.env.ELEVENLABS_API_KEY
+  if (!key) {
+    console.error('ELEVENLABS_API_KEY is not set, so there are no account voices to list.')
+    process.exit(2)
+  }
+  const voices = await listVoices(key)
+  console.log(`${voices.length} voice(s) available:\n`)
+  for (const v of voices) {
+    const meta = [v.category, v.description].filter(Boolean).join(' — ')
+    console.log(`  ${v.name.padEnd(22)} ${v.id}${meta ? `\n  ${' '.repeat(22)} ${meta.slice(0, 90)}` : ''}`)
+  }
+  console.log('\nUse:  narrate-evidence <video> --voice "<name>"')
+  process.exit(0)
+}
+
 if (!args.length || args[0]!.startsWith('-')) usage()
 
 /** Reads a flag's value, rejecting a missing one or the next flag masquerading as it. */
@@ -35,8 +57,8 @@ const outPath = outFlag ? path.resolve(outFlag) : undefined
 
 // Collect positionals WITHOUT the values that belong to flags — otherwise `--out <dir>`
 // donates its value to the steps-file slot and narration parses the wrong file.
-const flagsWithValues = ['--out']
-const knownFlags = ['--say']
+const flagsWithValues = ['--out', '--voice']
+const knownFlags = ['--say', '--list-voices']
 const positional: string[] = []
 for (let i = 1; i < args.length; i++) {
   const a = args[i]!
@@ -65,6 +87,7 @@ try {
     outPath,
     apiKey: process.env.ELEVENLABS_API_KEY,
     forceSay: args.includes('--say'),
+    voice: flagValue(args, '--voice') ?? process.env.ELEVENLABS_VOICE_ID,
   })
 
   console.log(`narrated ${result.outPath}`)
@@ -77,7 +100,8 @@ try {
       : 'no ELEVENLABS_API_KEY present'
     console.log(`  VOICE: local fallback (${reason})`)
   } else {
-    console.log('  voice: elevenlabs')
+    const named = flagValue(args, '--voice') ?? process.env.ELEVENLABS_VOICE_ID
+    console.log(`  voice: elevenlabs${named ? ` (${named})` : ' (account default)'}`)
   }
   for (const p of result.placements) {
     const flag = p.delayed ? '  [delayed: previous caption was still speaking]' : ''

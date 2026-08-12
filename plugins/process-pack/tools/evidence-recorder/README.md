@@ -78,6 +78,22 @@ recorded start time, and muxes to `<name>-narrated.mp4`.
 The fallback is always **stated in the output**, never silent — a robot voice is acceptable
 evidence, a downgrade nobody noticed is not.
 
+```sh
+export ELEVENLABS_API_KEY=...                       # from your secret manager, never a repo file
+bun src/narrate-cli.ts --list-voices                # what this account can use
+bun src/narrate-cli.ts out/x.webm --voice "Rachel"  # by name, or by id
+export ELEVENLABS_VOICE_ID=...                      # set a default; --voice overrides it
+```
+
+A voice name is resolved against the account and matched case-insensitively. An ambiguous
+name is an error rather than a silent pick — narrating a whole recording in the wrong voice
+is a slow thing to notice, and a cheap thing to prevent.
+
+**Audio output is normalised** to 44.1kHz stereo at −16 LUFS regardless of which voice
+rendered it. The local voice produces 24kHz mono at around −20 dB, which plays unevenly in
+embedded players and is too quiet to follow at low volume. Evidence has to play where it is
+attached, not only in a desktop video app.
+
 **WAV and MP3 only, never m4a.** Measured: AAC adds ~106ms of encoder padding, so a clip
 measured as m4a reports longer than it sounds. Narration placed from that number drifts a
 tenth of a second per caption and accumulates, presenting as "the voice slowly falls

@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { mkdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { renderCaptions, probeDuration, type Clip } from './tts.js'
+import { renderCaptions, probeDuration, resolveVoiceId, type Clip } from './tts.js'
 import type { StepStamp } from './types.js'
 
 const run = promisify(execFile)
@@ -13,6 +13,8 @@ export interface NarrateOptions {
   outPath?: string
   apiKey?: string
   forceSay?: boolean
+  /** Voice id, or a voice name to resolve against the account. */
+  voice?: string
 }
 
 export interface Placement extends Clip {
@@ -82,9 +84,12 @@ export async function narrate(options: NarrateOptions): Promise<NarrateResult> {
   const workDir = path.join(path.dirname(options.videoPath), 'narration')
   await mkdir(workDir, { recursive: true })
 
+  const apiKey = options.forceSay ? undefined : options.apiKey
+  const voiceId = apiKey && options.voice ? await resolveVoiceId(options.voice, apiKey) : undefined
+
   const clips = await renderCaptions(
     steps.map(s => ({ index: s.index, caption: s.caption })),
-    { outDir: workDir, apiKey: options.apiKey, forceSay: options.forceSay },
+    { outDir: workDir, apiKey: options.apiKey, forceSay: options.forceSay, voiceId },
   )
 
   const placements = placeClips(clips, steps)
