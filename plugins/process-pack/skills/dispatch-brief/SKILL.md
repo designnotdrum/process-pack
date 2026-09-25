@@ -7,7 +7,7 @@ description: Use when writing the prompt or brief for any delegate — an in-ses
 
 ## Default stance
 
-Every delegate brief ships all ten mandatory blocks below before you dispatch. Routing picks *who* does the work; this contract is the only thing that standardizes *what* they're sent. A delegate that comes back wrong usually got a bad contract, not a bad model — treat every disappointing return as a brief defect first, a delegate defect second.
+Every delegate brief ships all eleven mandatory blocks below before you dispatch. Routing picks *who* does the work; this contract is the only thing that standardizes *what* they're sent. A delegate that comes back wrong usually got a bad contract, not a bad model — treat every disappointing return as a brief defect first, a delegate defect second.
 
 ## Applicability gate
 
@@ -15,7 +15,7 @@ This applies whenever you hand work to anything that will act without your conti
 
 If a delegate already returned wrong or incomplete work, re-derive the brief against this contract before re-dispatching — don't just re-explain the same shorthand more slowly.
 
-## The ten mandatory blocks
+## The eleven mandatory blocks
 
 1. **Repo + identity.** Exact repo/path and which identity the delegate commits, pushes, and authenticates as — pulled from your identity constants scope, never guessed by the delegate and never left implicit.
 2. **Isolation.** The worktree path the delegate works in, plus the rule stated outright: never checkout in a shared clone. Shared-clone dispatch is a lane-planning failure — see the lane-planner skill before you get here with more than one delegate in flight.
@@ -27,12 +27,13 @@ If a delegate already returned wrong or incomplete work, re-derive the brief aga
 8. **Escalation line.** What the delegate does when blocked: report the block with evidence and stop; never improvise a path around a wall it doesn't have standing authority to cross.
 9. **Mandated report format.** The exact shape of the return, including the evidence its class of work requires under the verification gate for that work class — not "fix it and tell me," but the specific artifacts, numbers, or run links the gate will check for.
 10. **Out-of-scope list.** What the delegate must not touch, restyle, or "helpfully" fix along the way, stated explicitly rather than left to inference. Scope this to **collision avoidance and taste** — files another lane owns, refactors nobody asked for, restyling for preference. It is not a licence to leave a defect standing: within the files the delegate does own, the default is to fix what it finds, and the brief should say so outright. When a needed fix falls outside the lane, the delegate reports it *and names the lane that should take it*, so it gets scheduled rather than dropped. See the fix-what-you-find skill; a brief that reads "flag it, don't fix it" is setting the wrong default and will propagate it to every delegate you dispatch.
+11. **Three altitudes of intent.** One line each: the task itself, the goal of the parent or epic it belongs to, and the one-line reason the project exists. The delegate close to the work has the details and no big picture; this block is how the big picture reaches it. Without it, every locally defensible choice can add up to something nobody asked for. Pull all three from the tracker rather than writing them from memory, and assemble them automatically where the brief is generated: a step an operator has to remember gets skipped. Tell the delegate to stop and say so if the work drifts from the top line.
 
 ## Sizing (blocks compress, they don't disappear)
 
-- **In-session subagent:** all ten blocks live inline in the prompt.
-- **Cross-context delegate** (a separate runtime, CLI, or mesh peer that loses your chat history): the ten blocks belong in a file the delegate can reopen after its own context resets — a chat message alone does not survive a harness restart. Send the file path, not a paraphrase of its contents.
-- **Trivial, fully mechanical task:** blocks 1 (repo + identity), 2 (isolation), 3 (task body), and 9 (report format) still apply in full; the rest may compress to a single line each. None of the ten disappears — a trivial task still needs to know whose identity it commits as and what "done" looks like.
+- **In-session subagent:** all eleven blocks live inline in the prompt.
+- **Cross-context delegate** (a separate runtime, CLI, or mesh peer that loses your chat history): the eleven blocks belong in a file the delegate can reopen after its own context resets — a chat message alone does not survive a harness restart. Send the file path, not a paraphrase of its contents.
+- **Trivial, fully mechanical task:** blocks 1 (repo + identity), 2 (isolation), 3 (task body), 9 (report format), and 11 (the three intent lines) still apply in full; the rest may compress to a single line each. None of the eleven disappears — a trivial task still needs to know whose identity it commits as and what "done" looks like.
 
 ## Relayed-authority rule
 
@@ -51,5 +52,5 @@ A specific, named exception to any block above is permitted with your explicit i
 - A brief says "figure it out" with no done-criteria.
 - The delegate would have to guess a path, an identity, or a convention.
 - There's no stated action for what the delegate does when blocked.
-- You forwarded a one-liner verbatim as the brief instead of expanding it against the ten blocks.
+- You forwarded a one-liner verbatim as the brief instead of expanding it against the eleven blocks.
 - A mid-flight directive told the delegate to act on your say-so instead of giving it something to verify.
