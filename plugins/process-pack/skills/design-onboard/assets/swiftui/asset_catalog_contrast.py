@@ -17,6 +17,7 @@ Standard library only. Copied into a consuming repo by the design-onboard skill.
 """
 import argparse
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -87,8 +88,9 @@ def check(catalog, pairs):
                 continue
             ratio = contrast_ratio(colors[fg][appearance], colors[bg][appearance])
             ok = ratio >= minimum
+            shown = math.floor(ratio * 100) / 100  # truncate, never round up to the minimum
             results.append({"appearance": appearance, "fg": fg, "bg": bg, "min": minimum, "ratio": ratio, "pass": ok,
-                            "line": f"{appearance} {fg} on {bg}: {ratio:.2f}, needs {minimum} {'PASS' if ok else 'FAIL'}"})
+                            "line": f"{appearance} {fg} on {bg}: {shown:.2f}, needs {minimum} {'PASS' if ok else 'FAIL'}"})
     return results
 
 

@@ -134,7 +134,8 @@ function themeOf(stack) {
   const dataTheme = /^\[data-theme=["']?([\w-]+)["']?\]$/.exec(selector);
   if (dataTheme) return dataTheme[1];
   if (selector === ".dark" || selector === ":root.dark" || selector === "html.dark") return "dark";
-  if (selector === ":root" || selector === "html" || selector.startsWith("@theme")) {
+  if (selector.startsWith("@theme")) return "@theme";
+  if (selector === ":root" || selector === "html") {
     return inDarkMedia ? "dark" : "root";
   }
   return null;
@@ -169,10 +170,12 @@ export function parseThemes(css) {
       text += ch;
     }
   }
-  const root = own.get("root") ?? new Map();
+  // Tailwind v4 @theme blocks map utilities onto the :root tokens and may
+  // re-declare a token as a reference to itself, so :root always wins over them.
+  const root = new Map([...(own.get("@theme") ?? []), ...(own.get("root") ?? [])]);
   const themes = { root };
   for (const [name, vars] of own) {
-    if (name === "root") continue;
+    if (name === "root" || name === "@theme") continue;
     themes[name] = new Map([...root, ...vars]);
   }
   return themes;
@@ -204,7 +207,8 @@ export function checkPairs(themes, pairs) {
         const fgValue = resolveToken(vars, bare(fg));
         const bgValue = resolveToken(vars, bare(bg));
         const ratio = contrastRatio(parseColor(fgValue), parseColor(bgValue));
-        const shown = ratio.toFixed(2);
+        // Truncate, never round: 4.4957 must not print as 4.50 next to a 4.5 minimum.
+        const shown = (Math.floor(ratio * 100) / 100).toFixed(2);
         results.push({
           theme,
           name,

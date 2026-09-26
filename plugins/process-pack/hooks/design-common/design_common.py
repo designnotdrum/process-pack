@@ -215,6 +215,9 @@ def _dry_run():
             and not is_ui_file("app/page.test.tsx", tailwind, ex)
             and not is_ui_file("tailwind.config.ts", tailwind, ex)
             and not is_ui_file("docs/x.html", tailwind, ex)
+            and not is_ui_file("components/Button.stories.tsx", tailwind, ex)
+            and not is_ui_file("graphql/__generated__/types.tsx", tailwind, ex)
+            and not is_ui_file("lib/api.generated.ts", tailwind, ex)
         )
 
     def case_detects_tailwind_by_dependency():

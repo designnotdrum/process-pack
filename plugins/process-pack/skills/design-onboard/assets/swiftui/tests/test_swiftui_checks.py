@@ -48,7 +48,7 @@ def test_cli_exits_1_on_failure():
         text=True,
     )
     assert proc.returncode == 1
-    assert "any TextMuted on Background: 2.85, needs 4.5 FAIL" in proc.stdout
+    assert "any TextMuted on Background: 2.84, needs 4.5 FAIL" in proc.stdout
 
 
 def swiftlint_regex():

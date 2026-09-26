@@ -51,7 +51,7 @@ test("failing pair fails with both colors and the ratio in the message", () => {
   const pairs = JSON.parse(readFileSync(join(fixtures, "pairs.json"), "utf8"));
   const failed = checkPairs(themes, pairs).filter((r) => !r.pass);
   assert.equal(failed.length, 2, "muted on card fails in root and dark");
-  assert.match(failed[0].message, /--muted \(#777777\) on --card \(#ffffff\) is 4\.48, needs 4\.5/);
+  assert.match(failed[0].message, /--muted \(#777777\) on --card \(#ffffff\) is 4\.47, needs 4\.5/);
 });
 
 test("the runner fails the suite on the fixture pairs", () => {
@@ -73,4 +73,19 @@ test("a :root inside a dark color-scheme media query counts as dark", () => {
   const themes = parseThemes(css);
   assert.equal(themes.root.get("bg"), "#ffffff");
   assert.equal(themes.dark.get("bg"), "#000000");
+});
+
+test("a ratio just under the minimum is not rounded up to it", () => {
+  // #647d67 on #ffffff is 4.4957, which toFixed(2) would print as 4.50.
+  const themes = parseThemes(":root { --fg: #647d67; --bg: #ffffff; }");
+  const [result] = checkPairs(themes, [{ fg: "--fg", bg: "--bg", min: 4.5 }]);
+  assert.equal(result.pass, false);
+  assert.match(result.message, /is 4\.49, needs 4\.5/);
+});
+
+test(":root values win over @theme inline references to the same name", () => {
+  const css = ":root { --background: #ffffff; --foreground: #111111; } @theme inline { --background: var(--background); --color-background: var(--background); }";
+  const themes = parseThemes(css);
+  const [result] = checkPairs(themes, [{ fg: "--foreground", bg: "--color-background", min: 4.5 }]);
+  assert.ok(result.pass, result.message);
 });

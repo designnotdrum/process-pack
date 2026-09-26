@@ -36,6 +36,11 @@ const RULES = [
     languages: "script",
   },
   {
+    reason: "black or white class, use a token class",
+    pattern: new RegExp(`(?<![\\w-])(?:[\\w-]+:)*(?:${UTILITIES})-(?:black|white)(?:/\\d+)?(?![\\w-])`, "g"),
+    languages: "script",
+  },
+  {
     reason: "arbitrary color class, use a token class",
     pattern: new RegExp(`(?<![\\w-])[\\w-]+-\\[(?:#[\\da-fA-F]{3,8}|(?:${COLOR_FN})\\([^\\]]*\\))\\]`, "g"),
     languages: "script",
@@ -145,7 +150,9 @@ export function scan({ root, tokens = [], globs = [] }) {
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("check-design-tokens.mjs")) {
   const hits = scan(parseArgs(process.argv.slice(2)));
   if (hits.length) {
+    const files = new Set(hits.map((h) => h.slice(0, h.indexOf(":")))).size;
     console.log(hits.join("\n"));
+    console.error(`${hits.length} hardcoded colors in ${files} file${files === 1 ? "" : "s"}`);
     process.exit(1);
   }
 }
