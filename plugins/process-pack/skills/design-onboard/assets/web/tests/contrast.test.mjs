@@ -89,3 +89,10 @@ test(":root values win over @theme inline references to the same name", () => {
   const [result] = checkPairs(themes, [{ fg: "--foreground", bg: "--color-background", min: 4.5 }]);
   assert.ok(result.pass, result.message);
 });
+
+test("a stylesheet that starts with @import still reads :root", () => {
+  const css = '@import "tailwindcss";\n\n:root { --bg: #ffffff; --fg: #111111; }\n@custom-variant dark (&:is(.dark *));\n.dark { --bg: #000000; }';
+  const themes = parseThemes(css);
+  assert.equal(themes.root.get("fg"), "#111111");
+  assert.equal(themes.dark.get("bg"), "#000000");
+});

@@ -154,7 +154,8 @@ export function parseThemes(css) {
   let text = "";
   for (const ch of source) {
     if (ch === "{") {
-      stack.push(text.trim());
+      // The selector is what follows the last statement (for example an @import).
+      stack.push(text.slice(text.lastIndexOf(";") + 1).trim());
       text = "";
     } else if (ch === "}") {
       const theme = stack.length ? themeOf(stack) : null;
