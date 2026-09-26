@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan one task at a time. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship the design onboarding feature in process-pack 1.5.0: a design taste file, the `design-onboard` and `design-review` skills, the `design-reviewer` agent, two hooks, and the stack reference files for Tailwind, plain CSS and SwiftUI.
+**Goal:** Ship the design onboarding feature in process-pack 1.5.0: a design taste file, the `design-onboard` and `design-review` skills, the `design-reviewer` agent, two hooks, a Jev client for three checks, and the stack reference files for Tailwind, plain CSS and SwiftUI.
 
 **Architecture:** Impeccable stays the design engine; process-pack orchestrates it. Skills are markdown. Every check a hook or a repo relies on is a small script with its own tests: Python standard library for the hooks and the SwiftUI checks, zero-dependency Node for the web guardrails that get copied into a consuming repo. One JSON file, `stacks.json`, is the machine-readable part of the stack reference files, so the skill and both hooks read the same UI file patterns.
 
@@ -43,11 +43,11 @@ Nick, confirm or change these when you review.
 
 ## Review Focus
 
-1. **Branch names with slashes and worktrees.** `feat/x` on a worktree must find the record written from the main checkout. Test: `gate_record_found_from_worktree`, `gate_branch_with_slash` in Task 8.
-2. **Rebased or amended branch.** If the reviewed SHA is no longer an ancestor of `HEAD`, the record is stale and the gate blocks with a message that says the branch was rewritten. Test: `gate_blocks_when_reviewed_sha_not_ancestor` in Task 8.
-3. **Command shapes.** `cd app && gh pr create --fill`, `gh pr create -B develop`, and `GH_TOKEN=x gh pr create` all trigger the gate; `gh pr create --help`, `gh pr list` and `echo "gh pr create"` do not. Test: `gate_command_matching` in Task 8.
-4. **Monorepo DESIGN.md.** UI in `apps/web` with `apps/web/DESIGN.md` present is silent; a root DESIGN.md also counts; a second app with UI and no DESIGN.md nudges and names that app. Test: `nudge_monorepo_cases` in Task 7.
-5. **Hook failure must not block work.** Outside a git repo, with no `origin`, or with a corrupt record, the nudge is silent and the gate allows with a stderr warning. Tests: `nudge_not_a_repo`, `gate_fails_open_on_corrupt_record`, `gate_no_base_branch` in Tasks 7 and 8.
+1. **Branch names with slashes and worktrees.** `feat/x` on a worktree must find the record written from the main checkout. Test: `gate_record_found_from_worktree`, `gate_branch_with_slash` in Task 9.
+2. **Rebased or amended branch.** If the reviewed SHA is no longer an ancestor of `HEAD`, the record is stale and the gate blocks with a message that says the branch was rewritten. Test: `gate_blocks_when_reviewed_sha_not_ancestor` in Task 9.
+3. **Command shapes.** `cd app && gh pr create --fill`, `gh pr create -B develop`, and `GH_TOKEN=x gh pr create` all trigger the gate; `gh pr create --help`, `gh pr list` and `echo "gh pr create"` do not. Test: `gate_command_matching` in Task 9.
+4. **Monorepo DESIGN.md.** UI in `apps/web` with `apps/web/DESIGN.md` present is silent; a root DESIGN.md also counts; a second app with UI and no DESIGN.md nudges and names that app. Test: `nudge_monorepo_cases` in Task 8.
+5. **Hook failure must not block work.** Outside a git repo, with no `origin`, or with a corrupt record, the nudge is silent and the gate allows with a stderr warning. Tests: `nudge_not_a_repo`, `gate_fails_open_on_corrupt_record`, `gate_no_base_branch` in Tasks 8 and 9.
 
 ---
 
@@ -120,7 +120,7 @@ If Task 1 found that impeccable accepts custom rules, `check-design-tokens.mjs` 
     ]
   }
   ```
-  Task 5 appends `css`, `swiftui`, and a final `other` entry. `other` has `ui_globs` for `*.html`, `*.vue`, `*.svelte`, `*.astro`, `*.swift` and an empty `detect`.
+  Task 6 appends `css`, `swiftui`, and a final `other` entry. `other` has `ui_globs` for `*.html`, `*.vue`, `*.svelte`, `*.astro`, `*.swift` and an empty `detect`.
 - Produces `check-design-tokens.mjs`: CLI `node check-design-tokens.mjs --tokens <file> [--root <dir>] [--glob <g>]...`. Exit 0 when clean. Exit 1 and print `path:line: <match> (<reason>)` per hit. Flags Tailwind palette-shade classes (`(bg|text|border|ring|fill|stroke|from|via|to|outline|decoration|divide|placeholder|shadow|accent|caret)-<palette color>-<50..950>`), arbitrary color classes (`-[#…]`, `-[rgb(…)]`), and hex, `rgb()`, `hsl()` and `oklch()` literals in `.ts`, `.tsx`, `.js`, `.jsx`, `.css` files. The `--tokens` file is exempt. A line containing `design-tokens-allow: <reason>` is exempt.
 - Produces `design-tokens-contrast.test.mjs`: reads `DESIGN_TOKENS_FILE` (default `app/globals.css`) and `CONTRAST_PAIRS_FILE` (default `.process/contrast-pairs.json`, shape `[{ "fg": "--foreground", "bg": "--background", "min": 4.5 }]`). Parses custom properties per theme block (`:root`, `.dark`, `@theme`, `[data-theme=…]`). Accepts hex, `rgb()`, `hsl()`, bare shadcn HSL triplets like `222 47% 11%`, and `oklch()`. One test per pair per theme, named `<theme> <fg> on <bg> >= <min>`.
 - Produces `repo.schema.json` `design` object: `onboarded_at` (date), `impeccable_version`, `stack`, `path` (enum `greenfield`, `lean-in`, `polish-hard`, `new-direction`), `ui_globs` (string array, optional override), `ui_skills` (array of `{name, source, reason}`, all required; the commit lives in `skills-lock.json`). `additionalProperties: false`.
@@ -136,15 +136,37 @@ If Task 1 found that impeccable accepts custom rules, `check-design-tokens.mjs` 
 - [ ] **Step 6: Run the tests.** Expected: all pass.
 - [ ] **Step 7: Commit.** `git commit -m "feat(design-onboard): add web guardrails, stacks.json, and repo design schema"`
 
-### Task 4: The `design-onboard` skill and the Tailwind reference file
+### Task 4: The Jev client
+
+**Files:**
+- Create: `plugins/process-pack/tools/jev/jev_client.py`
+- Create: `plugins/process-pack/tools/jev/README.md`
+- Test: the `--dry-run` inside `jev_client.py`
+
+**Interfaces:**
+- Produces `ask(state: str, questions: dict, *, timeout: float = 20.0) -> dict`. A question is `{"type": "noul", "instructions": str}` or `{"type": "choice", "instructions": str, "criteria": {option: description}}`, the shapes Meridian's `scripts/lane-label.ts` sends. The return value is `{"source": "typesafe" | "openrouter" | "none", "answers": {id: {"type": "noul", "noul": float} | {"type": "choice", "choice": str, "probabilities": {option: float}, "confidence": float}}, "reason": str | None}`. On `none`, `answers` is `{}` and `reason` says why.
+- Route: `TYPESAFE_API_KEY` set means `POST https://api.typesafe.ai/v1/systemone` with body `{"model": "jev-latest", "state", "questions"}`. Else `OPENROUTER_API_KEY` set means `POST https://openrouter.ai/api/v1/chat/completions` with model `typesafe/jev-router` and a system message asking for a JSON object in the same `answers` shape. Else `none` with no network call.
+- `JEV_TYPESAFE_URL` and `JEV_OPENROUTER_URL` override the two URLs, for the tests only.
+- Produces `prepare_state(text: str) -> str`: drops diff sections for `.env*`, `**/secrets/**`, `*.lock`, `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, then caps the result at 8192 bytes.
+- CLI: `jev_client.py ask --state-file <f> --questions-file <json>` prints the return value as JSON and always exits 0. `jev_client.py --dry-run`.
+
+- [ ] **Step 1: Write the dry-run cases** against a local `http.server` stub started on a free port: `typesafe_answer`; `openrouter_answer_when_only_that_key`; `typesafe_preferred_when_both_keys`; `no_key_makes_no_request` (the stub counts zero requests); `timeout_returns_none`; `http_500_returns_none`; `malformed_reply_returns_none`; `probability_out_of_range_returns_none`; `choice_not_in_criteria_returns_none`; `lockfile_section_dropped`; `state_capped_at_8192_bytes`.
+- [ ] **Step 2: Run** `python3 plugins/process-pack/tools/jev/jev_client.py --dry-run`. Expected: FAIL.
+- [ ] **Step 3: Implement** with `urllib.request`. Validate every answer before returning it: probabilities in [0, 1], a `choice` inside its `criteria`.
+- [ ] **Step 4: Run.** Expected: every case PASS.
+- [ ] **Step 5: One live call per route whose key is available** (`TYPESAFE_API_KEY` is set in the laptop shell; the OpenRouter key is read with `op read` only if it exists in 1Password). One `noul` question: "This text describes a change to a user interface." over a two-line state. Record each result and its `source` in the Task 11 evidence note. Say which route did not run and why.
+- [ ] **Step 6: Write the README:** the three routes, that every call on the first two is billed, and that the OpenRouter route's probabilities are the chosen model's own estimate, not Jev's.
+- [ ] **Step 7: Commit.** `git commit -m "feat(tools): add Jev client with TypeSafe and OpenRouter routes"`
+
+### Task 5: The `design-onboard` skill and the Tailwind reference file
 
 **Files:**
 - Create: `plugins/process-pack/skills/design-onboard/SKILL.md`
 - Create: `plugins/process-pack/skills/design-onboard/stacks/tailwind.md`
 
 **Interfaces:**
-- Consumes: `stacks.json`, the three web assets from Task 3; the design taste schema from Task 2.
-- Produces: the skill name `design-onboard`, which the nudge text in Task 7 names.
+- Consumes: `stacks.json`, the three web assets from Task 3; the design taste schema from Task 2; `jev_client.py` from Task 4.
+- Produces: the skill name `design-onboard`, which the nudge text in Task 8 names.
 
 - [ ] **Step 1: Write `SKILL.md`** with frontmatter `name: design-onboard` and a description that triggers on "onboard design", a repo with UI and no DESIGN.md, and the nudge text. Body sections, in spec order:
   - Preflight: read the impeccable version from `~/.claude/plugins/installed_plugins.json`; stop below 4.3 with the update instruction. Detect stack from `stacks.json`, app or site, each monorepo app (`pnpm-workspace.yaml`, `turbo.json`, `apps/*`), and whether UI exists.
@@ -154,11 +176,13 @@ If Task 1 found that impeccable accepts custom rules, `check-design-tokens.mjs` 
   - Guardrails step 7: copy the stack's checks; pick 3 to 5 UI Skills with `npx ui-skills list --category <c>`, always one accessibility scan skill; for each, get the SHA with `git ls-remote https://github.com/<owner>/<repo> refs/heads/main` and install with the pinned `skills add` command from Global Constraints; skip any pick not hosted on GitHub; commit the skill directories and `skills-lock.json`; add a design section to AGENTS.md whose hard rules point at the design skills; write the `design` block to `.process/repo.yaml`; commit.
   - A rule that the skill copies taste rules into PRODUCT.md and AGENTS.md and never links to `~/.config`.
   - A rule that impeccable is the only writer of DESIGN.md.
+  - Mock taste check (spec section 7), before Nick's pick: for each mock, run `jev_client.py ask` with the mock's HTML and CSS as the state and one `noul` question per rule in the design taste file's section on looks to avoid. At or above 0.5, re-render once naming the rule; if still flagged, show the mock with the flag. Record the threshold and each result in the onboarding output. With `source: none`, say the check was skipped.
+  - Branch second opinion (spec section 7), after the audit: one `choice` question over the audit summary with the three branches as options and the table's "When it fits" text as criteria. Show the agent's pick, Jev's pick with confidence and source, and say plainly when they differ.
 - [ ] **Step 2: Write `stacks/tailwind.md`.** Four answers from spec component 3: detection (points at the `tailwind` entry in `stacks.json`), where tokens go (v3 `tailwind.config` plus CSS variables, v4 `@theme`), what blocks hardcoded colors (copy `check-design-tokens.mjs` to `scripts/`, add it to the `lint` script), and how contrast is checked (copy the contrast test and the pairs example, add a `test:contrast` script running `node --test`).
 - [ ] **Step 3: Check the skill against the spec.** For each numbered step in spec component 2, name the SKILL.md heading that carries it. Any gap gets fixed now.
 - [ ] **Step 4: Commit.** `git commit -m "feat(design-onboard): add the onboarding skill and Tailwind reference"`
 
-### Task 5: Plain CSS and SwiftUI reference files
+### Task 6: Plain CSS and SwiftUI reference files
 
 **Files:**
 - Create: `plugins/process-pack/skills/design-onboard/stacks/css.md`
@@ -185,7 +209,7 @@ If Task 1 found that impeccable accepts custom rules, `check-design-tokens.mjs` 
 - [ ] **Step 7: Write `css.md`, `swiftui.md`, and `other.md`** with the same four answers as `tailwind.md`. `other.md` says plainly that there is no check that blocks hardcoded colors and no contrast check.
 - [ ] **Step 8: Commit.** `git commit -m "feat(design-onboard): add plain CSS, SwiftUI, and fallback stack references"`
 
-### Task 6: The reviewer method, the `design-review` skill, the Claude Code agent wrapper, and the review record
+### Task 7: The reviewer method, the `design-review` skill, the Claude Code agent wrapper, and the review record
 
 **Files:**
 - Create: `plugins/process-pack/skills/design-review/reviewer.md`
@@ -211,7 +235,7 @@ If Task 1 found that impeccable accepts custom rules, `check-design-tokens.mjs` 
 - [ ] **Step 6: Write `skills/design-review/SKILL.md`** with the six steps of spec component 4 in order: read the three docs; find touched screens and run the app with the `run` skill or a preview URL; screenshot desktop (1440 wide) and mobile (390 wide); run impeccable's critique and the installed accessibility skill by following `reviewer.md` (in Claude Code, through the `design-reviewer` agent); fix, at most two rounds, list the rest; write the record with `review_record.py write` and hand the summary and screenshots to `qa-brief`. Add a section for the escape hatch: only when Nick says to skip in the session, write the record with `--skip-reason "<his words>"`.
 - [ ] **Step 7: Commit.** `git commit -m "feat(design-review): add reviewer agent, review skill, and review record"`
 
-### Task 7: `hooks/design-onboard-nudge` (SessionStart)
+### Task 8: `hooks/design-onboard-nudge` (SessionStart)
 
 **Files:**
 - Create: `plugins/process-pack/hooks/design-common/design_common.py`
@@ -237,7 +261,7 @@ If Task 1 found that impeccable accepts custom rules, `check-design-tokens.mjs` 
 - [ ] **Step 5: Write the README** with the same sections as `hooks/stub-guard/README.md` (Why, Install, Config, Override, Dry run), and the example config holding only an `enabled` flag and the `ui_globs` override note.
 - [ ] **Step 6: Commit.** `git commit -m "feat(hooks): add design-onboard-nudge SessionStart hook"`
 
-### Task 8: `hooks/design-review-gate` (PreToolUse on `gh pr create`)
+### Task 9: `hooks/design-review-gate` (PreToolUse on `gh pr create`)
 
 **Files:**
 - Create: `plugins/process-pack/hooks/design-review-gate/design_review_gate.py`
@@ -245,7 +269,7 @@ If Task 1 found that impeccable accepts custom rules, `check-design-tokens.mjs` 
 - Create: `plugins/process-pack/hooks/design-review-gate/design-review-gate.config.example.json`
 
 **Interfaces:**
-- Consumes: `design_common` (Task 7), `review_record.read_record` and `record_path` (Task 6).
+- Consumes: `design_common` (Task 8), `review_record.read_record` and `record_path` (Task 7), `jev_client.ask` (Task 4).
 - Produces `decide(cwd: str, command: str) -> dict`, returning `{"action": "allow"}` or `{"action": "block", "reason": str}`. `decide` reads no hook payload and prints nothing; `main()` is the Claude Code layer that parses the payload and writes the output. The nudge follows the same split with `nudge_text(cwd: str) -> str | None`.
 - Block output: the reason on stderr, `{"decision": "block", "reason": ...}` on stdout, exit 2. Reasons, exact text:
   - No record: `This branch changes UI files (<n> files) and has no design review. Run the design-review skill, then retry gh pr create.`
@@ -265,6 +289,9 @@ If Task 1 found that impeccable accepts custom rules, `check-design-tokens.mjs` 
   - `gate_command_matching`: triggers on `gh pr create`, `cd app && gh pr create --fill`, `GH_TOKEN=x gh pr create`, `gh pr create -B develop`; no trigger on `gh pr create --help`, `gh pr list`, `echo "gh pr create"`
   - `gate_uses_base_flag` (`-B develop` diffs against `develop`)
   - `gate_no_base_branch` (no `origin`, no `main`: allow with a warning)
+  - `gate_shadow_logs_one_line_per_attempt` (Jev stub answers; `jev-gate.jsonl` gains one line with `probability`, `source`, and the file-pattern result)
+  - `gate_decision_same_without_keys` (both keys unset: the same decisions as with a stub answer, and the log line has `source: none`)
+  - `gate_does_not_wait_for_jev` (the stub sleeps 5 seconds; the gate returns in under 1 second)
   - `gate_fails_open_on_corrupt_record` (unparseable record: treated as no record, so it blocks; an exception inside `decide` allows)
 - [ ] **Step 2: Run** `python3 design_review_gate.py --dry-run`. Expected: FAIL.
 - [ ] **Step 3: Implement.** Base branch: `--base`/`-B` value, else `git symbolic-ref refs/remotes/origin/HEAD`, else `origin/main`, else `main`. Diff: `git diff --name-only $(git merge-base <base> HEAD)..HEAD`. Staleness: `git merge-base --is-ancestor <reviewed_sha> HEAD`, then `git diff --name-only <reviewed_sha>..HEAD` filtered to UI files. The command regex follows `COMMIT_RE` in `hooks/stub-guard/stub_guard.py`: match at line start or after `;`, `&`, `|`, allow `VAR=value` prefixes, and skip a match inside quotes by requiring balanced quotes before it.
@@ -272,7 +299,7 @@ If Task 1 found that impeccable accepts custom rules, `check-design-tokens.mjs` 
 - [ ] **Step 5: Write the README and example config.** The README says the gate is separate from `~/.claude/hooks/pr-review-gate.sh`, which is unchanged.
 - [ ] **Step 6: Commit.** `git commit -m "feat(hooks): add design-review-gate PreToolUse hook"`
 
-### Task 9: Hook registration, version bump, README
+### Task 10: Hook registration, version bump, README
 
 **Files:**
 - Create: `plugins/process-pack/hooks/hooks.json`
@@ -287,7 +314,7 @@ If Task 1 found that impeccable accepts custom rules, `check-design-tokens.mjs` 
 - [ ] **Step 5: Run every test in the branch once, one at a time.** The four dry runs, `node --test` for the web assets, and `pytest` for the two Python test folders. Expected: all pass.
 - [ ] **Step 6: Commit.** `git commit -m "feat: register design hooks and release process-pack 1.5.0"`
 
-### Task 10: Verification runs
+### Task 11: Verification runs
 
 All scratch work lives under `/Users/nick/scratch/process-pack-design-onboarding/`. Evidence goes in `docs/superpowers/notes/2026-09-26-design-onboarding-verification.md` in the worktree.
 
@@ -295,10 +322,10 @@ All scratch work lives under `/Users/nick/scratch/process-pack-design-onboarding
 - [ ] **Step 2: Greenfield dry run.** `npx create-next-app@latest greenfield --ts --tailwind --app --no-src-dir --use-pnpm --yes` in the scratch folder (flags unverified; check `--help`). Run `design-onboard` end to end. **STOP at the direction pick: Nick chooses.** Evidence: the commit listing PRODUCT.md, DESIGN.md, the tokens file, the two checks passing, `skills-lock.json` with a `ref` per skill, and `.process/repo.yaml`.
 - [ ] **Step 3: Existing-UI dry run on pepino, read only.** Record `git -C ~/workspace/code/pikl/pepino status --porcelain | shasum` and `git rev-parse HEAD` before. Run the audit and recommendation with every output written to `/Users/nick/scratch/process-pack-design-onboarding/pepino-audit/`, never into pepino. Stop before any change. Record the same two values after. Expected: identical.
 - [ ] **Step 4: Gate run in the greenfield repo.** Create a branch, change one screen's `.tsx`, commit. Add a bare local repo as `origin` so `gh pr create` has something to diff against and cannot publish anything. Attempt `gh pr create --fill`. Expected: blocked with the no-record reason. Run `design-review`. Attempt again. Expected: the gate allows it, and `gh` then fails on its own because the remote is not on GitHub. Record both outputs.
-- [ ] **Step 5: Hook test evidence.** Paste the four dry-run outputs into the evidence note.
+- [ ] **Step 5: Hook and client test evidence.** Paste the dry-run outputs of both hooks, the review record, and the Jev client into the evidence note. Add the Jev answers from Steps 2 to 4, each with its `source`, and the gate's `jev-gate.jsonl` lines.
 - [ ] **Step 6: Commit the evidence note.**
 
-### Task 11: Draft PR and hand-off
+### Task 12: Draft PR and hand-off
 
 - [ ] **Step 1: Push and open a draft PR** against `main` on `designnotdrum/process-pack` with a body that lists each verification item and its evidence. End it with the Claude Code attribution line.
 - [ ] **Step 2: Link it** with `link_pull_request`, then confirm with `list_thread_pull_requests`.

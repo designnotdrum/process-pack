@@ -32,6 +32,7 @@ Any repo Nick works in reaches Meridian-level design quality within its first se
 - 2026-09-26: Enforcement targets Claude Code only (laptop sessions and Cyrus). No GitHub Action.
 - 2026-09-26: UI Skills are found with the `ui-skills` CLI and installed with the `skills` CLI at a pinned commit. No hand-written downloader.
 - 2026-09-26: The skills, scripts, and hook logic are written so that other agents (Codex, OpenCode, pi) can be supported later by adding thin adapters, not by rewriting. Claude Code stays the only harness wired and tested in this build. See "Portability".
+- 2026-09-26: Jev (TypeSafe's model) adds three checks where file patterns or one agent's judgment can be wrong: a second check in the review gate, a second opinion on the existing-UI branch, and a taste check on the direction mocks. The gate check starts in shadow mode. See "Jev checks".
 
 ## External tools
 
@@ -145,6 +146,22 @@ Claude Code is the only harness wired and tested in this build. These rules keep
 - **Hooks.** Each hook's decision lives in a function that takes plain values (repo path, command string) and returns a decision. The Claude Code payload parsing and output format sit in a separate small layer. Another harness adds its own layer and reuses the decision function.
 - **Repo files.** Rules go in AGENTS.md, which Codex, OpenCode, and pi read. Installed UI Skills go in `.agents/skills/`, which the `skills` CLI shares across those agents.
 
+### 7. Jev checks
+
+Jev is TypeSafe's model, already used in Meridian by `scripts/lane-label.ts` and the CI advice job in ADR 0019. It takes a text state and named questions in one request: `POST https://api.typesafe.ai/v1/systemone` with a Bearer key and body `{model: "jev-latest", state, questions}`. A `noul` question returns the probability that the answer is yes. A `choice` question returns the chosen option, a probability per option, and a confidence (source: `scripts/jev-advice.mjs` and `scripts/lane-label.ts` in Meridian, read 2026-09-26).
+
+One client, `tools/jev/jev_client.py`, serves all three checks. It uses the Python standard library only. It caps the state at 8 KB and never sends environment files, secret directories, or lockfiles. It picks a route by which key is set:
+
+1. **`TYPESAFE_API_KEY` set:** the TypeSafe API above. Answers are Jev's own probabilities.
+2. **Only `OPENROUTER_API_KEY` set:** OpenRouter's chat completions endpoint with model `typesafe/jev-router`. OpenRouter lists it as a router that uses Jev to pick a model and reasoning effort for each request, with variable pricing (source: `https://openrouter.ai/api/v1/models`, read 2026-09-26). It has no `noul` or `choice` question types, so the client asks for a JSON reply with the same fields. The probabilities are the chosen model's own estimate, not Jev's.
+3. **Neither key set:** no call. The check is skipped and the caller carries on.
+
+Every answer carries `source` (`typesafe`, `openrouter`, or `none`), so results from the two routes are never mixed in a comparison. Any error (timeout, HTTP error, malformed reply) is treated like route 3. Every call on routes 1 and 2 is billed.
+
+- **Gate second check.** When the review gate runs, it also asks one `noul` question over the diff: "This change alters what a user sees or does in the interface." It starts in shadow mode. The call runs in a detached process so it adds no time to `gh pr create`. It appends the probability, its source, and the file-pattern result to `<git common dir>/process-pack/jev-gate.jsonl`. It never blocks or allows anything. Jev may start to affect the gate only after Nick has seen a table comparing the two results and recorded a decision in this spec.
+- **Branch second opinion.** On the existing-UI path, after the audit, one `choice` question over the audit summary picks lean in, polish hard, or new direction, using the "When it fits" column of the branch table as each option's criteria. The recommendation Nick sees shows the agent's pick, Jev's pick with its confidence and source, and says plainly when they disagree. Nick still decides.
+- **Mock taste check.** Before Nick is asked to pick a direction, each mock's HTML and CSS is the state. Each rule in the design taste file's section on looks to avoid becomes one `noul` question. A mock with any probability at or above 0.5 is re-rendered once with the flagged rule named. If it is still flagged, it is shown to Nick with the flag. The threshold of 0.5 is a starting value, recorded in the onboarding output.
+
 ## Build order
 
 Each step is usable before the next starts.
@@ -162,6 +179,7 @@ Each step is usable before the next starts.
 - Greenfield dry run: a scratch Next.js and Tailwind repo taken through the full onboarding, including the direction pick. Evidence: the committed PRODUCT.md, DESIGN.md, tokens, guardrails, vendored skills, and `.process/repo.yaml`.
 - Existing-UI dry run: audit and recommendation on `~/workspace/code/pikl/pepino`, stopping before any change to that repo.
 - Review gate run: a real UI change in the scratch repo, blocked by the gate, then reviewed and let through.
+- Jev: client tests with a stubbed server for both routes (answer, timeout, HTTP error, malformed reply) and for no key. One live call per check during the dry runs, with the answers and their source in the evidence. The gate's shadow log has one line per `gh pr create` attempt. Removing both keys changes nothing about the gate's decision.
 
 ## Out of scope
 
