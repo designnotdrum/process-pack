@@ -205,16 +205,21 @@ def _read_payload():
 
 def _start_shadow(result):
     """Hands the Jev shadow check to a detached process, so gh pr create never waits on it."""
+    result = dict(result, log=str(review_record.record_path(result["root"], "x").parent.parent / "jev-gate.jsonl"))
     fd, path = tempfile.mkstemp(prefix="jev-gate-", suffix=".json")
-    with os.fdopen(fd, "w") as f:
-        json.dump(result, f)
-    subprocess.Popen(
-        [sys.executable, str(Path(__file__).resolve()), "--jev-shadow", path],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(result, f)
+        subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "--jev-shadow", path],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception:
+        Path(path).unlink(missing_ok=True)
+        raise
 
 
 def _jev_shadow(path):
@@ -243,7 +248,7 @@ def _jev_shadow(path):
         "probability": answer["answers"].get("ui_visible", {}).get("noul"),
         "reason": answer["reason"],
     }
-    log = review_record.record_path(root, "x").parent.parent / "jev-gate.jsonl"
+    log = Path(result["log"])  # resolved by the gate, so this process needs no git call to find it
     log.parent.mkdir(parents=True, exist_ok=True)
     with open(log, "a") as f:
         f.write(json.dumps(line) + "\n")

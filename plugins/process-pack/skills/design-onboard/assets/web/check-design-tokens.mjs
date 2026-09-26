@@ -17,7 +17,8 @@
  * design-onboard skill and wired into its lint script.
  */
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 
 const EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".css"]);
@@ -70,6 +71,10 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     const value = argv[i + 1];
+    if (["--root", "--tokens", "--glob"].includes(flag) && (value === undefined || value.startsWith("--"))) {
+      console.error(`check-design-tokens: ${flag} needs a value`);
+      process.exit(2);
+    }
     if (flag === "--root") args.root = value;
     else if (flag === "--tokens") args.tokens.push(value);
     else if (flag === "--glob") args.globs.push(value);
@@ -156,7 +161,8 @@ export function scan({ root, tokens = [], globs = [] }) {
   return hits;
 }
 
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("check-design-tokens.mjs")) {
+const invokedPath = process.argv[1] ? pathToFileURL(realpathSync(process.argv[1])).href : "";
+if (import.meta.url === invokedPath) {
   const hits = scan(parseArgs(process.argv.slice(2)));
   if (hits.length) {
     const files = new Set(hits.map((h) => h.slice(0, h.indexOf(":")))).size;

@@ -195,9 +195,15 @@ def covered_by_design_md(root, path):
 
 def has_design_block(root):
     """True when .process/repo.yaml records a design onboarding (needs PyYAML; False without it)."""
+    path = Path(root) / ".process" / "repo.yaml"
     try:
         import yaml
-        data = yaml.safe_load((Path(root) / ".process" / "repo.yaml").read_text()) or {}
+    except ImportError:
+        if path.exists():
+            print("[design hooks] PyYAML is not installed; the design block in .process/repo.yaml is not read, so only DESIGN.md files count as onboarding", file=sys.stderr)
+        return False
+    try:
+        data = yaml.safe_load(path.read_text()) or {}
     except Exception:
         return False
     return isinstance(data, dict) and isinstance(data.get("design"), dict)

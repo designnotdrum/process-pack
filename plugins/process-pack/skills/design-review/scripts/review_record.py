@@ -72,6 +72,8 @@ def read_record(cwd, branch):
         return None
     if not isinstance(data, dict) or not isinstance(data.get("reviewed_sha"), str):
         return None
+    if data.get("branch") != branch:  # feat/x and feat__x flatten to one file name
+        return None
     return data
 
 
@@ -163,7 +165,13 @@ def _dry_run():
                      skip_reason="Nick: copy-only change, reviewed by eye")
         return read_record(str(root), "main")["skip_reason"] == "Nick: copy-only change, reviewed by eye"
 
+    def case_colliding_branch_names_do_not_share_a_record():
+        root = repo("feat/x")
+        write_record(str(root), reviewed_sha="HEAD", ui_files=[], findings_fixed=[], findings_left=[], screenshots=[])
+        return read_record(str(root), "feat__x") is None and read_record(str(root), "feat/x") is not None
+
     cases = [
+        case_colliding_branch_names_do_not_share_a_record,
         case_path_uses_common_dir_from_worktree,
         case_slash_branch_is_flattened,
         case_round_trip,

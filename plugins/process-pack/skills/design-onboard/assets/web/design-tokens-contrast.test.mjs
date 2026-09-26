@@ -17,7 +17,8 @@ const pairsFile = process.env.CONTRAST_PAIRS_FILE ?? ".process/contrast-pairs.js
 
 if (!existsSync(tokensFile) || !existsSync(pairsFile)) {
   test("contrast inputs exist", () => {
-    assert.fail(`Missing ${existsSync(tokensFile) ? pairsFile : tokensFile}. Set DESIGN_TOKENS_FILE and CONTRAST_PAIRS_FILE.`);
+    const missing = [tokensFile, pairsFile].filter((f) => !existsSync(f));
+    assert.fail(`Missing ${missing.join(" and ")}. Set DESIGN_TOKENS_FILE (default app/globals.css) and CONTRAST_PAIRS_FILE (default .process/contrast-pairs.json).`);
   });
 } else {
   const themes = parseThemes(readFileSync(tokensFile, "utf8"));

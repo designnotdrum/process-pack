@@ -46,6 +46,18 @@ OPENROUTER_SYSTEM = (
 )
 
 
+def _safe_url(value, default):
+    """An override is used only when it is https or points at this machine (the self-test stub)."""
+    from urllib.parse import urlparse
+
+    if not value:
+        return default
+    parsed = urlparse(value)
+    if parsed.scheme == "https" or parsed.hostname in ("127.0.0.1", "localhost"):
+        return value
+    return default
+
+
 def _none(reason):
     return {"source": "none", "answers": {}, "reason": reason}
 
@@ -68,6 +80,8 @@ def _validate(answers, questions):
         else:
             options = question.get("criteria", {})
             probabilities = answer.get("probabilities", {})
+            if not isinstance(probabilities, dict):
+                raise ValueError(f"answer for {qid} has probabilities that are not an object")
             if answer.get("choice") not in options:
                 raise ValueError(f"answer for {qid} picks an option outside its criteria")
             if not _is_probability(answer.get("confidence")) or not all(_is_probability(p) for p in probabilities.values()):
@@ -103,13 +117,15 @@ def ask(state, questions, *, timeout=20.0):
     openrouter_key = os.environ.get("OPENROUTER_API_KEY")
     if not typesafe_key and not openrouter_key:
         return _none("no API key set (TYPESAFE_API_KEY or OPENROUTER_API_KEY)")
+    if not isinstance(questions, dict) or not all(isinstance(q, dict) and q.get("type") in ("noul", "choice") for q in questions.values()):
+        return _none("questions must be an object of {type: noul|choice, ...} entries")
     state = prepare_state(state)
     try:
         if typesafe_key:
-            url = os.environ.get("JEV_TYPESAFE_URL", TYPESAFE_URL)
+            url = _safe_url(os.environ.get("JEV_TYPESAFE_URL"), TYPESAFE_URL)
             reply = _post(url, typesafe_key, {"model": "jev-latest", "state": state, "questions": questions}, timeout)
             return {"source": "typesafe", "answers": _validate(reply.get("answers"), questions), "reason": None}
-        url = os.environ.get("JEV_OPENROUTER_URL", OPENROUTER_URL)
+        url = _safe_url(os.environ.get("JEV_OPENROUTER_URL"), OPENROUTER_URL)
         body = {
             "model": "typesafe/jev-router",
             "messages": [
@@ -125,7 +141,7 @@ def ask(state, questions, *, timeout=20.0):
         return _none(f"HTTP {e.code} from Jev")
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         return _none(f"could not reach Jev: {e}")
-    except (ValueError, KeyError, IndexError, TypeError) as e:
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError) as e:
         return _none(f"malformed reply: {e}")
 
 
@@ -320,6 +336,31 @@ def _dry_run():
         out = prepare_state(diff)
         return "SECRET" not in out and "+ok" in out
 
+    def case_bad_questions_return_none():
+        saved = os.environ.get("TYPESAFE_API_KEY")
+        os.environ["TYPESAFE_API_KEY"] = "k"
+        try:
+            a = ask("state", ["not", "a", "dict"])
+            b = ask("state", {"q": "not a dict"})
+        finally:
+            if saved is None:
+                os.environ.pop("TYPESAFE_API_KEY", None)
+            else:
+                os.environ["TYPESAFE_API_KEY"] = saved
+        return a["source"] == "none" and b["source"] == "none"
+
+    def case_non_dict_probabilities_return_none():
+        try:
+            _validate({"b": {"type": "choice", "choice": "x", "probabilities": [0.1, 0.9], "confidence": 0.5}},
+                      {"b": {"type": "choice", "instructions": "?", "criteria": {"x": "y"}}})
+        except ValueError:
+            return True
+        return False
+
+    def case_remote_override_must_be_https():
+        return _safe_url("http://evil.example/steal", "d") == "d" and _safe_url("http://127.0.0.1:9/x", "d") == "http://127.0.0.1:9/x" \
+            and _safe_url("https://proxy.example/v1", "d") == "https://proxy.example/v1"
+
     def case_state_capped_at_8192_bytes():
         out = prepare_state("é" * 10000)
         return len(out.encode("utf-8")) <= 8192 and out.encode("utf-8").decode("utf-8") == out
@@ -337,6 +378,9 @@ def _dry_run():
         case_lockfile_section_dropped,
         case_more_secret_files_dropped,
         case_state_capped_at_8192_bytes,
+        case_bad_questions_return_none,
+        case_non_dict_probabilities_return_none,
+        case_remote_override_must_be_https,
     ]
     failed = 0
     for case in cases:

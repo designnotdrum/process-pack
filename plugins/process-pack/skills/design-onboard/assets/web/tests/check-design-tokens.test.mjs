@@ -31,7 +31,15 @@ test("dirty reports exactly 3 hits with line numbers", () => {
 
 test("allow comment is exempt", () => {
   const result = run(["--root", join(fixtures, "dirty"), "--tokens", join(fixtures, "tokens.css")]);
+  assert.equal(result.status, 1, "the other hits are still reported");
+  assert.equal(result.stdout.trim().split("\n").length, 3);
   assert.doesNotMatch(result.stdout, /#1da1f2/);
+});
+
+test("a flag with no value is a usage error", () => {
+  const result = run(["--root", join(fixtures, "clean"), "--tokens"]);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /--tokens needs a value/);
 });
 
 test("tokens file is exempt", () => {

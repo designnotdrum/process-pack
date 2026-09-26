@@ -8,7 +8,7 @@ The `tailwind` entry in `stacks.json`: a `tailwind.config.*` file at the app roo
 
 Tell v3 from v4 by the installed `tailwindcss` major version. A v4 project imports Tailwind in CSS with `@import "tailwindcss";`.
 
-UI files are the entry's `ui_globs` (`.tsx`, `.jsx`, `.css`, `.html`), minus the shared `exclude_globs`.
+UI files are the entry's `ui_globs` (`.tsx`, `.jsx`, `.css`, `.html`, and `.vue`, `.svelte`, `.astro` for Tailwind projects built on those frameworks), minus the shared `exclude_globs`.
 
 ## Where tokens go
 
