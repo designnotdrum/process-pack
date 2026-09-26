@@ -1,6 +1,6 @@
 # Design onboarding for new and existing repos
 
-Date: 2026-09-26. Status: approved in conversation, awaiting review of this written spec.
+Date: 2026-09-26. Status: approved by Nick on 2026-09-26. Revised the same day: UI Skills install path (after evaluating both CLIs) and the portability rules.
 
 ## Problem
 
@@ -30,6 +30,8 @@ Any repo Nick works in reaches Meridian-level design quality within its first se
 - 2026-09-26: Inspo MCP and the UI Skills registry are part of the flow.
 - 2026-09-26: The design review is enforced before `gh pr create` on any diff with UI changes.
 - 2026-09-26: Enforcement targets Claude Code only (laptop sessions and Cyrus). No GitHub Action.
+- 2026-09-26: UI Skills are found with the `ui-skills` CLI and installed with the `skills` CLI at a pinned commit. No hand-written downloader.
+- 2026-09-26: The skills, scripts, and hook logic are written so that other agents (Codex, OpenCode, pi) can be supported later by adding thin adapters, not by rewriting. Claude Code stays the only harness wired and tested in this build. See "Portability".
 
 ## External tools
 
@@ -37,6 +39,14 @@ Any repo Nick works in reaches Meridian-level design quality within its first se
 - **Inspo MCP** (`Nutlope/inspo`, MIT). 2,320 pages across 832 real sites, each with an extracted DESIGN.md, 68 reference components, and a `recommend(brief)` tool. Install with `npx -y inspo-mcp install` or `claude mcp add --transport http inspo https://inspomcp.dev/api/mcp` (source: the repo README, read 2026-09-26). Strongest for marketing and site pages.
 - **Refero and Mobbin MCPs**, already configured on the laptop. Strongest for app screens and flows.
 - **UI Skills** (`ui-skills.com`). A registry of 315 third-party skills. CLI: `npx ui-skills start`, `categories`, `list --category <c>`, `get <slug>`. A plain registry at `/skills/registry.txt` maps each slug to a raw GitHub URL on the author's `main` branch. There is also an MCP server. Its router skill `ibelick/ui-skills-root` prefers one skill per task and never more than three (source: ui-skills.com `llms.txt`, `/cli`, and `registry.txt`, read 2026-09-26).
+  - The `ui-skills` CLI is for finding skills only. Evaluated 2026-09-26 on version 0.2.4 by reading its package source and running it in a scratch folder. It has no install command. `get` prints one SKILL.md to stdout, fetched live from the author's `main` branch by the ui-skills.com server, with no version or commit. It drops a skill's other files: `ibelick/improve-ui` tells the agent to read `references/plan-template.md`, and `get` does not deliver that file.
+- **The `skills` CLI** (`vercel-labs/skills`, npm `skills`, version 1.7.0 evaluated 2026-09-26 in a scratch git repo). This is the install path. Findings from running it:
+  - `npx skills add <owner>/<repo>#<commit> --skill <name> --agent <ids> --copy -y` installs the whole skill directory, including `references/` and `agents/` files.
+  - The `#<commit>` pin works. Installing `ibelick/ui-skills-root` at `4ebfe60` produced that commit's content, not `main`'s, and `skills-lock.json` recorded `"ref": "4ebfe60…"`. The `tree/<commit>/<path>` URL form behaves the same.
+  - The lock file records `source`, `ref`, `skillPath`, and a `computedHash` of the content. `npx skills experimental_install` restores from it.
+  - A project install writes to `.agents/skills/<name>/`, which 22 of its agent definitions share, including `codex`, `opencode`, `pi`, and `cursor`. Adding `claude-code` also writes `.claude/skills/<name>/`.
+  - It sends install telemetry to `add-skill.vercel.sh`. Its source reads `DO_NOT_TRACK` and `DISABLE_TELEMETRY`; that setting either one stops the request is unverified.
+  - A registry entry that is not on GitHub (for example `rams/rams`, served from `rams.ai`) cannot be installed or pinned this way.
 
 ## Components
 
@@ -70,7 +80,7 @@ Greenfield path (no existing UI):
 
 3. **Design taste.** Load the design taste file and fold its rules into PRODUCT.md's principles and its list of looks to avoid.
 4. **References.** Run the `desk-research` skill against Inspo, Refero, and Mobbin, briefed from PRODUCT.md's users, register, and category. Output: 6 to 10 references, each with one line on why it fits this work.
-5. **Directions.** Render 2 or 3 direction mocks as HTML under `docs/design/onboarding/`, screenshot them, and ask Nick to pick through `AskUserQuestion`. This is the only required stop.
+5. **Directions.** Render 2 or 3 direction mocks as HTML under `docs/design/onboarding/`, screenshot them, and ask Nick to pick (in Claude Code, through `AskUserQuestion`). This is the only required stop.
 6. **System.** Run impeccable's new-work flow to write DESIGN.md from the chosen direction. The stack reference file turns it into real tokens.
 
 Existing-UI path:
@@ -88,7 +98,7 @@ Existing-UI path:
 
 Final step for both paths:
 
-7. **Guardrails.** Apply the stack reference file's check that blocks hardcoded colors, and its contrast check. Pick 3 to 5 UI Skills for the stack and product, always including an accessibility scan skill, and vendor each one into `.claude/skills/vendor/<slug>/` at a pinned commit. Add a design section to AGENTS.md whose hard rules point at the design skills. Record the onboarding date, impeccable version, branch taken, and each vendored skill with its commit and the reason it was picked in `.process/repo.yaml`. Commit all of it.
+7. **Guardrails.** Apply the stack reference file's check that blocks hardcoded colors, and its contrast check. Pick 3 to 5 UI Skills for the stack and product with `npx ui-skills list --category <c>`, always including an accessibility scan skill. For each, resolve the source repo's current `main` to a commit SHA, then install it with `npx skills add <owner>/<repo>#<sha> --skill <name> --agent claude-code codex opencode pi --copy -y`. The files land in `.agents/skills/<name>/` and `.claude/skills/<name>/`, and `skills-lock.json` records each pin. Skip any pick that is not on GitHub and pick another. Commit the skill directories and `skills-lock.json`. Add a design section to AGENTS.md whose hard rules point at the design skills. Record the onboarding date, impeccable version, branch taken, and the reason each skill was picked in `.process/repo.yaml`; the commit for each skill lives in `skills-lock.json` only. Commit all of it.
 
 Impeccable is the only writer of DESIGN.md. UI Skills' own `ibelick/create-design-md` is not used.
 
@@ -107,7 +117,7 @@ If impeccable's rule engine accepts custom rules, the check that blocks hardcode
 
 ### 4. The `design-reviewer` agent and `design-review` skill
 
-- `agents/design-reviewer.md`, promoted from Meridian's `.claude/agents/design-reviewer.md` with Meridian specifics removed.
+- `skills/design-review/reviewer.md`, promoted from Meridian's `.claude/agents/design-reviewer.md` with Meridian specifics removed. `agents/design-reviewer.md` is a thin Claude Code wrapper around it (see "Portability").
 - `skills/design-review/SKILL.md` drives it:
   1. Read DESIGN.md, PRODUCT.md, and the AGENTS.md design rules.
   2. Find the screens the diff touches. Run the app locally (the `run` skill) or use a preview URL.
@@ -124,6 +134,16 @@ Written in Python like the existing `hooks/stub-guard` and `hooks/wall-guard`, e
 - **`hooks/design-onboard-nudge`, SessionStart.** If the repo has UI files (per the stack detection) and no DESIGN.md, emit one line of additional context telling the agent to run `design-onboard` before UI work. Silent otherwise. Never blocks.
 - **`hooks/design-review-gate`, PreToolUse on Bash matching `gh pr create`.** Compute the diff against the base branch. If it touches UI files and either no review record exists for the branch, or a UI file changed after the reviewed commit, block with one line naming the `design-review` skill. UI file patterns come from the stack reference file and can be overridden in `.process/repo.yaml`. Named exceptions: diffs that touch only docs, tests, or config. Escape hatch: Nick says so in the session, recorded as a skip reason in the review record.
 - The gate is separate from `~/.claude/hooks/pr-review-gate.sh`, which stays unchanged.
+
+### 6. Portability
+
+Claude Code is the only harness wired and tested in this build. These rules keep a later port to Codex, OpenCode, or pi down to adapters:
+
+- **Skills.** SKILL.md files use the shared format (frontmatter `name` and `description`, markdown body). They name no Claude-only tool as the only way to do a step. A step that needs the user to choose says "ask Nick to pick", and names `AskUserQuestion` only as the Claude Code way to do it.
+- **The reviewer.** The review method lives in `skills/design-review/reviewer.md`, which any agent can follow inline. `agents/design-reviewer.md` is a thin Claude Code wrapper that points at it.
+- **Scripts.** Every check is a plain command (Python standard library or Node with no packages) with arguments and exit codes, so any agent can run it.
+- **Hooks.** Each hook's decision lives in a function that takes plain values (repo path, command string) and returns a decision. The Claude Code payload parsing and output format sit in a separate small layer. Another harness adds its own layer and reuses the decision function.
+- **Repo files.** Rules go in AGENTS.md, which Codex, OpenCode, and pi read. Installed UI Skills go in `.agents/skills/`, which the `skills` CLI shares across those agents.
 
 ## Build order
 

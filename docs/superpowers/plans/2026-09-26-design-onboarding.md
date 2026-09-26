@@ -20,7 +20,8 @@
 - Impeccable is the only writer of DESIGN.md. `ibelick/create-design-md` is not used.
 - Impeccable minimum version for preflight: 4.3.
 - The design taste file lives at `~/.config/process-pack/design-taste.yaml` and is never committed. Onboarding copies rules into the repo; it never links to the home-directory file.
-- Vendored UI Skills are pinned to a commit SHA, never fetched from `main` at run time.
+- UI Skills are found with `npx ui-skills list` and installed with `npx skills@1.7.0 add <owner>/<repo>#<sha> --skill <name> --agent claude-code codex opencode pi --copy -y`. Never fetched from `main` at run time. No hand-written downloader.
+- Portability (spec section 6): skills name no Claude-only tool as the only way to do a step; the reviewer method lives in a skill file any agent can follow; each hook keeps its decision in a function separate from the Claude Code input and output layer.
 - Review record path: `<git common dir>/process-pack/design-reviews/<branch>.json`, never committed.
 - Plugin version goes from 1.4.0 to 1.5.0 in both `plugins/process-pack/.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` (both entries).
 - Written artifacts: no em dashes, no coined terms reused, one idea per sentence.
@@ -35,7 +36,7 @@ Nick, confirm or change these when you review.
 2. **`stacks.json` is the machine-readable half of the stack reference files.** The spec says UI file patterns come from the stack reference file. Markdown is not a reliable input for a hook, so the patterns live in `skills/design-onboard/stacks/stacks.json` and each stack's markdown file points at its entry.
 3. **The Tailwind check that blocks hardcoded colors is a zero-dependency Node script, not an ESLint rule.** It is wired into the repo's `lint` script. Reason: pepino uses Biome, so an ESLint rule would not cover the repos this is for. This is replaced by an impeccable custom rule if Task 1 finds that possible.
 4. **The contrast check is a `node:test` file ported from Meridian's Jest test.** It needs no test runner in the consuming repo. It must parse oklch, because shadcn on Tailwind v4 writes oklch tokens (unverified; confirm in Task 3).
-5. **A vendored skill slug with a slash is flattened.** `ibelick/fixing-accessibility` goes to `.claude/skills/vendor/ibelick--fixing-accessibility/`. The original slug is kept in `.process/repo.yaml`. Registry entries whose URL is not `raw.githubusercontent.com` are skipped, because they cannot be pinned to a commit. Source: `https://www.ui-skills.com/skills/registry.txt`, read 2026-09-26, 315 lines, three tab-separated columns (slug, raw URL, description); `rams/rams` points at `rams.ai`.
+5. **The `skills` CLI version is pinned to 1.7.0** in every command, because that is the version evaluated on 2026-09-26 (spec, External tools). Its `skills-lock.json` is the only record of each skill's commit; `.process/repo.yaml` records only why each skill was picked. Every install runs with `DO_NOT_TRACK=1 DISABLE_TELEMETRY=1`; whether that stops the telemetry request is unverified.
 6. **The review record lives under the git common dir**, so every worktree of a clone shares it. Branch names have `/` replaced by `__` in the file name.
 7. **The escape hatch is a record with `skip_reason`.** When Nick says to skip the review in the session, the `design-review` skill writes a record for `HEAD` with his reason. The gate treats it like a review of that commit.
 8. **`.process/repo.yaml` gets a `design` block** in `repo.schema.json`. The gate reads `design.ui_globs` from it when PyYAML is importable; without PyYAML it uses `stacks.json` and says so on stderr.
@@ -100,7 +101,6 @@ Nick, confirm or change these when you review.
 - Create: `plugins/process-pack/skills/design-onboard/assets/web/tests/check-design-tokens.test.mjs`
 - Create: `plugins/process-pack/skills/design-onboard/assets/web/tests/contrast.test.mjs`
 - Create: `plugins/process-pack/skills/design-onboard/assets/web/tests/fixtures/` (see steps)
-- Create: `plugins/process-pack/skills/design-onboard/scripts/vendor_ui_skill.py`
 - Modify: `plugins/process-pack/constants/schemas/repo.schema.json` (add `design`)
 - Modify: `plugins/process-pack/constants/examples/repo.example.yaml` (add a `design` example)
 - Test: `plugins/process-pack/constants/tests/test_repo_schema_design.py`
@@ -123,20 +123,18 @@ If Task 1 found that impeccable accepts custom rules, `check-design-tokens.mjs` 
   Task 5 appends `css`, `swiftui`, and a final `other` entry. `other` has `ui_globs` for `*.html`, `*.vue`, `*.svelte`, `*.astro`, `*.swift` and an empty `detect`.
 - Produces `check-design-tokens.mjs`: CLI `node check-design-tokens.mjs --tokens <file> [--root <dir>] [--glob <g>]...`. Exit 0 when clean. Exit 1 and print `path:line: <match> (<reason>)` per hit. Flags Tailwind palette-shade classes (`(bg|text|border|ring|fill|stroke|from|via|to|outline|decoration|divide|placeholder|shadow|accent|caret)-<palette color>-<50..950>`), arbitrary color classes (`-[#…]`, `-[rgb(…)]`), and hex, `rgb()`, `hsl()` and `oklch()` literals in `.ts`, `.tsx`, `.js`, `.jsx`, `.css` files. The `--tokens` file is exempt. A line containing `design-tokens-allow: <reason>` is exempt.
 - Produces `design-tokens-contrast.test.mjs`: reads `DESIGN_TOKENS_FILE` (default `app/globals.css`) and `CONTRAST_PAIRS_FILE` (default `.process/contrast-pairs.json`, shape `[{ "fg": "--foreground", "bg": "--background", "min": 4.5 }]`). Parses custom properties per theme block (`:root`, `.dark`, `@theme`, `[data-theme=…]`). Accepts hex, `rgb()`, `hsl()`, bare shadcn HSL triplets like `222 47% 11%`, and `oklch()`. One test per pair per theme, named `<theme> <fg> on <bg> >= <min>`.
-- Produces `vendor_ui_skill.py`: `python3 vendor_ui_skill.py <slug> --dest <repo>` fetches the registry, resolves the source repo's `main` to a SHA with `gh api repos/<owner>/<repo>/commits/main --jq .sha`, copies the skill directory at that SHA into `<repo>/.claude/skills/vendor/<owner>--<name>/`, and prints `{"slug", "dir", "source_url", "commit"}` as JSON. Exits 3 with a message when the URL is not `raw.githubusercontent.com`.
-- Produces `repo.schema.json` `design` object: `onboarded_at` (date), `impeccable_version`, `stack`, `path` (enum `greenfield`, `lean-in`, `polish-hard`, `new-direction`), `ui_globs` (string array, optional override), `vendored_skills` (array of `{slug, dir, source_url, commit, reason}`, all required). `additionalProperties: false`.
+- Produces `repo.schema.json` `design` object: `onboarded_at` (date), `impeccable_version`, `stack`, `path` (enum `greenfield`, `lean-in`, `polish-hard`, `new-direction`), `ui_globs` (string array, optional override), `ui_skills` (array of `{name, source, reason}`, all required; the commit lives in `skills-lock.json`). `additionalProperties: false`.
 
 - [ ] **Step 1: Write fixtures.** Under `assets/web/tests/fixtures/`: `tokens.css` (a `:root` and a `.dark` block, one pair in oklch and one in hex); `clean/Button.tsx` (token classes only); `dirty/Card.tsx` (`text-orange-600`, `bg-[#ff0000]`, a `"#333"` style value, and one line with `design-tokens-allow: brand logo`); `pairs.json` with one passing pair and one failing pair.
 - [ ] **Step 2: Write the failing tests.**
   - `check-design-tokens.test.mjs`: `clean exits 0`; `dirty reports exactly 3 hits with line numbers`; `allow comment is exempt`; `tokens file is exempt`.
   - `contrast.test.mjs`: `oklch(0.145 0 0) on oklch(1 0 0) is about 18.9` (within 0.2); `#777777 on #ffffff is 4.48`; `hsl triplet parses`; `failing pair fails with both colors and the ratio in the message`.
-  - `test_repo_schema_design.py`: `test_example_with_design_validates`; `test_design_bad_path_enum_fails`; `test_vendored_skill_needs_commit`.
+  - `test_repo_schema_design.py`: `test_example_with_design_validates`; `test_design_bad_path_enum_fails`; `test_ui_skill_needs_reason`.
 - [ ] **Step 3: Run them.** `node --test plugins/process-pack/skills/design-onboard/assets/web/tests/` and `python3 -m pytest plugins/process-pack/constants/tests -q`. Expected: FAIL, modules missing.
 - [ ] **Step 4: Port the contrast logic.** Start from Meridian's `packages/ui/src/__tests__/design-tokens-contrast.test.ts` (read only). Keep its WCAG relative luminance math. Add oklch to sRGB conversion per CSS Color 4 (oklch to oklab to linear sRGB, then clamp) if Meridian lacks it.
 - [ ] **Step 5: Implement `check-design-tokens.mjs`, the schema change, and the example.**
 - [ ] **Step 6: Run the tests.** Expected: all pass.
-- [ ] **Step 7: Test `vendor_ui_skill.py` live once.** `python3 vendor_ui_skill.py ibelick/fixing-accessibility --dest $(mktemp -d)`. Expected: JSON with a 40-character `commit`, and a `SKILL.md` in the destination whose content matches `raw.githubusercontent.com/ibelick/ui-skills/<commit>/skills/fixing-accessibility/SKILL.md`. Then `python3 vendor_ui_skill.py rams/rams --dest $(mktemp -d)`; expected: exit 3.
-- [ ] **Step 8: Commit.** `git commit -m "feat(design-onboard): add web guardrails, stacks.json, and repo design schema"`
+- [ ] **Step 7: Commit.** `git commit -m "feat(design-onboard): add web guardrails, stacks.json, and repo design schema"`
 
 ### Task 4: The `design-onboard` skill and the Tailwind reference file
 
@@ -145,15 +143,15 @@ If Task 1 found that impeccable accepts custom rules, `check-design-tokens.mjs` 
 - Create: `plugins/process-pack/skills/design-onboard/stacks/tailwind.md`
 
 **Interfaces:**
-- Consumes: `stacks.json`, the three web assets and `vendor_ui_skill.py` from Task 3; the design taste schema from Task 2.
+- Consumes: `stacks.json`, the three web assets from Task 3; the design taste schema from Task 2.
 - Produces: the skill name `design-onboard`, which the nudge text in Task 7 names.
 
 - [ ] **Step 1: Write `SKILL.md`** with frontmatter `name: design-onboard` and a description that triggers on "onboard design", a repo with UI and no DESIGN.md, and the nudge text. Body sections, in spec order:
   - Preflight: read the impeccable version from `~/.claude/plugins/installed_plugins.json`; stop below 4.3 with the update instruction. Detect stack from `stacks.json`, app or site, each monorepo app (`pnpm-workspace.yaml`, `turbo.json`, `apps/*`), and whether UI exists.
   - Product truth: impeccable's init writes or updates PRODUCT.md.
-  - Greenfield steps 3 to 6 exactly as spec component 2, including 6 to 10 references with one line each, 2 or 3 HTML mocks under `docs/design/onboarding/`, screenshots, and the `AskUserQuestion` pick as the only required stop.
+  - Greenfield steps 3 to 6 exactly as spec component 2, including 6 to 10 references with one line each, 2 or 3 HTML mocks under `docs/design/onboarding/`, screenshots, and Nick's pick as the only required stop (worded as "ask Nick to pick", with `AskUserQuestion` named as the Claude Code way).
   - Existing-UI steps 3 to 5 exactly as spec component 2, with the three-branch table and the contents of `docs/design/evolution/README.md`.
-  - Guardrails step 7: copy the stack's checks; pick 3 to 5 UI Skills with `npx ui-skills list --category <c>` or the registry, always one accessibility scan skill (`ibelick/fixing-accessibility` is the default candidate), vendor each with `vendor_ui_skill.py`; add a design section to AGENTS.md whose hard rules point at the design skills; write the `design` block to `.process/repo.yaml`; commit.
+  - Guardrails step 7: copy the stack's checks; pick 3 to 5 UI Skills with `npx ui-skills list --category <c>`, always one accessibility scan skill; for each, get the SHA with `git ls-remote https://github.com/<owner>/<repo> refs/heads/main` and install with the pinned `skills add` command from Global Constraints; skip any pick not hosted on GitHub; commit the skill directories and `skills-lock.json`; add a design section to AGENTS.md whose hard rules point at the design skills; write the `design` block to `.process/repo.yaml`; commit.
   - A rule that the skill copies taste rules into PRODUCT.md and AGENTS.md and never links to `~/.config`.
   - A rule that impeccable is the only writer of DESIGN.md.
 - [ ] **Step 2: Write `stacks/tailwind.md`.** Four answers from spec component 3: detection (points at the `tailwind` entry in `stacks.json`), where tokens go (v3 `tailwind.config` plus CSS variables, v4 `@theme`), what blocks hardcoded colors (copy `check-design-tokens.mjs` to `scripts/`, add it to the `lint` script), and how contrast is checked (copy the contrast test and the pairs example, add a `test:contrast` script running `node --test`).
@@ -187,9 +185,10 @@ If Task 1 found that impeccable accepts custom rules, `check-design-tokens.mjs` 
 - [ ] **Step 7: Write `css.md`, `swiftui.md`, and `other.md`** with the same four answers as `tailwind.md`. `other.md` says plainly that there is no check that blocks hardcoded colors and no contrast check.
 - [ ] **Step 8: Commit.** `git commit -m "feat(design-onboard): add plain CSS, SwiftUI, and fallback stack references"`
 
-### Task 6: The `design-reviewer` agent, the `design-review` skill, and the review record
+### Task 6: The reviewer method, the `design-review` skill, the Claude Code agent wrapper, and the review record
 
 **Files:**
+- Create: `plugins/process-pack/skills/design-review/reviewer.md`
 - Create: `plugins/process-pack/agents/design-reviewer.md`
 - Create: `plugins/process-pack/skills/design-review/SKILL.md`
 - Create: `plugins/process-pack/skills/design-review/scripts/review_record.py`
@@ -201,14 +200,15 @@ If Task 1 found that impeccable accepts custom rules, `check-design-tokens.mjs` 
   - `write_record(cwd, *, reviewed_sha, ui_files, findings_fixed, findings_left, screenshots, skip_reason=None) -> Path`. Writes `{branch, reviewed_sha, ui_files, findings_fixed, findings_left, screenshots, skip_reason, written_at}`.
   - `read_record(cwd, branch) -> dict | None`. Returns `None` for missing or unparseable files.
   - CLI: `review_record.py write --sha HEAD --ui-file <f>... --fixed <s>... --left <s>... --screenshot <p>... [--skip-reason <s>]` and `review_record.py --dry-run`.
-- Consumes: the vendored accessibility skill directory name from `.process/repo.yaml` `design.vendored_skills`.
+- Consumes: the accessibility skill's name from `.process/repo.yaml` `design.ui_skills`, installed under `.agents/skills/`.
 
 - [ ] **Step 1: Write the dry-run cases first** in `review_record.py`: `path_uses_common_dir_from_worktree`, `slash_branch_is_flattened`, `round_trip`, `corrupt_file_reads_as_none`, `skip_reason_round_trip`. Each builds a temp repo, and the worktree case adds one with `git worktree add`.
 - [ ] **Step 2: Run** `python3 review_record.py --dry-run`. Expected: FAIL for each case.
 - [ ] **Step 3: Implement** the three functions and the CLI. Resolve `HEAD` to a full SHA before writing.
 - [ ] **Step 4: Run.** Expected: 5 PASS.
-- [ ] **Step 5: Write `agents/design-reviewer.md`.** Read Meridian's `.claude/agents/design-reviewer.md` (read only). Keep its method. Replace Meridian specifics (its tokens, product names, package paths) with reads of the target repo's DESIGN.md, PRODUCT.md, and AGENTS.md design rules. Keep Meridian's `model` frontmatter value if it sets one; otherwise leave it unset.
-- [ ] **Step 6: Write `skills/design-review/SKILL.md`** with the six steps of spec component 4 in order: read the three docs; find touched screens and run the app with the `run` skill or a preview URL; screenshot desktop (1440 wide) and mobile (390 wide); run impeccable's critique and the vendored accessibility skill through the `design-reviewer` agent; fix, at most two rounds, list the rest; write the record with `review_record.py write` and hand the summary and screenshots to `qa-brief`. Add a section for the escape hatch: only when Nick says to skip in the session, write the record with `--skip-reason "<his words>"`.
+- [ ] **Step 5: Write `skills/design-review/reviewer.md`.** Read Meridian's `.claude/agents/design-reviewer.md` (read only). Keep its method. Replace Meridian specifics (its tokens, product names, package paths) with reads of the target repo's DESIGN.md, PRODUCT.md, and AGENTS.md design rules. No Claude-only tool names.
+- [ ] **Step 5b: Write `agents/design-reviewer.md`** as a Claude Code wrapper: frontmatter, then one instruction to follow `skills/design-review/reviewer.md`. Keep Meridian's `model` frontmatter value if it sets one.
+- [ ] **Step 6: Write `skills/design-review/SKILL.md`** with the six steps of spec component 4 in order: read the three docs; find touched screens and run the app with the `run` skill or a preview URL; screenshot desktop (1440 wide) and mobile (390 wide); run impeccable's critique and the installed accessibility skill by following `reviewer.md` (in Claude Code, through the `design-reviewer` agent); fix, at most two rounds, list the rest; write the record with `review_record.py write` and hand the summary and screenshots to `qa-brief`. Add a section for the escape hatch: only when Nick says to skip in the session, write the record with `--skip-reason "<his words>"`.
 - [ ] **Step 7: Commit.** `git commit -m "feat(design-review): add reviewer agent, review skill, and review record"`
 
 ### Task 7: `hooks/design-onboard-nudge` (SessionStart)
@@ -246,7 +246,7 @@ If Task 1 found that impeccable accepts custom rules, `check-design-tokens.mjs` 
 
 **Interfaces:**
 - Consumes: `design_common` (Task 7), `review_record.read_record` and `record_path` (Task 6).
-- Produces `decide(cwd: str, command: str) -> dict`, returning `{"action": "allow"}` or `{"action": "block", "reason": str}`.
+- Produces `decide(cwd: str, command: str) -> dict`, returning `{"action": "allow"}` or `{"action": "block", "reason": str}`. `decide` reads no hook payload and prints nothing; `main()` is the Claude Code layer that parses the payload and writes the output. The nudge follows the same split with `nudge_text(cwd: str) -> str | None`.
 - Block output: the reason on stderr, `{"decision": "block", "reason": ...}` on stdout, exit 2. Reasons, exact text:
   - No record: `This branch changes UI files (<n> files) and has no design review. Run the design-review skill, then retry gh pr create.`
   - Stale: `This branch changed UI files after the design review at <short sha>: <up to 5 files>. Run the design-review skill again, then retry gh pr create.`
@@ -292,7 +292,7 @@ If Task 1 found that impeccable accepts custom rules, `check-design-tokens.mjs` 
 All scratch work lives under `/Users/nick/scratch/process-pack-design-onboarding/`. Evidence goes in `docs/superpowers/notes/2026-09-26-design-onboarding-verification.md` in the worktree.
 
 - [ ] **Step 1: Load the worktree plugin into a session.** Find the flag with `claude --help` (a `--plugin-dir` option is unverified). Confirm with a headless run in the scratch repo that the nudge line appears. If no such flag exists, run the hooks by piping the exact payload JSON to them, and say so in the evidence.
-- [ ] **Step 2: Greenfield dry run.** `npx create-next-app@latest greenfield --ts --tailwind --app --no-src-dir --use-pnpm --yes` in the scratch folder (flags unverified; check `--help`). Run `design-onboard` end to end. **STOP at the direction pick: Nick chooses.** Evidence: the commit listing PRODUCT.md, DESIGN.md, the tokens file, the two checks passing, the vendored skills with commits, and `.process/repo.yaml`.
+- [ ] **Step 2: Greenfield dry run.** `npx create-next-app@latest greenfield --ts --tailwind --app --no-src-dir --use-pnpm --yes` in the scratch folder (flags unverified; check `--help`). Run `design-onboard` end to end. **STOP at the direction pick: Nick chooses.** Evidence: the commit listing PRODUCT.md, DESIGN.md, the tokens file, the two checks passing, `skills-lock.json` with a `ref` per skill, and `.process/repo.yaml`.
 - [ ] **Step 3: Existing-UI dry run on pepino, read only.** Record `git -C ~/workspace/code/pikl/pepino status --porcelain | shasum` and `git rev-parse HEAD` before. Run the audit and recommendation with every output written to `/Users/nick/scratch/process-pack-design-onboarding/pepino-audit/`, never into pepino. Stop before any change. Record the same two values after. Expected: identical.
 - [ ] **Step 4: Gate run in the greenfield repo.** Create a branch, change one screen's `.tsx`, commit. Add a bare local repo as `origin` so `gh pr create` has something to diff against and cannot publish anything. Attempt `gh pr create --fill`. Expected: blocked with the no-record reason. Run `design-review`. Attempt again. Expected: the gate allows it, and `gh` then fails on its own because the remote is not on GitHub. Record both outputs.
 - [ ] **Step 5: Hook test evidence.** Paste the four dry-run outputs into the evidence note.
