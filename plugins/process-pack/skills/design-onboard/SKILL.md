@@ -27,24 +27,25 @@ In Claude Code, "ask Nick to pick" means the `AskUserQuestion` tool. In another 
 
 ## Step 1. Preflight
 
-1. **Impeccable version.** Read it from the harness's plugin record. In Claude Code that is `~/.claude/plugins/installed_plugins.json`, key `impeccable@impeccable`, field `version`. Below 4.3, stop and say: "Impeccable is <version>. Update it with `claude plugin marketplace update impeccable` and `claude plugin update impeccable@impeccable`, restart the session, then run design-onboard again." Not installed at all: stop with the same instruction.
-2. **Stack.** Read `stacks/stacks.json` in this skill's directory. Take the first entry whose `detect` matches: any file in `files_any` exists at the root, or any package in `package_deps_any` is in a `package.json` dependency list. No match means `other`. Open that entry's `reference` file; it answers the rest of the stack questions for step 7.
+1. **Impeccable version.** Read it from the harness's plugin record. In Claude Code that is `~/.claude/plugins/installed_plugins.json`: `plugins["impeccable@impeccable"]` is a list of install records, and the user-scope record's `version` is the one that runs. Below 4.3, stop and say: "Impeccable is <version>. Update it with `claude plugin marketplace update impeccable` and `claude plugin update impeccable@impeccable`, restart the session, then run design-onboard again." Not installed at all: stop with the same instruction.
+2. **Stack.** Read `stacks/stacks.json` in this skill's directory. Detect per app, at each app's own directory (the repo root in a single-app repo; see item 4 for monorepos). Take the first entry whose `detect` matches: a name in `files_any` (globs allowed) exists in that directory, or a package in `package_deps_any` is in that directory's `package.json` dependency lists. No match means `other`. Open that entry's `reference` file; it answers the rest of the stack questions for step 7.
 3. **App or site.** A site sells or explains (marketing pages, a portfolio, docs). An app is used (signed-in screens, data, forms). A repo can be both; record which surfaces are which.
-4. **Monorepo apps.** With `pnpm-workspace.yaml`, `turbo.json`, or an `apps/` directory, list each app. Run steps 2 to 7 per app that has or will have UI. Each app gets its own DESIGN.md beside its `package.json`; impeccable's hooks read each app's own file.
-5. **Existing UI.** Count tracked files that match the stack's `ui_globs` and are not in `exclude_globs` (`git ls-files`). Any screen a user can reach means the path for existing UI. Only a starter page from a scaffold (for example `create-next-app`'s default page) counts as greenfield.
+4. **Monorepo apps.** With `pnpm-workspace.yaml`, `turbo.json`, or an `apps/` directory, list each app. Onboard each app users actually see. A component catalogue (Storybook) or a shared UI package follows the app it serves and gets no PRODUCT.md or DESIGN.md of its own. Where each DESIGN.md goes is impeccable's call (4.2.3 and later read each app's own file); do not move what its flows write.
+5. **Existing UI.** Count tracked files that match the stack's `ui_globs` and are not in `exclude_globs` (`git ls-files`, paths taken relative to the app's directory). Any screen a user can reach means the path for existing UI. Only a starter page from a scaffold (for example `create-next-app`'s default page) counts as greenfield. Impeccable's `context` still calls a scaffold page an incumbent system; tell its new-work flow the page is a scaffold default with no visual authority.
 
 ## Step 2. Product truth
 
-Run impeccable's `init` flow (in Claude Code: `/impeccable init`). It writes or updates PRODUCT.md: users, register, purpose, personality, references, anti-references, principles. If PRODUCT.md already exists, init updates it; do not overwrite what the repo's owner wrote.
+Run impeccable's `init` flow (in Claude Code: `/impeccable init`). It interviews Nick for at least one round, then writes or updates PRODUCT.md from its template. If PRODUCT.md already exists, init updates it; do not overwrite what the repo's owner wrote.
 
 ## Greenfield path
 
 ### Step 3G. Design taste
 
-Load `~/.config/process-pack/design-taste.yaml`. Fold its rules into PRODUCT.md:
+Load `~/.config/process-pack/design-taste.yaml`. Nick made these rules binding, so they go into PRODUCT.md's `## Brand Commitments` section, which impeccable's template keeps for constraints the user made binding. Do not add new top-level sections: init's template rejects visual recipes elsewhere.
 
-- `looks_to_avoid` rules go into PRODUCT.md's anti-references.
-- `craft_floor`, `color_discipline`, and `accessibility_floor` rules go into its principles or accessibility section.
+- `looks_to_avoid` rules become the looks this product must not have.
+- `craft_floor`, `color_discipline`, and `accessibility_floor` rules become the finish every screen reaches; the accessibility floor also goes in `## Accessibility & Inclusion`.
+- `copy` rules become the voice commitments.
 - Copy each rule's default stance and its named exceptions in plain words. Leave out rules whose applicability gate does not hold for this repo (for example, the AI content rule in a product with no AI content).
 
 ### Step 4G. References
@@ -69,16 +70,16 @@ Directions come from impeccable's new-work flow, run as written: `reference/new-
 
 ### Step 6G. System
 
-Run impeccable's new-work flow for the chosen direction (in Claude Code: `/impeccable` with the chosen mock as the brief). It writes DESIGN.md. Then follow the stack reference file's "Where tokens go" section to turn DESIGN.md into real tokens.
+Continue impeccable's new-work flow from the chosen card: it commits the world, records it in DESIGN.md (and its `.impeccable/design.json` sidecar), and builds the first surface. Commit the sidecar with DESIGN.md. Then follow the stack reference file's "Where tokens go" section to turn DESIGN.md into real tokens.
 
 ## Existing UI path
 
 ### Step 3E. Audit
 
 1. Fold the design taste rules into PRODUCT.md exactly as in step 3G.
-2. Run impeccable's `document` flow to record the current system as a draft DESIGN.md.
-3. Screenshot 3 to 5 key screens at desktop and mobile widths. Use the `run` skill to start the app, or a preview URL.
-4. Run impeccable's `critique` and `audit` flows against those screens, scoring each against the design taste rules. Rank the problems.
+2. Run impeccable's `document` flow to record the current system as a draft DESIGN.md. It asks Nick its own questions and writes a `.impeccable/design.json` sidecar beside DESIGN.md.
+3. Screenshot 3 to 5 key screens at desktop and mobile widths. Use the `run` skill to start the app, or a preview URL. When the app cannot run (secrets, a backend, a login), use Storybook, a preview deploy, or saved screenshots, in that order, and say in the output which one and what it could not show (usually mobile widths and live states).
+4. Run impeccable's `critique` and `audit` flows against those screens. Critique wants isolated reviewers per screen; stay within the machine's cap on agents that run commands (three on Nick's laptop) by batching screens, and disclose any degraded pass. Report impeccable's own scores, then score the taste file's eight dimensions and check each taste rule whose applicability gate holds (for example the AI content rule in a product with an agent). Mark any audit dimension that screenshots cannot measure (performance, responsive behavior without a mobile source) as not measured. Rank the problems.
 5. Pull 3 to 5 comparable products from Inspo, Refero, or Mobbin as a benchmark.
 
 ### Step 4E. Recommend one branch
@@ -90,8 +91,8 @@ Run impeccable's new-work flow for the chosen direction (in Claude Code: `/impec
 | New direction | The identity is generic or wrong for the users | Greenfield steps 4G to 6G, plus a migration plan: which screens move first and how old and new coexist |
 
 1. Pick the branch the audit supports, and say which measurement decided it.
-2. **Branch second opinion (Jev).** Ask one `choice` question over the audit summary (scores, top problems, benchmark notes). The options are `lean-in`, `polish-hard`, and `new-direction`. Each option's criteria is its "When it fits" text from the table.
-3. Show Nick both picks: yours, and Jev's with its confidence and source. Say plainly when they differ.
+2. **Branch second opinion (Jev).** Write the audit summary (scores, top problems, benchmark notes) to `docs/design/evolution/audit-summary.txt`, under 8 KB, and ask one `choice` question over it. The options are `lean-in`, `polish-hard`, and `new-direction`. Each option's criteria is its "When it fits" text from the table.
+3. Show Nick both picks: yours, and Jev's with its `confidence` and source. Say plainly when they differ, and that Jev read your summary, so agreement is not independent evidence.
 4. **Ask Nick to pick** the branch.
 
 ### Step 5E. The case for the change
