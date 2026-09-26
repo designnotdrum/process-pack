@@ -75,6 +75,24 @@ Scratch repo: `greenfield/`, created with `create-next-app@16.3.6` (Next.js 16.3
 4. **First direction round, rejected.** Three hand-written HTML mocks. Jev's taste check flagged all three on decorated buttons or motion (0.56 to 0.70) for a 1px button press; after removing it, every rule scored 0.17 or lower. Nick rejected all three ("lmao I hate all of those"). They shared one stat-tile layout and differed only in tokens. The spec and skill were changed so directions come from impeccable's new-work round (commit `5d4ff33`).
 5. **Second round, through impeccable.** Nick's answers to new-work's questions: surface is the Overview; not a generic SaaS dashboard, not precious editorial, not accounting software; success is knowing the next money move in 5 seconds. `concept-seed` (key `5d9d28af`) assigned candidate 7, a departure board. Jev's taste check on the three full cards: every rule 0.29 or lower. On impeccable's decision page Nick picked the design tool inspector card.
 6. **Build:** code-led (no image generation). Tokens in `src/app/globals.css`; the color check passes; the contrast test passes 30 of 30 pairs in light and dark; `impeccable detect` found nothing; two inspection rounds at 1440, 1280, 390, and dark.
-7. **Guardrails:** three UI Skills installed with `skills@1.7.0`, each pinned in `skills-lock.json`: `fixing-accessibility` at `f9515cb9`, `web-design-guidelines` at `063bee94`, `better-typography` at `267330e1`. A design section in AGENTS.md; `.process/repo.yaml` validates against the schema; `pnpm lint` passes.
+7. **Finish review.** Impeccable's finish reviewer (Opus) returned fix three times, then ship on the fourth pass. The fixes: frames on one shared hours scale, no nested cards, no small labels above headings, drawn icons instead of Unicode glyphs, selectable invoice layers, real loading, done, error and pressed states, no invented product name, then a true mobile scale (1h is 44px, no minimum). Evidence: `greenfield/.impeccable/review/` (11 captures).
+8. **DESIGN.md.** Written by impeccable's documenter (with `.impeccable/design.json`) from the shipped build. One wording fix by hand: it called the mobile scale unit a floor.
+9. **Guardrails:** three UI Skills installed with `skills@1.7.0`, each pinned in `skills-lock.json`: `fixing-accessibility` at `f9515cb9`, `web-design-guidelines` at `063bee94`, `better-typography` at `267330e1`. A design section in AGENTS.md; `.process/repo.yaml` validates against the schema; `pnpm lint` passes.
 
 The greenfield run also found a real bug: the contrast parser read no tokens from any stylesheet that starts with `@import "tailwindcss"` (fixed in `8c459e2`).
+
+## Gate run: blocked, reviewed, let through
+
+Scratch branch `feat/log-time-label` in `greenfield/`, one UI commit `5220cfc` (the top bar button "Log time" becomes "Start timer"). The payload is exactly what Claude Code sends for `gh pr create --fill --base main --draft`.
+
+| Step | Gate exit | Output |
+| --- | --- | --- |
+| No review yet | 2 | "This branch changes UI files (1 files) and has no design review. Run the design-review skill, then retry gh pr create." |
+| After the `design-review` skill wrote a record for `5220cfc` | 0 | (none) |
+| After a further UI commit on top of the review | 2 | "This branch changed UI files after the design review at 5220cfc: src/app/page.tsx. Run the design-review skill again, then retry gh pr create." |
+
+The review followed the skill: the Overview screenshotted at 1440, 390, and 1440 dark; no findings to fix; the record written with `review_record.py write` to `.git/process-pack/design-reviews/feat__log-time-label.json`.
+
+The same gate also blocked inside a real headless session (`claude -p --plugin-dir <worktree>/plugins/process-pack`): its Jev shadow log has three block lines for that branch (Jev 0.58 to 0.68 that the diff changes what users see). That run was stopped by hand: Nick's global `~/.claude/hooks/pr-review-gate.sh` also fires on `gh pr create`, and the headless session started committing refactors to satisfy it. The branch was reset. `gh pr create` itself was not run past the gate, because the only remote is a local bare repo.
+
+Jev shadow lines for the three direct runs: allow 0.97, then block 0.97, each with `source: typesafe`. The run also showed the shadow line recorded HEAD at the time it ran rather than the commit the gate decided on; fixed with a test in `4e5dd17`.
