@@ -53,4 +53,4 @@ Block: the reason on stderr, `{"decision": "block", "reason": "..."}` on stdout,
 python3 design_review_gate.py --dry-run
 ```
 
-Builds throwaway git repos with a local bare `origin` and a local Jev stub, and prints PASS or FAIL for 17 cases, including the four in the spec: no record blocks, stale record blocks, docs-only diff passes, fresh record passes.
+Builds throwaway git repos with a local bare `origin` and a local Jev stub, and prints PASS or FAIL for 18 cases, including the four in the spec: no record blocks, stale record blocks, docs-only diff passes, fresh record passes.

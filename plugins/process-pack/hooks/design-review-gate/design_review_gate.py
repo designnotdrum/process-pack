@@ -114,7 +114,8 @@ def decide(cwd, command):
 
         is_ui = design_common.ui_matcher(root)
         ui_files = _ui_changes(root, is_ui, merge_base)
-        context = {"gated": True, "root": str(root), "branch": branch, "base": base, "merge_base": merge_base, "ui_files": ui_files}
+        head = _git(root, "rev-parse", "HEAD")
+        context = {"gated": True, "root": str(root), "branch": branch, "base": base, "merge_base": merge_base, "head": head, "ui_files": ui_files}
         if not ui_files:
             return {"action": "allow", **context}
 
@@ -177,12 +178,13 @@ def _jev_shadow(path):
     finally:
         Path(path).unlink(missing_ok=True)
     root = result["root"]
-    diff = _git(root, "diff", f"{result['merge_base']}..HEAD") or ""
+    # Diff and log the commit the gate decided on, not whatever HEAD is by now.
+    diff = _git(root, "diff", f"{result['merge_base']}..{result['head']}") or ""
     answer = jev_client.ask(diff, JEV_QUESTION)
     line = {
         "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "branch": result["branch"],
-        "head": _git(root, "rev-parse", "HEAD"),
+        "head": result["head"],
         "base": result["base"],
         "file_pattern_ui": bool(result["ui_files"]),
         "ui_file_count": len(result["ui_files"]),
@@ -439,7 +441,18 @@ def _dry_run():
         Stub.delay = 0.0
         return proc.returncode == 2 and seconds < 1.0
 
+    def case_gate_shadow_records_head_at_decision():
+        Stub.delay = 1.0
+        root = repo()
+        decided = commit(root, {"app/page.tsx": "v2"}, "ui")
+        run_main(root, {"TYPESAFE_API_KEY": "k"})
+        commit(root, {"README.md": "moved on"}, "later")
+        lines = wait_for_log(root, 1)
+        Stub.delay = 0.0
+        return len(lines) == 1 and lines[0]["head"] == decided
+
     cases = [
+        case_gate_shadow_records_head_at_decision,
         case_gate_blocks_ui_change_without_record,
         case_gate_blocks_stale_record,
         case_gate_passes_docs_only_diff,
