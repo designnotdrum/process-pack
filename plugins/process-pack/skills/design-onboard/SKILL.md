@@ -1,0 +1,130 @@
+---
+name: design-onboard
+description: Use when a repo has UI files and no DESIGN.md, when a session-start message says to run design-onboard before UI work, when someone asks to onboard design or set up a design system for a repo, or before the first UI work in a new or unfamiliar repo. Writes PRODUCT.md and DESIGN.md through impeccable, picks a visual direction or audits the existing one, and installs the guardrails that keep later UI work on the system.
+---
+
+# Design onboard
+
+## Overview
+
+A new repo's UI looks like library defaults for its first several sessions, each screen invents its own values, and nothing reviews the result. This skill closes that gap once, at the start. It leaves the repo with product truth (PRODUCT.md), a design system (DESIGN.md and real tokens), checks that block hardcoded colors and low contrast, a few pinned UI Skills, and AGENTS.md rules that point at all of it.
+
+Impeccable is the design engine. This skill runs impeccable's flows in order and fills the gaps between them. It does not replace or fork them.
+
+Two paths share the first two steps and the last one:
+
+- **Greenfield:** the repo has no UI yet. Steps 1, 2, 3G to 6G, 7.
+- **Existing UI:** the repo already has screens. Steps 1, 2, 3E to 5E, 7.
+
+## Rules that hold on every path
+
+- **Impeccable is the only writer of DESIGN.md.** Do not write it by hand, and do not use `ibelick/create-design-md` or any other skill that writes one.
+- **Rules are copied, never linked.** The design taste file lives at `~/.config/process-pack/design-taste.yaml`. Copy the rules that apply into the repo's PRODUCT.md and AGENTS.md. Never link to the home-directory file: cloud agents (Codex cloud, Cursor) cannot read it.
+- **Nick decides the direction.** On the greenfield path, his pick of a direction mock is the one required stop. When the repo already has UI, he picks the branch. Everything else runs without stopping.
+- **Jev answers are advice with a source.** Every Jev result carries `source` (`typesafe`, `openrouter`, or `none`). Show it next to the result. With `source: none`, say the check was skipped and carry on.
+
+In Claude Code, "ask Nick to pick" means the `AskUserQuestion` tool. In another agent, use its own way of asking the user a question and waiting.
+
+## Step 1. Preflight
+
+1. **Impeccable version.** Read it from the harness's plugin record. In Claude Code that is `~/.claude/plugins/installed_plugins.json`, key `impeccable@impeccable`, field `version`. Below 4.3, stop and say: "Impeccable is <version>. Update it with `claude plugin marketplace update impeccable` and `claude plugin update impeccable@impeccable`, restart the session, then run design-onboard again." Not installed at all: stop with the same instruction.
+2. **Stack.** Read `stacks/stacks.json` in this skill's directory. Take the first entry whose `detect` matches: any file in `files_any` exists at the root, or any package in `package_deps_any` is in a `package.json` dependency list. No match means `other`. Open that entry's `reference` file; it answers the rest of the stack questions for step 7.
+3. **App or site.** A site sells or explains (marketing pages, a portfolio, docs). An app is used (signed-in screens, data, forms). A repo can be both; record which surfaces are which.
+4. **Monorepo apps.** With `pnpm-workspace.yaml`, `turbo.json`, or an `apps/` directory, list each app. Run steps 2 to 7 per app that has or will have UI. Each app gets its own DESIGN.md beside its `package.json`; impeccable's hooks read each app's own file.
+5. **Existing UI.** Count tracked files that match the stack's `ui_globs` and are not in `exclude_globs` (`git ls-files`). Any screen a user can reach means the path for existing UI. Only a starter page from a scaffold (for example `create-next-app`'s default page) counts as greenfield.
+
+## Step 2. Product truth
+
+Run impeccable's `init` flow (in Claude Code: `/impeccable init`). It writes or updates PRODUCT.md: users, register, purpose, personality, references, anti-references, principles. If PRODUCT.md already exists, init updates it; do not overwrite what the repo's owner wrote.
+
+## Greenfield path
+
+### Step 3G. Design taste
+
+Load `~/.config/process-pack/design-taste.yaml`. Fold its rules into PRODUCT.md:
+
+- `looks_to_avoid` rules go into PRODUCT.md's anti-references.
+- `craft_floor`, `color_discipline`, and `accessibility_floor` rules go into its principles or accessibility section.
+- Copy each rule's default stance and its named exceptions in plain words. Leave out rules whose applicability gate does not hold for this repo (for example, the AI content rule in a product with no AI content).
+
+### Step 4G. References
+
+Run the `desk-research` skill, briefed from PRODUCT.md's users, register, and category. Search the Inspo MCP (strongest for marketing and site pages) and the Refero and Mobbin MCPs (strongest for app screens and flows). Output 6 to 10 references, each with one line on why it fits this work. The design taste file holds no default references; pick them for this repo only.
+
+### Step 5G. Directions
+
+1. Render 2 or 3 direction mocks as standalone HTML files under `docs/design/onboarding/`, one file per direction. Each shows the same key screen, so they compare like for like.
+2. **Mock taste check (Jev).** For each mock, build the state from its HTML and CSS. Ask one `noul` question per rule in the taste file's `looks_to_avoid` section, worded as "This page uses <the look the rule bans>." Run:
+
+   ```bash
+   python3 <process-pack>/tools/jev/jev_client.py ask --state-file <mock.html> --questions-file <questions.json>
+   ```
+
+   A probability at or above 0.5 flags that rule. Re-render a flagged mock once, naming the flagged rule in the instructions. If it is still flagged, keep it and show the flag to Nick next to it. Record the threshold (0.5), each probability, and the source in `docs/design/onboarding/README.md`.
+3. Screenshot each mock at desktop width (1440) and mobile width (390).
+4. **Ask Nick to pick** a direction, showing the screenshots, the references each one draws on, and any flags. This is the only required stop on this path.
+
+### Step 6G. System
+
+Run impeccable's new-work flow for the chosen direction (in Claude Code: `/impeccable` with the chosen mock as the brief). It writes DESIGN.md. Then follow the stack reference file's "Where tokens go" section to turn DESIGN.md into real tokens.
+
+## Existing UI path
+
+### Step 3E. Audit
+
+1. Fold the design taste rules into PRODUCT.md exactly as in step 3G.
+2. Run impeccable's `document` flow to record the current system as a draft DESIGN.md.
+3. Screenshot 3 to 5 key screens at desktop and mobile widths. Use the `run` skill to start the app, or a preview URL.
+4. Run impeccable's `critique` and `audit` flows against those screens, scoring each against the design taste rules. Rank the problems.
+5. Pull 3 to 5 comparable products from Inspo, Refero, or Mobbin as a benchmark.
+
+### Step 4E. Recommend one branch
+
+| Branch | When it fits | Output |
+| --- | --- | --- |
+| Lean in | The UI is coherent; problems are craft debt | The recorded DESIGN.md becomes the authority; guardrails codify it; debt becomes tickets |
+| Polish hard | The identity is worth keeping; hierarchy, type, spacing, or states fall short | Identity kept; a ranked fix list (structure, then tokens, then components, then polish); before and after renders of 2 or 3 key screens |
+| New direction | The identity is generic or wrong for the users | Greenfield steps 4G to 6G, plus a migration plan: which screens move first and how old and new coexist |
+
+1. Pick the branch the audit supports, and say which measurement decided it.
+2. **Branch second opinion (Jev).** Ask one `choice` question over the audit summary (scores, top problems, benchmark notes). The options are `lean-in`, `polish-hard`, and `new-direction`. Each option's criteria is its "When it fits" text from the table.
+3. Show Nick both picks: yours, and Jev's with its confidence and source. Say plainly when they differ.
+4. **Ask Nick to pick** the branch.
+
+### Step 5E. The case for the change
+
+Both change branches (polish hard, new direction) write `docs/design/evolution/README.md`, readable cold by a client or stakeholder:
+
+- Current audit scores and top problems, on real screenshots.
+- Before and after renders of the same screens, with the benchmark products.
+- Cost: screens touched, a t-shirt size, and phasing.
+- Risks (relearning, brand equity, regressions), each with a mitigation.
+- One recommendation and the measurement that decided it.
+
+Lean in writes one line in that file saying why the current system stays.
+
+## Step 7. Guardrails
+
+1. **Stack checks.** Follow the stack reference file: install the check that blocks hardcoded colors and the contrast check, and wire both into the repo's scripts. For `other`, write in the onboarding output that neither check exists for this stack.
+2. **UI Skills.** Pick 3 to 5 for the stack and product with `npx ui-skills list --category <c>` (and `npx ui-skills categories`). Always include one accessibility scan skill (`ibelick/fixing-accessibility` is the default candidate). The `ui-skills` CLI only finds skills; do not use `ui-skills get` to install, because it prints only SKILL.md and drops the skill's other files. For each pick:
+   1. Skip it and pick another if its source is not on GitHub.
+   2. Get the commit: `git ls-remote https://github.com/<owner>/<repo> refs/heads/main`.
+   3. Install it pinned:
+
+      ```bash
+      DO_NOT_TRACK=1 DISABLE_TELEMETRY=1 npx -y skills@1.7.0 add <owner>/<repo>#<sha> --skill <name> --agent claude-code codex opencode pi --copy -y
+      ```
+
+      This writes `.agents/skills/<name>/` (read by Codex, OpenCode, pi and others) and `.claude/skills/<name>/`, and records the pin in `skills-lock.json`.
+3. **AGENTS.md.** Add a `## Design` section with hard rules:
+   - Read DESIGN.md and PRODUCT.md before any UI change.
+   - Every color comes from a token; the repo's color check must pass.
+   - Run the `design-review` skill before opening a pull request that changes UI.
+   - The installed UI Skills, each named with what it is for.
+   - The taste rules folded into PRODUCT.md, in plain words.
+4. **`.process/repo.yaml`.** Write the `design` block (schema: `constants/schemas/repo.schema.json` in process-pack): `onboarded_at`, `impeccable_version`, `stack`, `path` (`greenfield`, `lean-in`, `polish-hard`, or `new-direction`), and `ui_skills` with each skill's `name`, `source`, and the reason it was picked. The commits live in `skills-lock.json` only.
+5. **Commit** PRODUCT.md, DESIGN.md, the tokens, the checks, `docs/design/`, the skill directories, `skills-lock.json`, AGENTS.md, and `.process/repo.yaml`.
+
+## Report
+
+End with: the path taken, the direction or branch Nick picked, the references, the Jev results with their sources, the checks installed and whether they pass, each UI Skill with its pinned commit, and anything left open.
