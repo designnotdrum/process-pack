@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://process-pack/schemas/design-taste.schema.json",
+  "title": "design-taste",
+  "description": "A person's design taste rules, read by the design-onboard skill and copied into each repo's PRODUCT.md and AGENTS.md. Lives at ~/.config/process-pack/design-taste.yaml and is never committed. Every rule follows the taste-rules anatomy: default stance, applicability gate, named exceptions, escape hatch. Holds no brand values and no default reference products.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "looks_to_avoid",
+    "craft_floor",
+    "color_discipline",
+    "accessibility_floor",
+    "copy",
+    "critique_method"
+  ],
+  "$defs": {
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "default_stance", "applicability_gate", "named_exceptions", "escape_hatch"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "Short stable identifier, lowercase words joined by hyphens."
+        },
+        "default_stance": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What happens with no further judgment applied. Plain and enforceable."
+        },
+        "applicability_gate": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The checkable condition under which the default applies."
+        },
+        "named_exceptions": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Cases, stated in advance, where the default does not hold. May be empty."
+        },
+        "escape_hatch": {
+          "type": "string",
+          "minLength": 1,
+          "description": "How the person overrides the rule anyway: express, in-session permission."
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/rule" }
+    }
+  },
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Schema version this file was written against, e.g. \"1.0\"."
+    },
+    "looks_to_avoid": {
+      "$ref": "#/$defs/rules",
+      "description": "Visual looks that read as generic or dated, each as a rule."
+    },
+    "craft_floor": {
+      "$ref": "#/$defs/rules",
+      "description": "The minimum finish every screen reaches: type levels, interaction states, data states."
+    },
+    "color_discipline": {
+      "$ref": "#/$defs/rules",
+      "description": "Where color comes from and what it is allowed to mean."
+    },
+    "accessibility_floor": {
+      "$ref": "#/$defs/rules",
+      "description": "The accessibility level every theme meets."
+    },
+    "copy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rules", "points_at"],
+      "properties": {
+        "rules": { "$ref": "#/$defs/rules" },
+        "points_at": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Names of skills that own the copy method in full. Onboarding points at them rather than copying them."
+        }
+      }
+    },
+    "critique_method": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dimensions", "each_point_needs_fix"],
+      "properties": {
+        "dimensions": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "description": "The dimensions a critique scores, in order."
+        },
+        "each_point_needs_fix": {
+          "type": "boolean",
+          "description": "When true, every critique point must carry a concrete fix."
+        },
+        "notes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Short guidance per dimension or for the method as a whole."
+        }
+      }
+    }
+  }
+}
