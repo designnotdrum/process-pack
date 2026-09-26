@@ -45,7 +45,7 @@ Any repo Nick works in reaches Meridian-level design quality within its first se
   - `npx skills add <owner>/<repo>#<commit> --skill <name> --agent <ids> --copy -y` installs the whole skill directory, including `references/` and `agents/` files.
   - The `#<commit>` pin works. Installing `ibelick/ui-skills-root` at `4ebfe60` produced that commit's content, not `main`'s, and `skills-lock.json` recorded `"ref": "4ebfe60…"`. The `tree/<commit>/<path>` URL form behaves the same.
   - The lock file records `source`, `ref`, `skillPath`, and a `computedHash` of the content. `npx skills experimental_install` restores from it.
-  - A project install writes to `.agents/skills/<name>/`, which 22 of its agent definitions share, including `codex`, `opencode`, `pi`, and `cursor`. Adding `claude-code` also writes `.claude/skills/<name>/`.
+  - A project install with `--agent claude-code codex opencode pi` writes `.agents/skills/<name>/` (the folder Codex and OpenCode read), `.claude/skills/<name>/`, and `.pi/skills/<name>/`. Seen in the greenfield dry run on 2026-09-26; an earlier reading of the CLI's source had put pi on `.agents/skills/`, which was wrong.
   - It sends install telemetry to `add-skill.vercel.sh`. Its source reads `DO_NOT_TRACK` and `DISABLE_TELEMETRY`; that setting either one stops the request is unverified.
   - A registry entry that is not on GitHub (for example `rams/rams`, served from `rams.ai`) cannot be installed or pinned this way.
 
@@ -144,7 +144,7 @@ Claude Code is the only harness wired and tested in this build. These rules keep
 - **The reviewer.** The review method lives in `skills/design-review/reviewer.md`, which any agent can follow inline. `agents/design-reviewer.md` is a thin Claude Code wrapper that points at it.
 - **Scripts.** Every check is a plain command (Python standard library or Node with no packages) with arguments and exit codes, so any agent can run it.
 - **Hooks.** Each hook's decision lives in a function that takes plain values (repo path, command string) and returns a decision. The Claude Code payload parsing and output format sit in a separate small layer. Another harness adds its own layer and reuses the decision function.
-- **Repo files.** Rules go in AGENTS.md, which Codex, OpenCode, and pi read. Installed UI Skills go in `.agents/skills/`, which the `skills` CLI shares across those agents.
+- **Repo files.** Rules go in AGENTS.md, which Codex, OpenCode, and pi read. Installed UI Skills go in `.agents/skills/` for Codex and OpenCode, with the `skills` CLI writing separate copies for Claude Code and pi.
 
 ### 7. Jev checks
 

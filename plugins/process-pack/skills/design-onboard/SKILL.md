@@ -119,7 +119,7 @@ Lean in writes one line in that file saying why the current system stays.
       DO_NOT_TRACK=1 DISABLE_TELEMETRY=1 npx -y skills@1.7.0 add <owner>/<repo>#<sha> --skill <name> --agent claude-code codex opencode pi --copy -y
       ```
 
-      This writes `.agents/skills/<name>/` (read by Codex, OpenCode, pi and others) and `.claude/skills/<name>/`, and records the pin in `skills-lock.json`.
+      This writes `.agents/skills/<name>/` (read by Codex and OpenCode), `.claude/skills/<name>/`, and `.pi/skills/<name>/`, and records the pin in `skills-lock.json`. Commit all three folders.
 3. **AGENTS.md.** Add a `## Design` section with hard rules:
    - Read DESIGN.md and PRODUCT.md before any UI change.
    - Every color comes from a token; the repo's color check must pass.
