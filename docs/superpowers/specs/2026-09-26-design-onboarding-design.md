@@ -81,7 +81,7 @@ Greenfield path (no existing UI):
 
 3. **Design taste.** Load the design taste file and fold its rules into PRODUCT.md's principles and its list of looks to avoid.
 4. **References.** Run the `desk-research` skill against Inspo, Refero, and Mobbin, briefed from PRODUCT.md's users, register, and category. Output: 6 to 10 references, each with one line on why it fits this work.
-5. **Directions.** Render 2 or 3 direction mocks as HTML under `docs/design/onboarding/`, screenshot them, and ask Nick to pick (in Claude Code, through `AskUserQuestion`). This is the only required stop.
+5. **Directions.** Run impeccable's new-work direction round as written: its questions, its seven candidates from the users' world, its `concept-seed` roll, and its decision page (`serve-question`), or its fallback through the question tool. Run the Jev taste check on each card before the page is shown. Nick picks on that page. This design stop, and the questions impeccable's own flows ask, are the only stops. Revised 2026-09-26: the first dry run hand-wrote three mocks that shared one layout and differed only in tokens, and Nick rejected all three. Impeccable's round exists to prevent exactly that.
 6. **System.** Run impeccable's new-work flow to write DESIGN.md from the chosen direction. The stack reference file turns it into real tokens.
 
 Existing-UI path:
@@ -160,7 +160,7 @@ Every answer carries `source` (`typesafe`, `openrouter`, or `none`), so results 
 
 - **Gate second check.** When the review gate runs, it also asks one `noul` question over the diff: "This change alters what a user sees or does in the interface." It starts in shadow mode. The call runs in a detached process so it adds no time to `gh pr create`. It appends the probability, its source, and the file-pattern result to `<git common dir>/process-pack/jev-gate.jsonl`. It never blocks or allows anything. Jev may start to affect the gate only after Nick has seen a table comparing the two results and recorded a decision in this spec.
 - **Branch second opinion.** On the existing-UI path, after the audit, one `choice` question over the audit summary picks lean in, polish hard, or new direction, using the "When it fits" column of the branch table as each option's criteria. The recommendation Nick sees shows the agent's pick, Jev's pick with its confidence and source, and says plainly when they disagree. Nick still decides.
-- **Mock taste check.** Before Nick is asked to pick a direction, each mock's HTML and CSS is the state. Each rule in the design taste file's section on looks to avoid becomes one `noul` question. A mock with any probability at or above 0.5 is re-rendered once with the flagged rule named. If it is still flagged, it is shown to Nick with the flag. The threshold of 0.5 is a starting value, recorded in the onboarding output.
+- **Mock taste check.** Before Nick sees the decision page, each direction card is the state: its thesis, palette, materials, and first viewport, plus its comp or HTML when one exists. Each rule in the design taste file's section on looks to avoid becomes one `noul` question. A card with any probability at or above 0.5 is reworked once with the flagged rule named. If it is still flagged, it is shown to Nick with the flag in its risk line. The threshold of 0.5 is a starting value, recorded in the onboarding output.
 
 ## Build order
 

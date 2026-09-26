@@ -20,7 +20,7 @@ Two paths share the first two steps and the last one:
 
 - **Impeccable is the only writer of DESIGN.md.** Do not write it by hand, and do not use `ibelick/create-design-md` or any other skill that writes one.
 - **Rules are copied, never linked.** The design taste file lives at `~/.config/process-pack/design-taste.yaml`. Copy the rules that apply into the repo's PRODUCT.md and AGENTS.md. Never link to the home-directory file: cloud agents (Codex cloud, Cursor) cannot read it.
-- **Nick decides the direction.** On the greenfield path, his pick of a direction mock is the one required stop. When the repo already has UI, he picks the branch. Everything else runs without stopping.
+- **Nick decides the direction.** On the greenfield path, his pick on impeccable's decision page is the design stop. When the repo already has UI, he picks the branch. Impeccable's flows ask their own questions (init, new-work, document); answer them through Nick. Everything else runs without stopping.
 - **Jev answers are advice with a source.** Every Jev result carries `source` (`typesafe`, `openrouter`, or `none`). Show it next to the result. With `source: none`, say the check was skipped and carry on.
 
 In Claude Code, "ask Nick to pick" means the `AskUserQuestion` tool. In another agent, use its own way of asking the user a question and waiting.
@@ -53,16 +53,19 @@ Run the `desk-research` skill, briefed from PRODUCT.md's users, register, and ca
 
 ### Step 5G. Directions
 
-1. Render 2 or 3 direction mocks as standalone HTML files under `docs/design/onboarding/`, one file per direction. Each shows the same key screen, so they compare like for like.
-2. **Mock taste check (Jev).** For each mock, build the state from its HTML and CSS. Ask one `noul` question per rule in the taste file's `looks_to_avoid` section, worded as "This page uses <the look the rule bans>." Run:
+Directions come from impeccable's new-work flow, run as written: `reference/new-work.md`, section 3, "Create or replace the visual world". Do not hand-write direction mocks. Three mocks that share one layout and differ only in palette and type are the failure this step exists to prevent: the first dry run did exactly that, and Nick rejected all three.
+
+1. **Impeccable's questions.** Ask the two or three questions new-work's step 2 asks for the surface's mode (usually Operate for an app, Persuade for a site). These are impeccable's stops, not extra ones.
+2. **Candidates and roll.** Name the mechanism, the audience's scene, and the rut (the page this category always ships, and its opposite). List seven candidates from the users' own world across at least three material families. Then run `impeccable concept-seed --scope direction --mode <mode>` and follow what it prints. No direction is written before the roll.
+3. **Cards.** Build the decision payload new-work describes (`impeccable serve-question --schema` prints its shape): the assigned direction with its raises, the pick card when there is one, the challengers with verdicts, re-roll, and the category standard as the quiet exit.
+4. **Mock taste check (Jev).** For each full card, build the state from its thesis, palette, materials, and first viewport (and its comp or HTML when one exists). Ask one `noul` question per rule in the taste file's `looks_to_avoid` section, worded as "This direction uses <the look the rule bans>." Run:
 
    ```bash
-   python3 <process-pack>/tools/jev/jev_client.py ask --state-file <mock.html> --questions-file <questions.json>
+   python3 <process-pack>/tools/jev/jev_client.py ask --state-file <card.txt> --questions-file <questions.json>
    ```
 
-   A probability at or above 0.5 flags that rule. Re-render a flagged mock once, naming the flagged rule in the instructions. If it is still flagged, keep it and show the flag to Nick next to it. Record the threshold (0.5), each probability, and the source in `docs/design/onboarding/README.md`.
-3. Screenshot each mock at desktop width (1440) and mobile width (390).
-4. **Ask Nick to pick** a direction, showing the screenshots, the references each one draws on, and any flags. This is the only required stop on this path.
+   A probability at or above 0.5 flags that rule. Rework the flagged card once, naming the rule. If it is still flagged, keep it and put the flag in its risk line. Record the threshold (0.5), each probability, and the source in `docs/design/onboarding/README.md`.
+5. **Ask Nick to pick** on impeccable's decision page (`serve-question --start`, then `--wait`), or through the question tool when the page cannot start. Re-rolls follow new-work's rules. This is the design stop on this path.
 
 ### Step 6G. System
 
