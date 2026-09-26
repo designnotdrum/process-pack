@@ -52,7 +52,7 @@ def nudge_text(cwd):
     if (root / "DESIGN.md").exists():
         return None
     missing = sorted(
-        "." if app == root else app.relative_to(root).as_posix()
+        "repo root" if app == root else app.relative_to(root).as_posix()
         for app in apps_with_ui
         if not (app / "DESIGN.md").exists()
     )
