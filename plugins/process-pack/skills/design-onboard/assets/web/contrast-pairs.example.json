@@ -1,0 +1,8 @@
+[
+  { "fg": "--foreground", "bg": "--background", "min": 4.5 },
+  { "fg": "--muted-foreground", "bg": "--background", "min": 4.5 },
+  { "fg": "--card-foreground", "bg": "--card", "min": 4.5 },
+  { "fg": "--primary-foreground", "bg": "--primary", "min": 4.5 },
+  { "fg": "--destructive", "bg": "--background", "min": 4.5 },
+  { "fg": "--ring", "bg": "--background", "min": 3 }
+]

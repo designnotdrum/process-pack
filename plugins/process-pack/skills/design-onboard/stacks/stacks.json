@@ -1,0 +1,27 @@
+{
+  "version": "1",
+  "exclude_globs": [
+    "**/*.md",
+    "**/*.mdx",
+    "docs/**",
+    "**/*.test.*",
+    "**/*.spec.*",
+    "**/__tests__/**",
+    "**/*.config.*",
+    "**/*.json",
+    "**/*.yaml",
+    "**/*.yml",
+    "**/*.lock"
+  ],
+  "stacks": [
+    {
+      "id": "tailwind",
+      "reference": "tailwind.md",
+      "detect": {
+        "files_any": ["tailwind.config.js", "tailwind.config.ts", "tailwind.config.mjs", "tailwind.config.cjs"],
+        "package_deps_any": ["tailwindcss"]
+      },
+      "ui_globs": ["**/*.tsx", "**/*.jsx", "**/*.css", "**/*.html"]
+    }
+  ]
+}
