@@ -18,10 +18,84 @@
       "id": "tailwind",
       "reference": "tailwind.md",
       "detect": {
-        "files_any": ["tailwind.config.js", "tailwind.config.ts", "tailwind.config.mjs", "tailwind.config.cjs"],
-        "package_deps_any": ["tailwindcss"]
+        "files_any": [
+          "tailwind.config.js",
+          "tailwind.config.ts",
+          "tailwind.config.mjs",
+          "tailwind.config.cjs"
+        ],
+        "package_deps_any": [
+          "tailwindcss"
+        ]
       },
-      "ui_globs": ["**/*.tsx", "**/*.jsx", "**/*.css", "**/*.html"]
+      "ui_globs": [
+        "**/*.tsx",
+        "**/*.jsx",
+        "**/*.css",
+        "**/*.html"
+      ]
+    },
+    {
+      "id": "css",
+      "reference": "css.md",
+      "detect": {
+        "files_any": [
+          "svelte.config.js",
+          "astro.config.mjs",
+          "vite.config.ts",
+          "vite.config.js",
+          "index.html"
+        ],
+        "package_deps_any": [
+          "vue",
+          "svelte",
+          "@sveltejs/kit",
+          "astro",
+          "nuxt"
+        ]
+      },
+      "ui_globs": [
+        "**/*.css",
+        "**/*.scss",
+        "**/*.vue",
+        "**/*.svelte",
+        "**/*.astro",
+        "**/*.html"
+      ]
+    },
+    {
+      "id": "swiftui",
+      "reference": "swiftui.md",
+      "detect": {
+        "files_any": [
+          "Package.swift",
+          "*.xcodeproj",
+          "*.xcworkspace"
+        ],
+        "package_deps_any": []
+      },
+      "ui_globs": [
+        "**/*.swift",
+        "**/*.xcassets/**"
+      ]
+    },
+    {
+      "id": "other",
+      "reference": "other.md",
+      "detect": {
+        "files_any": [],
+        "package_deps_any": []
+      },
+      "ui_globs": [
+        "**/*.html",
+        "**/*.vue",
+        "**/*.svelte",
+        "**/*.astro",
+        "**/*.swift",
+        "**/*.tsx",
+        "**/*.jsx",
+        "**/*.css"
+      ]
     }
   ]
 }

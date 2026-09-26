@@ -1,0 +1,4 @@
+[
+  { "fg": "TextPrimary", "bg": "Background", "min": 4.5 },
+  { "fg": "TextMuted", "bg": "Background", "min": 4.5 }
+]
