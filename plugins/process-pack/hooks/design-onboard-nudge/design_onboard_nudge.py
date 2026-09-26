@@ -41,21 +41,16 @@ def _enabled(root):
 def nudge_text(cwd):
     """The context line to add, or None. The decision only: reads no hook payload and prints nothing."""
     root = design_common.repo_root(cwd)
-    if root is None or not _enabled(root):
+    if root is None or not _enabled(root) or (root / "DESIGN.md").exists():
         return None
     is_ui = design_common.ui_matcher(root)
-    apps_with_ui = set()
+    uncovered_apps = set()
     for path in design_common.tracked_files(root):
         ui, app = is_ui(path)
-        if ui:
-            apps_with_ui.add(app)
-    if (root / "DESIGN.md").exists():
-        return None
-    missing = sorted(
-        "repo root" if app == root else app.relative_to(root).as_posix()
-        for app in apps_with_ui
-        if not (app / "DESIGN.md").exists()
-    )
+        # A DESIGN.md in the file's folder or any folder above it covers the file.
+        if ui and not design_common.covered_by_design_md(root, path):
+            uncovered_apps.add(app)
+    missing = sorted("repo root" if app == root else app.relative_to(root).as_posix() for app in uncovered_apps)
     if not missing:
         return None
     return (
@@ -138,6 +133,10 @@ def _dry_run():
         silenced = nudge_text(str(repo(with_root)))
         return names_admin is not None and "apps/admin" in names_admin and "apps/web" not in names_admin and silenced is None
 
+    def case_nudge_silent_with_design_md_beside_an_app_folder():
+        root = repo({"frontend/package.json": tailwind_pkg, "frontend/src/App.tsx": "x", "frontend/DESIGN.md": "# D"})
+        return nudge_text(str(root)) is None
+
     def case_nudge_not_a_repo():
         return nudge_text(tempfile.mkdtemp()) is None
 
@@ -175,6 +174,7 @@ def _dry_run():
         case_nudge_silent_with_design_md,
         case_nudge_silent_without_ui,
         case_nudge_monorepo_cases,
+        case_nudge_silent_with_design_md_beside_an_app_folder,
         case_nudge_not_a_repo,
         case_nudge_only_tracked_files_count,
         case_nudge_disabled_by_config,

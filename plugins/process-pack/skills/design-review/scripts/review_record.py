@@ -39,7 +39,8 @@ def current_branch(cwd):
 
 
 def record_path(cwd, branch):
-    common = Path(_git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
+    # --git-common-dir may be relative to cwd; resolving it here works on git older than 2.31 too.
+    common = (Path(cwd) / _git(cwd, "rev-parse", "--git-common-dir")).resolve()
     return common / "process-pack" / "design-reviews" / f"{branch.replace('/', '__')}.json"
 
 

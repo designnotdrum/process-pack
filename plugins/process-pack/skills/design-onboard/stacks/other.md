@@ -4,7 +4,7 @@ Used when no other entry in `stacks.json` matches: for example Flutter, Jetpack 
 
 ## How to detect it
 
-The `other` entry in `stacks.json` matches when nothing before it does. Its `ui_globs` are a broad guess (`.html`, `.vue`, `.svelte`, `.astro`, `.swift`, `.tsx`, `.jsx`, `.css`). Set `design.ui_globs` in `.process/repo.yaml` to the stack's real UI files, so the design hooks see the right changes.
+The `other` entry in `stacks.json` matches when nothing before it does. Its `ui_globs` are a broad guess (`.html`, `.vue`, `.svelte`, `.astro`, `.swift`, `.tsx`, `.jsx`, `.css`). Set `design.ui_globs` in `.process/repo.yaml` to the stack's real UI files, so the design hooks see the right changes. The hooks read that override only when PyYAML is installed for the `python3` they run under; without it they fall back to these globs and say so on stderr.
 
 ## Where tokens go
 

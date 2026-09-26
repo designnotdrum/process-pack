@@ -54,3 +54,13 @@ test("a total line goes to stderr", () => {
   const result = run(["--root", join(fixtures, "dirty"), "--tokens", join(fixtures, "tokens.css")]);
   assert.match(result.stderr, /3 hardcoded colors in 1 file/);
 });
+
+test("inside a git repo only tracked and unignored files are scanned", () => {
+  const root = mkdtempSync(join(tmpdir(), "git-"));
+  spawnSync("git", ["init", "-q"], { cwd: root });
+  writeFileSync(join(root, ".gitignore"), ".worktrees/\n");
+  cpSync(join(fixtures, "clean", "Button.tsx"), join(root, "Button.tsx"));
+  cpSync(join(fixtures, "dirty", "Card.tsx"), join(root, ".worktrees", "other", "Card.tsx"), { recursive: true });
+  const result = run(["--root", root]);
+  assert.equal(result.status, 0, result.stdout);
+});

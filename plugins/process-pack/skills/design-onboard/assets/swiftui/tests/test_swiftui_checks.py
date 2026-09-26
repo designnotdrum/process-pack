@@ -76,3 +76,32 @@ def test_swiftlint_regex_ignores():
     rx = swiftlint_regex()
     assert not rx.search('Text("Hi").foregroundStyle(Color("brand"))')
     assert not rx.search("Button(\"Go\") {}.tint(Color.accentColor)")
+
+
+def _catalog(tmp_path, colorsets):
+    for name, contents in colorsets.items():
+        folder = tmp_path / "Assets.xcassets" / f"{name}.colorset"
+        folder.mkdir(parents=True)
+        (folder / "Contents.json").write_text(json.dumps(contents))
+    return tmp_path / "Assets.xcassets"
+
+
+def test_high_contrast_variant_does_not_replace_any(tmp_path):
+    grey = {"color-space": "srgb", "components": {"red": "0.600", "green": "0.600", "blue": "0.600", "alpha": "1.000"}}
+    black = {"color-space": "srgb", "components": {"red": "0.000", "green": "0.000", "blue": "0.000", "alpha": "1.000"}}
+    white = {"color-space": "srgb", "components": {"red": "1.000", "green": "1.000", "blue": "1.000", "alpha": "1.000"}}
+    catalog = _catalog(tmp_path, {
+        "Text": {"colors": [{"color": grey, "idiom": "universal"},
+                            {"appearances": [{"appearance": "contrast", "value": "high"}], "color": black, "idiom": "universal"}]},
+        "Bg": {"colors": [{"color": white, "idiom": "universal"}]},
+    })
+    any_result = next(r for r in check(catalog, [{"fg": "Text", "bg": "Bg", "min": 4.5}]) if r["appearance"] == "any")
+    assert any_result["pass"] is False
+
+
+def test_missing_alpha_means_opaque(tmp_path):
+    color = {"color-space": "srgb", "components": {"red": "0.000", "green": "0.000", "blue": "0.000"}}
+    white = {"color-space": "srgb", "components": {"red": "1.000", "green": "1.000", "blue": "1.000", "alpha": "1"}}
+    catalog = _catalog(tmp_path, {"Ink": {"colors": [{"color": color, "idiom": "universal"}]},
+                                  "Bg": {"colors": [{"color": white, "idiom": "universal"}]}})
+    assert all(r["pass"] for r in check(catalog, [{"fg": "Ink", "bg": "Bg", "min": 4.5}]))

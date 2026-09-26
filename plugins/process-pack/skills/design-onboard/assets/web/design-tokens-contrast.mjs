@@ -3,7 +3,7 @@
  * token file rather than a copy of its values, so a token that regresses
  * fails the check the moment it changes.
  *
- * Ported from Meridian's packages/ui/src/lib/contrast.ts. That version reads
+ * Ported from a production app's contrast library. That version reads
  * opaque hex only. This one also reads rgb(), hsl(), bare shadcn HSL
  * triplets ("222 47% 11%"), and oklch(), because shadcn on Tailwind v4
  * writes oklch tokens. Like the original, it refuses any color with alpha

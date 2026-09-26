@@ -31,7 +31,11 @@ import urllib.request
 TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 STATE_LIMIT_BYTES = 8192
-SENSITIVE_PATHS = [".env*", "*/.env*", "*/secrets/*", "secrets/*", "*.lock", "*pnpm-lock.yaml", "*package-lock.json", "*yarn.lock"]
+SENSITIVE_PATHS = [
+    ".env*", "*/.env*", "*/secrets/*", "secrets/*", "*.pem", "*.key", "*.p12", "*.pfx", "*id_rsa*", "*id_ed25519*",
+    ".npmrc", "*/.npmrc", ".pypirc", "*/.pypirc", ".netrc", "*/.netrc", ".dev.vars", "*/.dev.vars", "*.tfvars",
+    "*credentials*", "*secret*", "*.lock", "*pnpm-lock.yaml", "*package-lock.json", "*yarn.lock",
+]
 
 OPENROUTER_SYSTEM = (
     "You answer named questions about the state the user sends. Reply with one JSON object and nothing else: "
@@ -310,6 +314,12 @@ def _dry_run():
         out = prepare_state(diff)
         return "<h1>Hi</h1>" in out and "lockfile" not in out and "SECRET" not in out and "BEGIN" not in out
 
+    def case_more_secret_files_dropped():
+        names = ["certs/server.pem", "id.key", ".npmrc", "config/gcp-credentials.json", ".dev.vars", "prod.tfvars", ".env.production"]
+        diff = "".join(f"diff --git a/{n} b/{n}\n+SECRET-{i}\n" for i, n in enumerate(names)) + "diff --git a/app/a.tsx b/app/a.tsx\n+ok\n"
+        out = prepare_state(diff)
+        return "SECRET" not in out and "+ok" in out
+
     def case_state_capped_at_8192_bytes():
         out = prepare_state("é" * 10000)
         return len(out.encode("utf-8")) <= 8192 and out.encode("utf-8").decode("utf-8") == out
@@ -325,6 +335,7 @@ def _dry_run():
         case_probability_out_of_range_returns_none,
         case_choice_not_in_criteria_returns_none,
         case_lockfile_section_dropped,
+        case_more_secret_files_dropped,
         case_state_capped_at_8192_bytes,
     ]
     failed = 0

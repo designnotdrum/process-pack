@@ -28,7 +28,7 @@ jev client                   11/11 passed
 review record                5/5 passed
 design common                9/9 passed
 nudge hook                   9/9 passed
-review gate                  17/17 passed
+review gate                  22/22 passed (after the final review fixes)
 existing stub-guard          12 passed, 0 failed
 existing wall-guard          7 passed, 0 failed
 ALL SUITES PASS

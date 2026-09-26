@@ -33,10 +33,14 @@ def _component(raw):
 
 
 def _appearance(entry):
+    """"any", "dark", or None for variants this check does not score (high contrast, other traits)."""
+    appearance = "any"
     for item in entry.get("appearances", []):
         if item.get("appearance") == "luminosity":
-            return item.get("value")
-    return "any"
+            appearance = item.get("value")
+        else:
+            return None
+    return appearance
 
 
 def load_catalog(catalog):
@@ -49,7 +53,7 @@ def load_catalog(catalog):
             components = entry.get("color", {}).get("components")
             if not components:
                 continue
-            alpha = _component(components.get("alpha", "1"))
+            alpha = float(components.get("alpha", "1.0"))  # alpha is always a 0 to 1 value
             if alpha < 1:
                 raise ValueError(f"{name}: alpha {alpha} is not opaque; contrast would be a guess")
             appearance = _appearance(entry)

@@ -16,11 +16,12 @@
  * otherwise. No dependencies. Copied into a consuming repo by the
  * design-onboard skill and wired into its lint script.
  */
+import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 
 const EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".css"]);
-const SKIP_DIRS = new Set(["node_modules", ".git", ".next", "dist", "build", "out", "coverage", ".agents", ".claude", ".turbo"]);
+const SKIP_DIRS = new Set(["node_modules", ".git", ".next", "dist", "build", "out", "coverage", ".agents", ".claude", ".pi", ".turbo", ".worktrees", "storybook-static", ".svelte-kit", ".nuxt", ".astro", ".vercel"]);
 const SELF = new Set(["check-design-tokens.mjs", "design-tokens-contrast.mjs", "design-tokens-contrast.test.mjs"]);
 const TEST_FILE = /(?:\.test\.|\.spec\.|(?:^|\/)__tests__\/)/;
 const ALLOW = /design-tokens-allow:\s*\S/;
@@ -96,6 +97,13 @@ function globToRegExp(glob) {
   return new RegExp(`^${out}$`);
 }
 
+/** Inside a git repo, the tracked and unignored files, so other worktrees and build output never count. */
+function gitFiles(root) {
+  const result = spawnSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: root, encoding: "utf8" });
+  if (result.status !== 0) return null;
+  return result.stdout.split("\0").filter(Boolean).map((rel) => join(root, rel));
+}
+
 function* walk(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
@@ -128,7 +136,8 @@ export function scan({ root, tokens = [], globs = [] }) {
   const exempt = new Set(tokens.map((t) => resolve(t)));
   const matchers = globs.map(globToRegExp);
   const hits = [];
-  for (const file of walk(rootPath)) {
+  const files = gitFiles(rootPath) ?? walk(rootPath);
+  for (const file of files) {
     const rel = relative(rootPath, file).split(sep).join("/");
     if (!EXTENSIONS.has(extname(file)) || SELF.has(basename(file)) || TEST_FILE.test(rel)) continue;
     if (exempt.has(resolve(file))) continue;

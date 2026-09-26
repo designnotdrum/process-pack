@@ -121,7 +121,14 @@ def exclude_globs():
     return load_stacks()["exclude_globs"]
 
 
+def always_ui_globs():
+    """UI patterns that win over exclude_globs, such as asset catalog color sets stored as JSON."""
+    return load_stacks().get("always_ui_globs", [])
+
+
 def is_ui_file(path, globs, exclude):
+    if any(glob_match(path, p) for p in always_ui_globs()) and any(glob_match(path, p) for p in globs):
+        return True
     if any(glob_match(path, pattern) for pattern in exclude):
         return False
     return any(glob_match(path, pattern) for pattern in globs)
@@ -150,6 +157,7 @@ def ui_matcher(root):
     """
     root = Path(root)
     exclude = exclude_globs()
+    always = always_ui_globs()
     override = _repo_yaml_globs(root)
     apps = []
     for app in app_roots(root):
@@ -163,11 +171,36 @@ def ui_matcher(root):
                 if override:
                     return is_ui_file(path, override, exclude), app
                 inner = path[len(prefix):]
+                matches = any(glob_match(inner, p) for p in globs)
+                if matches and any(glob_match(inner, p) for p in always):
+                    return True, app
                 excluded = any(glob_match(inner, p) or glob_match(path, p) for p in exclude)
-                return (not excluded and any(glob_match(inner, p) for p in globs)), app
+                return (not excluded and matches), app
         return False, root
 
     return is_ui
+
+
+def covered_by_design_md(root, path):
+    """True when a DESIGN.md sits in the file's folder or any folder above it, up to the repo root."""
+    root = Path(root)
+    folder = (root / path).parent
+    while True:
+        if (folder / "DESIGN.md").exists():
+            return True
+        if folder == root or root not in folder.parents:
+            return False
+        folder = folder.parent
+
+
+def has_design_block(root):
+    """True when .process/repo.yaml records a design onboarding (needs PyYAML; False without it)."""
+    try:
+        import yaml
+        data = yaml.safe_load((Path(root) / ".process" / "repo.yaml").read_text()) or {}
+    except Exception:
+        return False
+    return isinstance(data, dict) and isinstance(data.get("design"), dict)
 
 
 def repo_root(cwd):
@@ -242,7 +275,27 @@ def _dry_run():
         found = sorted(str(p.relative_to(root)) for p in app_roots(root))
         return found == [".", "apps/admin", "apps/web", "packages/ui"]
 
+    def case_nearest_design_md_covers():
+        root = Path(tempfile.mkdtemp())
+        (root / "frontend" / "src").mkdir(parents=True)
+        (root / "frontend" / "DESIGN.md").write_text("# D")
+        (root / "backend").mkdir()
+        return covered_by_design_md(root, "frontend/src/App.tsx") and not covered_by_design_md(root, "backend/x.tsx")
+
+    def case_svelte_in_tailwind_is_ui():
+        stacks = load_stacks()
+        tw = next(x for x in stacks["stacks"] if x["id"] == "tailwind")["ui_globs"]
+        return is_ui_file("src/lib/Button.svelte", tw, stacks["exclude_globs"]) and is_ui_file("src/App.vue", tw, stacks["exclude_globs"])
+
+    def case_colorset_is_ui_despite_json_exclude():
+        stacks = load_stacks()
+        sw = next(x for x in stacks["stacks"] if x["id"] == "swiftui")["ui_globs"]
+        return is_ui_file("App/Assets.xcassets/Brand.colorset/Contents.json", sw, stacks["exclude_globs"])
+
     cases = [
+        case_svelte_in_tailwind_is_ui,
+        case_colorset_is_ui_despite_json_exclude,
+        case_nearest_design_md_covers,
         case_glob_double_star_matches_zero_or_more_dirs,
         case_glob_trailing_double_star,
         case_glob_single_star_stays_in_segment,

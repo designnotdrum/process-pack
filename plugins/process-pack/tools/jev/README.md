@@ -18,11 +18,13 @@ The client never raises. A missing key, a timeout, an HTTP error, or a malformed
 
 ## What is sent
 
-`prepare_state` drops diff sections for `.env` files, `secrets/` directories, and lockfiles, then caps the state at 8192 bytes.
+`prepare_state` drops diff sections for `.env` files, `secrets/` folders, keys and certificates (`*.pem`, `*.key`, `*.p12`), `.npmrc`, `.pypirc`, `.netrc`, `.dev.vars`, `*.tfvars`, any path containing `credentials` or `secret`, and lockfiles, then caps the state at 8192 bytes.
+
+The review gate's shadow check sends a diff only in repos onboarded for design. Set `PROCESS_PACK_JEV_SHADOW=0` to turn the shadow check off.
 
 ## Questions and answers
 
-A question is `{"type": "noul", "instructions": "..."}` or `{"type": "choice", "instructions": "...", "criteria": {"<option>": "<when it fits>"}}`. These are the shapes Meridian's `scripts/lane-label.ts` sends.
+A question is `{"type": "noul", "instructions": "..."}` or `{"type": "choice", "instructions": "...", "criteria": {"<option>": "<when it fits>"}}`. These are the shapes TypeSafe's API documents for `noul` and `choice` questions.
 
 The result is `{"source": "typesafe" | "openrouter" | "none", "answers": {...}, "reason": null | "..."}`. A `noul` answer is `{"type": "noul", "noul": 0.82}`. A `choice` answer is `{"type": "choice", "choice": "<option>", "probabilities": {...}, "confidence": 0.7}`.
 

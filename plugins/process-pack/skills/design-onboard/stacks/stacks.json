@@ -19,6 +19,9 @@
     "**/*.yml",
     "**/*.lock"
   ],
+  "always_ui_globs": [
+    "**/*.xcassets/**"
+  ],
   "stacks": [
     {
       "id": "tailwind",
@@ -38,7 +41,10 @@
         "**/*.tsx",
         "**/*.jsx",
         "**/*.css",
-        "**/*.html"
+        "**/*.html",
+        "**/*.vue",
+        "**/*.svelte",
+        "**/*.astro"
       ]
     },
     {

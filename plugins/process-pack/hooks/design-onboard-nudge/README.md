@@ -19,7 +19,7 @@ The hook uses `hooks/design-common/design_common.py`, which reads the design-onb
 - A `design.ui_globs` list in `.process/repo.yaml` replaces the stack patterns for the whole repo (read only when PyYAML is installed).
 - Only files tracked by git count. A new untracked file does not trigger the nudge.
 
-A DESIGN.md in an app's directory covers that app. A DESIGN.md at the repo root covers every app.
+A DESIGN.md covers every UI file in its folder and the folders below it, wherever it sits. A DESIGN.md at the repo root covers the whole repo.
 
 ## Config
 

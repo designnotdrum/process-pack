@@ -24,11 +24,11 @@ Any repo Nick works in reaches Meridian-level design quality within its first se
 - 2026-09-26: Impeccable stays the design engine. This plugin orchestrates it and fills its gaps. It does not fork impeccable's flows.
 - 2026-09-26: PRODUCT.md, DESIGN.md, and the other design docs are committed in every repo, client repos included.
 - 2026-09-26: Onboarding starts from a SessionStart hook that tells the agent to run it, plus a skill Nick can invoke directly. It never blocks edits.
-- 2026-09-26: Visual identity comes from Nick's design taste rules plus a choice between 2 or 3 rendered direction mocks.
+- 2026-09-26: Visual identity comes from Nick's design taste rules plus a choice between 2 or 3 rendered direction mocks. Revised the same day: the choice happens on impeccable's decision page (see component 2, step 5).
 - 2026-09-26: Reference products are chosen per repo from what the work needs. The design taste file holds no default references.
 - 2026-09-26: A repo with an existing UI is audited first, then takes one of three branches: lean in, polish hard, or new direction. Both change branches produce a written case for the change.
 - 2026-09-26: Inspo MCP and the UI Skills registry are part of the flow.
-- 2026-09-26: The design review is enforced before `gh pr create` on any diff with UI changes.
+- 2026-09-26: The design review is enforced before `gh pr create` on any diff with UI changes. Revised the same day after the whole-branch review: only in repos onboarded for design (a DESIGN.md covers the changed UI files, or `.process/repo.yaml` has a `design` block). Unonboarded repos, including client and open-source repos, are never blocked, and the Jev shadow check never sends their diffs.
 - 2026-09-26: Enforcement targets Claude Code only (laptop sessions and Cyrus). No GitHub Action.
 - 2026-09-26: UI Skills are found with the `ui-skills` CLI and installed with the `skills` CLI at a pinned commit. No hand-written downloader.
 - 2026-09-26: The skills, scripts, and hook logic are written so that other agents (Codex, OpenCode, pi) can be supported later by adding thin adapters, not by rewriting. Claude Code stays the only harness wired and tested in this build. See "Portability".

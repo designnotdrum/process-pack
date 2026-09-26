@@ -10,7 +10,7 @@ naming the design-review skill.
 
 Named exceptions: a diff that touches only docs, tests, or config passes.
 Escape hatch: a record written with a skip reason, which the design-review
-skill writes only when Nick says so in the session.
+skill writes only when the user says so in the session.
 
 It also runs Jev in shadow mode: a detached process asks Jev whether the diff
 changes what a user sees, and appends the answer next to the file-pattern
@@ -46,21 +46,63 @@ import review_record  # noqa: E402
 JEV_QUESTION = {"ui_visible": {"type": "noul", "instructions": "This change alters what a user sees or does in the interface."}}
 
 
-# `gh pr create` at the start of a command, or after ; & | ( or a newline, with
-# optional VAR=value prefixes. Like stub-guard's commit pattern, it does not
-# parse full shell grammar: text inside a quoted string (echo "gh pr create")
-# does not start a command, so it does not match.
-PR_CREATE_RE = re.compile(r"(?:^|[;&|(\n])\s*(?:[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*gh\s+pr\s+create\b([^;&|\n]*)")
-HELP_RE = re.compile(r"(?:^|\s)(?:--help|-h)(?:\s|$)")
-BASE_RE = re.compile(r"(?:^|\s)(?:--base(?:=|\s+)|-B\s*)([^\s'\"]+)")
+HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2\s*(?=\n|$)", re.S)
+SEPARATORS = {";", "&", "&&", "|", "||", "(", ")", "\n"}
+PREFIX_WORDS = {"env", "command", "exec", "nohup", "time"}
+
+
+def _segments(command):
+    """Shell words grouped into simple commands. Heredoc bodies and quoted text never start a command."""
+    import shlex
+
+    text = HEREDOC_RE.sub(" ", command or "").replace("\n", " ; ")
+    lexer = shlex.shlex(text, posix=True, punctuation_chars=";&|()")
+    lexer.whitespace_split = True
+    try:
+        tokens = list(lexer)
+    except ValueError:  # unbalanced quotes: nothing we can gate safely
+        return []
+    segments, current = [], []
+    for token in tokens:
+        if token in SEPARATORS or set(token) <= set(";&|()"):
+            if current:
+                segments.append(current)
+            current = []
+        else:
+            current.append(token)
+    if current:
+        segments.append(current)
+    return segments
 
 
 def pr_create_args(command):
-    """The argument text of a `gh pr create` in the command line, or None when there is none to gate."""
-    for match in PR_CREATE_RE.finditer(command or ""):
-        args = match.group(1)
-        if not HELP_RE.search(args):
-            return args
+    """The arguments of a `gh pr create` (or its alias `gh pr new`) in the command line, or None when there is none to gate."""
+    for words in _segments(command):
+        i = 0
+        while i < len(words) and (re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", words[i]) or words[i] in PREFIX_WORDS):
+            i += 1
+        if i >= len(words) or words[i] != "gh":
+            continue
+        i += 1
+        while i < len(words) and words[i] in ("-R", "--repo"):
+            i += 2
+        if words[i:i + 1] != ["pr"] or len(words) <= i + 1 or words[i + 1] not in ("create", "new"):
+            continue
+        args = words[i + 2:]
+        if any(a in ("--help", "-h") for a in args):
+            continue
+        return args
+    return None
+
+
+def _base_flag(args):
+    for i, a in enumerate(args):
+        if a in ("-B", "--base") and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith("--base="):
+            return a.split("=", 1)[1]
+        if a.startswith("-B") and len(a) > 2:
+            return a[2:]
     return None
 
 
@@ -70,10 +112,10 @@ def _git(root, *args):
 
 
 def _resolve_base(root, args):
-    flag = BASE_RE.search(args or "")
+    flag = _base_flag(args or [])
     candidates = []
     if flag:
-        candidates += [flag.group(1), f"origin/{flag.group(1)}"]
+        candidates += [flag, f"origin/{flag}"]
     else:
         head = _git(root, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
         if head:
@@ -86,8 +128,8 @@ def _resolve_base(root, args):
 
 
 def _ui_changes(root, is_ui, since):
-    names = _git(root, "diff", "--name-only", f"{since}..HEAD")
-    return [p for p in (names or "").splitlines() if p and is_ui(p)[0]]
+    names = _git(root, "diff", "--name-only", "-z", f"{since}..HEAD")
+    return [p for p in (names or "").split("\0") if p and is_ui(p)[0]]
 
 
 def decide(cwd, command):
@@ -118,11 +160,19 @@ def decide(cwd, command):
         context = {"gated": True, "root": str(root), "branch": branch, "base": base, "merge_base": merge_base, "head": head, "ui_files": ui_files}
         if not ui_files:
             return {"action": "allow", **context}
+        if not (design_common.has_design_block(root) or any(design_common.covered_by_design_md(root, f) for f in ui_files)):
+            # A repo that was never onboarded is not gated; the session-start nudge offers onboarding instead.
+            return {"action": "allow", "gated": False, "warning": "repo not onboarded for design (no DESIGN.md covers the changed UI files)"}
 
         rec = review_record.read_record(str(root), branch)
         if rec is None:
-            reason = (f"This branch changes UI files ({len(ui_files)} files) and has no design review. "
-                      "Run the design-review skill, then retry gh pr create.")
+            path = review_record.record_path(str(root), branch)
+            if path.exists():
+                reason = (f"The design review record at {path} is unreadable. "
+                          "Run the design-review skill again, then retry gh pr create.")
+            else:
+                reason = (f"This branch changes UI files ({len(ui_files)} files) and has no design review. "
+                          "Run the design-review skill, then retry gh pr create.")
             return {"action": "block", "reason": reason, **context}
 
         reviewed = rec["reviewed_sha"]
@@ -205,7 +255,7 @@ def main():
     result = decide(cwd, command)
     if result.get("warning"):
         print(f"[design-review-gate] allowing: {result['warning']}", file=sys.stderr)
-    if result.get("gated"):
+    if result.get("gated") and os.environ.get("PROCESS_PACK_JEV_SHADOW", "1") != "0":
         try:
             _start_shadow(result)
         except Exception:
@@ -266,7 +316,7 @@ def _dry_run():
         git(root, "init", "-q", "-b", "main")
         git(root, "config", "user.email", "t@example.com")
         git(root, "config", "user.name", "t")
-        commit(root, {"package.json": json.dumps({"devDependencies": {"tailwindcss": "^4"}}), "app/page.tsx": "v1", "README.md": "r"}, "base")
+        commit(root, {"package.json": json.dumps({"devDependencies": {"tailwindcss": "^4"}}), "app/page.tsx": "v1", "README.md": "r", "DESIGN.md": "# Design"}, "base")
         if origin:
             bare = root.parent / "origin.git"
             git(root.parent, "clone", "-q", "--bare", str(root), str(bare))
@@ -351,8 +401,11 @@ def _dry_run():
 
     def case_gate_command_matching():
         yes = ["gh pr create", "cd app && gh pr create --fill", "GH_TOKEN=x gh pr create", "gh pr create -B develop",
-               "git push -u origin feat; gh pr create --draft"]
-        no = ["gh pr create --help", "gh pr list", 'echo "gh pr create"', "gh pr view 3", "ls"]
+               "git push -u origin feat; gh pr create --draft", "gh pr new --fill", 'gh pr create --title "Fix -h flag"',
+               'gh pr create --body "see --help output"', "gh -R o/r pr create", "env X=1 gh pr create", "command gh pr create"]
+        no = ["gh pr create --help", "gh pr list", 'echo "gh pr create"', "gh pr view 3", "ls", 'echo "a; gh pr create"',
+              "git commit -F - <<'EOF'\nfix: gate\n\ngh pr create --fill is now gated\nEOF",
+              "cat > notes.md <<EOF\ngh pr create --fill\nEOF", 'gh pr create -h']
         return all(pr_create_args(c) is not None for c in yes) and all(pr_create_args(c) is None for c in no)
 
     def case_gate_uses_base_flag():
@@ -374,6 +427,28 @@ def _dry_run():
         commit(root, {"app/page.tsx": "v1"}, "base")
         r = decide(str(root), CMD)
         return r["action"] == "allow" and "base" in r.get("warning", "")
+
+    def case_gate_allows_when_not_onboarded():
+        root = repo()
+        git(root, "rm", "-q", "DESIGN.md")
+        commit(root, {"app/page.tsx": "v2"}, "ui without onboarding")
+        r = decide(str(root), CMD)
+        return r["action"] == "allow" and "not onboarded" in r.get("warning", "") and not r.get("gated")
+
+    def case_gate_counts_app_design_md():
+        root = repo()
+        git(root, "rm", "-q", "DESIGN.md")
+        commit(root, {"frontend/DESIGN.md": "# D", "frontend/src/App.tsx": "x"}, "ui in an onboarded app folder")
+        return decide(str(root), CMD)["action"] == "block"
+
+    def case_gate_names_an_unreadable_record():
+        root = repo()
+        commit(root, {"app/page.tsx": "v2"}, "ui")
+        path = review_record.record_path(str(root), "feat")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{not json")
+        r = decide(str(root), CMD)
+        return r["action"] == "block" and "unreadable" in r["reason"]
 
     def case_gate_fails_open_on_corrupt_record():
         root = repo()
@@ -433,6 +508,14 @@ def _dry_run():
         sources = sorted(l["source"] for l in lines)
         return with_key.returncode == without.returncode == 2 and sources == ["none", "typesafe"]
 
+    def case_gate_shadow_can_be_turned_off():
+        root = repo()
+        commit(root, {"app/page.tsx": "v2"}, "ui")
+        run_main(root, {"TYPESAFE_API_KEY": "k", "PROCESS_PACK_JEV_SHADOW": "0"})
+        time.sleep(1.5)
+        log = review_record.record_path(str(root), "x").parent.parent / "jev-gate.jsonl"
+        return not log.exists()
+
     def case_gate_does_not_wait_for_jev():
         Stub.delay = 5.0
         root = repo()
@@ -467,9 +550,13 @@ def _dry_run():
         case_gate_uses_base_flag,
         case_gate_no_base_branch,
         case_gate_fails_open_on_corrupt_record,
+        case_gate_allows_when_not_onboarded,
+        case_gate_counts_app_design_md,
+        case_gate_names_an_unreadable_record,
         case_gate_shadow_logs_one_line_per_attempt,
         case_gate_decision_same_without_keys,
         case_gate_does_not_wait_for_jev,
+        case_gate_shadow_can_be_turned_off,
     ]
     failed = 0
     for case in cases:

@@ -2,7 +2,7 @@
 
 The review method the `design-review` skill runs. Any agent can follow it inline. In Claude Code, the `design-reviewer` agent runs it in its own context.
 
-Promoted from Meridian's `.claude/agents/design-reviewer.md`, with Meridian's specifics replaced by reads of the repo under review.
+Promoted from a production app's design reviewer agent, with that app's specifics replaced by reads of the repo under review.
 
 Review as a senior design leader being consulted, not as a helpful generalist. Think in systems, not screens.
 

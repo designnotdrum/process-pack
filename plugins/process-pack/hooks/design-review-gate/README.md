@@ -4,7 +4,7 @@ A `PreToolUse` hook for the Bash tool. When the command is `gh pr create` and th
 
 ## Why
 
-UI changes should reach a pull request already reviewed, so Nick is not the first design reviewer. A skill alone depends on someone remembering to run it. This gate makes the review the default path before any pull request that touches UI.
+UI changes should reach a pull request already reviewed, so the user is not the first design reviewer. A skill alone depends on someone remembering to run it. This gate makes the review the default path before any pull request that touches UI.
 
 It is separate from `~/.claude/hooks/pr-review-gate.sh`, which is unchanged.
 
@@ -14,12 +14,15 @@ The process-pack plugin registers it in `hooks/hooks.json` with the matcher `Bas
 
 ## What it checks
 
-1. The command runs `gh pr create` (at the start of the command, or after `;`, `&&`, `|`, or `(`, with optional `VAR=value` prefixes). `gh pr create --help` and text inside quotes do not count.
-2. The base branch is the `--base` or `-B` value, else `origin/HEAD`, else `origin/main`, `main`, `origin/master`, or `master`.
-3. The UI files are the files changed since the merge base that match the UI patterns (see the nudge hook's README: detection per app from `stacks.json`, or `design.ui_globs` in `.process/repo.yaml`). Docs, tests, fixtures, and config files are exempt. No UI files: allow.
-4. The review record for the branch lives at `<git common dir>/process-pack/design-reviews/<branch>.json` (`/` in a branch name becomes `__`), so every worktree of a clone sees it.
+1. The command runs `gh pr create` or its alias `gh pr new`, as its own simple command. The command line is split with a shell tokenizer: `VAR=value`, `env`, `command`, and `gh -R <repo>` prefixes still count; words inside quotes and heredoc bodies (a commit message that mentions the command) do not; `--help` or `-h` as a flag skips the gate.
+2. The repo is onboarded: a DESIGN.md sits in the folder of a changed UI file or a folder above it, or `.process/repo.yaml` has a `design` block. A repo that was never onboarded is not gated; the session-start nudge offers onboarding instead.
+3. The base branch is the `--base` or `-B` value, else `origin/HEAD`, else `origin/main`, `main`, `origin/master`, or `master`.
+4. The UI files are the files changed since the merge base that match the UI patterns (see the nudge hook's README: detection per app from `stacks.json`, or `design.ui_globs` in `.process/repo.yaml`). Docs, tests, fixtures, and config files are exempt. No UI files: allow.
+5. The review record for the branch lives at `<git common dir>/process-pack/design-reviews/<branch>.json` (`/` in a branch name becomes `__`), so every worktree of a clone sees it.
 
 It blocks, with one line on stderr, when:
+
+- **Unreadable record:** `The design review record at <path> is unreadable. Run the design-review skill again, then retry gh pr create.`
 
 - **No record:** `This branch changes UI files (<n> files) and has no design review. Run the design-review skill, then retry gh pr create.`
 - **Stale record:** `This branch changed UI files after the design review at <sha>: <up to 5 files>. Run the design-review skill again, then retry gh pr create.`
@@ -29,11 +32,11 @@ A record whose reviewed commit is an ancestor of `HEAD`, with no UI change after
 
 ## Override
 
-A record with a `skip_reason` counts like a review of that commit. The `design-review` skill writes one only when Nick says in the session that the change skips design review, with his words as the reason. A later UI commit makes it stale like any other record.
+A record with a `skip_reason` counts like a review of that commit. The `design-review` skill writes one only when the user says in the session that the change skips design review, with their words as the reason. A later UI commit makes it stale like any other record.
 
 ## Jev shadow mode
 
-Each time the gate runs on a `gh pr create`, it also starts a detached process that asks Jev (through `tools/jev/jev_client.py`) whether the diff changes what a user sees. The answer, its source (`typesafe`, `openrouter`, or `none`), and the file-pattern result go on one line of `<git common dir>/process-pack/jev-gate.jsonl`. This never affects the decision and adds no time to the command. Jev may affect the gate only after Nick has seen a comparison of the two results and recorded a decision in the spec.
+Each time the gate runs on a `gh pr create`, it also starts a detached process that asks Jev (through `tools/jev/jev_client.py`) whether the diff changes what a user sees. The answer, its source (`typesafe`, `openrouter`, or `none`), and the file-pattern result go on one line of `<git common dir>/process-pack/jev-gate.jsonl`. This never affects the decision and adds no time to the command. Jev may affect the gate only after the user has seen a comparison of the two results and recorded a decision in the spec.
 
 ## Failure
 
@@ -53,4 +56,4 @@ Block: the reason on stderr, `{"decision": "block", "reason": "..."}` on stdout,
 python3 design_review_gate.py --dry-run
 ```
 
-Builds throwaway git repos with a local bare `origin` and a local Jev stub, and prints PASS or FAIL for 18 cases, including the four in the spec: no record blocks, stale record blocks, docs-only diff passes, fresh record passes.
+Builds throwaway git repos with a local bare `origin` and a local Jev stub, and prints PASS or FAIL for 22 cases, including the four in the spec: no record blocks, stale record blocks, docs-only diff passes, fresh record passes.

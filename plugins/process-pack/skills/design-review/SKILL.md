@@ -7,9 +7,11 @@ description: Use before opening a pull request that changes UI files, when the d
 
 ## Overview
 
-UI changes get a design review before they reach a pull request, so Nick is not the first reviewer. This skill runs the review, fixes what it can, and writes a record for the branch. The `design-review-gate` hook reads that record and lets `gh pr create` through once the record covers the branch's latest UI commit.
+UI changes get a design review before they reach a pull request, so the user is not the first reviewer. This skill runs the review, fixes what it can, and writes a record for the branch. The `design-review-gate` hook reads that record and lets `gh pr create` through once the record covers the branch's latest UI commit.
 
 The review method itself lives in `reviewer.md` next to this file. In Claude Code, the `design-reviewer` agent runs it in a separate context. Any other agent follows `reviewer.md` inline.
+
+`<plugin-root>` below means the process-pack plugin's folder: two folders above this skill's folder.
 
 ## Steps
 
@@ -41,7 +43,7 @@ Fix the findings, highest leverage first. At most two rounds: fix, re-capture th
 2. Write the record for the current commit, from the repo root:
 
    ```bash
-   python3 <process-pack>/skills/design-review/scripts/review_record.py write --sha HEAD \
+   python3 <plugin-root>/skills/design-review/scripts/review_record.py write --sha HEAD \
      --ui-file <file> ... --fixed "<finding>" ... --left "<finding>" ... --screenshot <path> ...
    ```
 
@@ -52,10 +54,10 @@ A UI commit made after the record makes it stale, and the gate blocks again. Run
 
 ## Skipping the review
 
-Only when Nick says in the session that this change skips design review. Record his words as the reason:
+Only when the user says in the session that this change skips design review. Record their words as the reason:
 
 ```bash
-python3 <process-pack>/skills/design-review/scripts/review_record.py write --sha HEAD --skip-reason "Nick: <his words>"
+python3 <plugin-root>/skills/design-review/scripts/review_record.py write --sha HEAD --skip-reason "User: <their words>"
 ```
 
 Never write a skip record on your own judgment, and never write one to get past the gate.

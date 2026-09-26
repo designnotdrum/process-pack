@@ -38,7 +38,7 @@ Name tokens for their job (`--destructive`, `--success`), never for their hue (`
 
 ## What blocks hardcoded colors
 
-`check-design-tokens.mjs`, from this skill's `assets/web/`. It flags palette classes such as `text-orange-600`, arbitrary color classes such as `bg-[#ff0000]`, hex string literals, and `rgb()`, `hsl()`, `oklch()`, `lab()` and `lch()` values, across all app code. The token file is exempt. A line with `design-tokens-allow: <reason>` is exempt; use it only when Nick approves the literal.
+`check-design-tokens.mjs`, from this skill's `assets/web/`. It flags palette classes such as `text-orange-600`, arbitrary color classes such as `bg-[#ff0000]`, hex string literals, and `rgb()`, `hsl()`, `oklch()`, `lab()` and `lch()` values, across all app code. The token file is exempt. A line with `design-tokens-allow: <reason>` is exempt; use it only when the user approves the literal.
 
 1. Copy `assets/web/check-design-tokens.mjs` to the repo's `scripts/`.
 2. Add it to the `lint` script, so it runs wherever lint runs:
@@ -52,7 +52,7 @@ Name tokens for their job (`--destructive`, `--success`), never for their hue (`
 
 ## How contrast is checked
 
-`design-tokens-contrast.mjs` and `design-tokens-contrast.test.mjs`, from `assets/web/`, ported from Meridian's `design-tokens-contrast.test.ts`. The test reads the real token file, so a token that regresses fails the test the moment it changes. It reads hex, `rgb()`, `hsl()`, bare HSL triplets (`222 47% 11%`), and `oklch()`, follows `var()` chains, and refuses colors with alpha instead of guessing.
+`design-tokens-contrast.mjs` and `design-tokens-contrast.test.mjs`, from `assets/web/`, ported from a production app's contrast test. The test reads the real token file, so a token that regresses fails the test the moment it changes. It reads hex, `rgb()`, `hsl()`, bare HSL triplets (`222 47% 11%`), and `oklch()`, follows `var()` chains, and refuses colors with alpha instead of guessing.
 
 1. Copy both files to the repo's `scripts/`.
 2. Copy `assets/web/contrast-pairs.example.json` to `.process/contrast-pairs.json`. Keep the pairs whose tokens exist. Add the pairs the code actually draws: each text or icon token on the surfaces it appears on, found with a search of the class names (for example `text-muted-foreground` inside `bg-card`). Every combination DESIGN.md defines would be hundreds of pairs, most never rendered. Tinted fills with transparency (`bg-success/15`) cannot be checked, because the result depends on what is behind them; list them in the output instead. Use 4.5 for text, and 3 for large text, icons, and focus rings.
