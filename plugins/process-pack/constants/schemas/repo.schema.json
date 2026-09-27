@@ -118,6 +118,78 @@
           "description": "Additional conditions, on top of the pack's base risk criteria, that trigger the mandatory pre-merge adversarial review for this repo."
         }
       }
+    },
+    "design": {
+      "type": "object",
+      "description": "What the design-onboard skill decided for this repo. The commit each UI skill is pinned to lives in skills-lock.json, not here.",
+      "additionalProperties": false,
+      "required": [
+        "onboarded_at",
+        "impeccable_version",
+        "stack",
+        "path",
+        "ui_skills"
+      ],
+      "properties": {
+        "onboarded_at": {
+          "type": "string",
+          "format": "date",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Date onboarding ran, YYYY-MM-DD."
+        },
+        "impeccable_version": {
+          "type": "string",
+          "description": "The impeccable plugin version onboarding ran with, e.g. \"4.4.0\"."
+        },
+        "stack": {
+          "type": "string",
+          "description": "The stacks.json entry onboarding detected: tailwind, css, swiftui, or other."
+        },
+        "path": {
+          "type": "string",
+          "enum": [
+            "greenfield",
+            "lean-in",
+            "polish-hard",
+            "new-direction"
+          ],
+          "description": "Greenfield, or the branch Nick picked for an existing UI."
+        },
+        "ui_globs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional override for which files count as UI, used by the design hooks instead of the stack's patterns."
+        },
+        "ui_skills": {
+          "type": "array",
+          "description": "UI Skills installed with the skills CLI, and why each was picked.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "source",
+              "reason"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The skill's directory name under .agents/skills/."
+              },
+              "source": {
+                "type": "string",
+                "description": "The owner/repo it was installed from."
+              },
+              "reason": {
+                "type": "string",
+                "description": "Why it was picked for this repo."
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

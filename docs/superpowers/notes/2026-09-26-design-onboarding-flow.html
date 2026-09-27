@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Design onboarding, the flow</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600&family=Fraunces:ital,opsz,wght@0,9..144,300;1,9..144,300&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<style>*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'DM Sans', system-ui, sans-serif; background: #f5f6f9; color: #0a0e1a; padding: 3rem 2rem; }
+.frame { max-width: 1560px; margin: 0 auto; }
+.eyebrow { font-family: 'JetBrains Mono', monospace; font-size: .66rem; letter-spacing: .18em; text-transform: uppercase; color: #4d5470; margin-bottom: .5rem; }
+h1 { font-family: 'Fraunces', serif; font-weight: 300; font-size: 2rem; letter-spacing: -.02em; margin-bottom: .5rem; }
+.lede { color: #4d5470; max-width: 62ch; margin-bottom: 2.5rem; }
+section { margin-bottom: 3rem; }
+h2 { font-size: 1rem; font-weight: 600; margin-bottom: .25rem; }
+section p { color: #4d5470; font-size: .9rem; margin-bottom: 1rem; }
+.scroll { overflow-x: auto; }
+svg { width: 100%; min-width: 1100px; display: block; }
+footer { border-top: 1px solid rgba(10,14,26,0.10); padding-top: 1rem; font-family: 'JetBrains Mono', monospace; font-size: .7rem; color: #4d5470; }
+</style></head><body><div class="frame">
+<p class="eyebrow">Swimlane, process-pack 1.5.0</p>
+<h1>Design onboarding, what you see and what runs</h1>
+<p class="lede">Three flows. Each row is who does the work: you, the agent session, impeccable, the plugin's skills, scripts and hooks, and Jev.</p>
+<section id="new"><h2>New repo</h2><p>A repo with no UI yet. The one design stop is your pick of a direction.</p><div class="scroll"><svg viewBox="0 0 1580 488" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="flow-new-title flow-new-desc">
+<title id="flow-new-title">Onboarding a repo with no UI</title><desc id="flow-new-desc">Swimlane of a greenfield onboarding: a session-start nudge, impeccable&#x27;s product interview and direction roll, a Jev taste check, Nick&#x27;s pick, the build and review, then guardrails.</desc>
+<defs><marker id="flow-new-a" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4d5470"/></marker><marker id="flow-new-acc" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#3b4bd4"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f6f9"/>
+<line x1="16" y1="24" x2="1572" y2="24" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<text x="16" y="67" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.18em">NICK</text>
+<line x1="16" y1="104" x2="1572" y2="104" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<text x="16" y="147" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.18em">AGENT SESSION</text>
+<line x1="16" y1="184" x2="1572" y2="184" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<text x="16" y="227" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.18em">IMPECCABLE</text>
+<line x1="16" y1="264" x2="1572" y2="264" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<text x="16" y="307" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.18em">PROCESS-PACK</text>
+<line x1="16" y1="344" x2="1572" y2="344" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<text x="16" y="387" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.18em">JEV</text>
+<line x1="16" y1="424" x2="1572" y2="424" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<path d="M260 304 H268 Q276 304 276 296 V152 Q276 144 284 144 H292" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-new-a)"/>
+<path d="M420 144 H428 Q436 144 436 152 V216 Q436 224 444 224 H452" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-new-a)"/>
+<path d="M580 224 H588 Q596 224 596 216 V72 Q596 64 604 64 H612" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-new-a)"/>
+<path d="M740 64 H748 Q756 64 756 72 V216 Q756 224 764 224 H772" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-new-a)"/>
+<path d="M900 224 H908 Q916 224 916 232 V376 Q916 384 924 384 H932" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-new-a)"/>
+<path d="M1060 384 H1068 Q1076 384 1076 376 V72 Q1076 64 1084 64 H1092" fill="none" stroke="#3b4bd4" stroke-width="1.2" marker-end="url(#flow-new-acc)"/>
+<path d="M1220 64 H1228 Q1236 64 1236 72 V216 Q1236 224 1244 224 H1252" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-new-a)"/>
+<path d="M1380 224 H1388 Q1396 224 1396 232 V296 Q1396 304 1404 304 H1412" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-new-a)"/>
+<rect x="132" y="280" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="132" y="280" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="196" y="301" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Nudge</text>
+<text x="196" y="316" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">SessionStart hook</text>
+<rect x="292" y="120" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="292" y="120" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="356" y="141" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Preflight</text>
+<text x="356" y="156" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">stack, version, UI?</text>
+<rect x="452" y="200" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="452" y="200" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="516" y="221" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Product interview</text>
+<text x="516" y="236" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">init, PRODUCT.md</text>
+<rect x="612" y="40" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="612" y="40" width="128" height="48" rx="6" fill="rgba(77,84,112,0.10)" stroke="#7c8298" stroke-width="1"/>
+<text x="676" y="61" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Answers</text>
+<text x="676" y="76" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">users, job, success</text>
+<rect x="772" y="200" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="772" y="200" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="836" y="221" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Seven candidates</text>
+<text x="836" y="236" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">concept-seed roll</text>
+<rect x="932" y="360" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="932" y="360" width="128" height="48" rx="6" fill="rgba(10,14,26,0.03)" stroke="rgba(10,14,26,0.30)" stroke-width="1"/>
+<text x="996" y="381" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Taste check</text>
+<text x="996" y="396" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">one noul per rule</text>
+<rect x="1092" y="40" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="1092" y="40" width="128" height="48" rx="6" fill="rgba(59,75,212,0.08)" stroke="#3b4bd4" stroke-width="1"/>
+<text x="1156" y="61" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Picks direction</text>
+<text x="1156" y="76" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">decision page</text>
+<rect x="1252" y="200" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="1252" y="200" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="1316" y="221" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Build and review</text>
+<text x="1316" y="236" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">finish review</text>
+<rect x="1412" y="280" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="1412" y="280" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="1476" y="301" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Guardrails</text>
+<text x="1476" y="316" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">checks, skills, rules</text>
+<text x="16" y="455" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+<rect x="96" y="446" width="16" height="12" rx="2" fill="rgba(59,75,212,0.08)" stroke="#3b4bd4"/>
+<text x="120" y="456" fill="#4d5470" font-size="10" font-family="'DM Sans', sans-serif">Your decision, or the one stop</text>
+<rect x="328" y="446" width="16" height="12" rx="2" fill="rgba(77,84,112,0.10)" stroke="#7c8298"/>
+<text x="352" y="456" fill="#4d5470" font-size="10" font-family="'DM Sans', sans-serif">Your input</text>
+<rect x="560" y="446" width="16" height="12" rx="2" fill="#ffffff" stroke="#0a0e1a"/>
+<text x="584" y="456" fill="#4d5470" font-size="10" font-family="'DM Sans', sans-serif">A step</text>
+<rect x="792" y="446" width="16" height="12" rx="2" fill="rgba(10,14,26,0.03)" stroke="rgba(10,14,26,0.30)"/>
+<text x="816" y="456" fill="#4d5470" font-size="10" font-family="'DM Sans', sans-serif">Jev, advice with a source</text>
+<rect x="1024" y="446" width="16" height="12" rx="2" fill="rgba(10,14,26,0.02)" stroke="rgba(10,14,26,0.20)" stroke-dasharray="4,3"/>
+<text x="1048" y="456" fill="#4d5470" font-size="10" font-family="'DM Sans', sans-serif">Optional, never blocks</text>
+</svg></div></section>
+<section id="existing"><h2>Repo with UI</h2><p>The existing screens are audited first. You pick lean in, polish hard, or a new direction.</p><div class="scroll"><svg viewBox="0 0 1420 488" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="flow-existing-title flow-existing-desc">
+<title id="flow-existing-title">Onboarding a repo that already has UI</title><desc id="flow-existing-desc">Swimlane of an existing UI onboarding: an impeccable audit, color and contrast checks, a recommended branch with Jev&#x27;s second opinion, Nick&#x27;s pick, the case for change, then guardrails.</desc>
+<defs><marker id="flow-existing-a" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4d5470"/></marker><marker id="flow-existing-acc" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#3b4bd4"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f6f9"/>
+<line x1="16" y1="24" x2="1412" y2="24" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<text x="16" y="67" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.18em">NICK</text>
+<line x1="16" y1="104" x2="1412" y2="104" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<text x="16" y="147" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.18em">AGENT SESSION</text>
+<line x1="16" y1="184" x2="1412" y2="184" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<text x="16" y="227" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.18em">IMPECCABLE</text>
+<line x1="16" y1="264" x2="1412" y2="264" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<text x="16" y="307" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.18em">PROCESS-PACK</text>
+<line x1="16" y1="344" x2="1412" y2="344" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<text x="16" y="387" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.18em">JEV</text>
+<line x1="16" y1="424" x2="1412" y2="424" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<path d="M260 144 H268 Q276 144 276 152 V216 Q276 224 284 224 H292" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-existing-a)"/>
+<path d="M420 224 H428 Q436 224 436 232 V296 Q436 304 444 304 H452" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-existing-a)"/>
+<path d="M580 304 H588 Q596 304 596 296 V152 Q596 144 604 144 H612" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-existing-a)"/>
+<path d="M740 144 H748 Q756 144 756 152 V376 Q756 384 764 384 H772" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-existing-a)"/>
+<path d="M900 384 H908 Q916 384 916 376 V72 Q916 64 924 64 H932" fill="none" stroke="#3b4bd4" stroke-width="1.2" marker-end="url(#flow-existing-acc)"/>
+<path d="M1060 64 H1068 Q1076 64 1076 72 V136 Q1076 144 1084 144 H1092" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-existing-a)"/>
+<path d="M1220 144 H1228 Q1236 144 1236 152 V296 Q1236 304 1244 304 H1252" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-existing-a)"/>
+<rect x="132" y="120" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="132" y="120" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="196" y="141" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Preflight</text>
+<text x="196" y="156" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">stack, version, UI?</text>
+<rect x="292" y="200" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="292" y="200" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="356" y="221" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Audit</text>
+<text x="356" y="236" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">document, critique</text>
+<rect x="452" y="280" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="452" y="280" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="516" y="301" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Color, contrast</text>
+<text x="516" y="316" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">check scripts</text>
+<rect x="612" y="120" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="612" y="120" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="676" y="141" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Recommend branch</text>
+<text x="676" y="156" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">one pick, measured</text>
+<rect x="772" y="360" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="772" y="360" width="128" height="48" rx="6" fill="rgba(10,14,26,0.03)" stroke="rgba(10,14,26,0.30)" stroke-width="1"/>
+<text x="836" y="381" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Second opinion</text>
+<text x="836" y="396" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">choice question</text>
+<rect x="932" y="40" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="932" y="40" width="128" height="48" rx="6" fill="rgba(59,75,212,0.08)" stroke="#3b4bd4" stroke-width="1"/>
+<text x="996" y="61" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Picks branch</text>
+<text x="996" y="76" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">lean, polish, new</text>
+<rect x="1092" y="120" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="1092" y="120" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="1156" y="141" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Case for change</text>
+<text x="1156" y="156" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">evolution README</text>
+<rect x="1252" y="280" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="1252" y="280" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="1316" y="301" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Guardrails</text>
+<text x="1316" y="316" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">checks, skills, rules</text>
+<text x="16" y="455" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+<rect x="96" y="446" width="16" height="12" rx="2" fill="rgba(59,75,212,0.08)" stroke="#3b4bd4"/>
+<text x="120" y="456" fill="#4d5470" font-size="10" font-family="'DM Sans', sans-serif">Your decision, or the one stop</text>
+<rect x="328" y="446" width="16" height="12" rx="2" fill="rgba(77,84,112,0.10)" stroke="#7c8298"/>
+<text x="352" y="456" fill="#4d5470" font-size="10" font-family="'DM Sans', sans-serif">Your input</text>
+<rect x="560" y="446" width="16" height="12" rx="2" fill="#ffffff" stroke="#0a0e1a"/>
+<text x="584" y="456" fill="#4d5470" font-size="10" font-family="'DM Sans', sans-serif">A step</text>
+<rect x="792" y="446" width="16" height="12" rx="2" fill="rgba(10,14,26,0.03)" stroke="rgba(10,14,26,0.30)"/>
+<text x="816" y="456" fill="#4d5470" font-size="10" font-family="'DM Sans', sans-serif">Jev, advice with a source</text>
+<rect x="1024" y="446" width="16" height="12" rx="2" fill="rgba(10,14,26,0.02)" stroke="rgba(10,14,26,0.20)" stroke-dasharray="4,3"/>
+<text x="1048" y="456" fill="#4d5470" font-size="10" font-family="'DM Sans', sans-serif">Optional, never blocks</text>
+</svg></div></section>
+<section id="gate"><h2>Every pull request after</h2><p>A branch that changes UI cannot open a pull request until a design review covers its latest UI commit.</p><div class="scroll"><svg viewBox="0 0 1260 488" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="flow-gate-title flow-gate-desc">
+<title id="flow-gate-title">The design review gate before gh pr create</title><desc id="flow-gate-desc">Swimlane of the review gate: gh pr create is checked against the branch&#x27;s UI changes and review record, blocked until the design review writes a fresh record or Nick records a skip, while Jev logs a shadow opinion that never blocks.</desc>
+<defs><marker id="flow-gate-a" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4d5470"/></marker><marker id="flow-gate-acc" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#3b4bd4"/></marker></defs>
+<rect width="100%" height="100%" fill="#f5f6f9"/>
+<line x1="16" y1="24" x2="1252" y2="24" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<text x="16" y="67" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.18em">NICK</text>
+<line x1="16" y1="104" x2="1252" y2="104" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<text x="16" y="147" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.18em">AGENT SESSION</text>
+<line x1="16" y1="184" x2="1252" y2="184" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<text x="16" y="227" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.18em">IMPECCABLE</text>
+<line x1="16" y1="264" x2="1252" y2="264" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<text x="16" y="307" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.18em">PROCESS-PACK</text>
+<line x1="16" y1="344" x2="1252" y2="344" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<text x="16" y="387" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.18em">JEV</text>
+<line x1="16" y1="424" x2="1252" y2="424" stroke="rgba(10,14,26,0.10)" stroke-width="1"/>
+<path d="M260 144 H292" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-gate-a)"/>
+<path d="M420 144 H428 Q436 144 436 152 V296 Q436 304 444 304 H452" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-gate-a)"/>
+<path d="M580 304 H612" fill="none" stroke="#3b4bd4" stroke-width="1.2" marker-end="url(#flow-gate-acc)"/>
+<path d="M740 304 H748 Q756 304 756 296 V152 Q756 144 764 144 H772" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-gate-a)"/>
+<path d="M900 144 H908 Q916 144 916 152 V288 Q916 296 924 296 H932" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-gate-a)"/>
+<path d="M900 64 H920 Q928 64 928 72 V304 Q928 312 936 312 H932" fill="none" stroke="#4d5470" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#flow-gate-a)"/>
+<path d="M1060 304 H1068 Q1076 304 1076 296 V152 Q1076 144 1084 144 H1092" fill="none" stroke="#4d5470" stroke-width="1.2" marker-end="url(#flow-gate-a)"/>
+<path d="M516 328 V360" fill="none" stroke="#4d5470" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#flow-gate-a)"/>
+<rect x="132" y="120" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="132" y="120" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="196" y="141" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">UI change</text>
+<text x="196" y="156" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">committed</text>
+<rect x="292" y="120" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="292" y="120" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="356" y="141" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">gh pr create</text>
+<text x="356" y="156" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">PreToolUse, Bash</text>
+<rect x="452" y="280" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="452" y="280" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="516" y="301" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Gate reads diff</text>
+<text x="516" y="316" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">UI files, record</text>
+<rect x="612" y="280" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="612" y="280" width="128" height="48" rx="6" fill="rgba(59,75,212,0.08)" stroke="#3b4bd4" stroke-width="1"/>
+<text x="676" y="301" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Blocked</text>
+<text x="676" y="316" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">no fresh review</text>
+<rect x="772" y="120" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="772" y="120" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="836" y="141" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Design review</text>
+<text x="836" y="156" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">screens, fix x2</text>
+<rect x="772" y="40" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="772" y="40" width="128" height="48" rx="6" fill="rgba(10,14,26,0.02)" stroke="rgba(10,14,26,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="836" y="61" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Says skip</text>
+<text x="836" y="76" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">reason recorded</text>
+<rect x="932" y="280" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="932" y="280" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="996" y="301" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Review record</text>
+<text x="996" y="316" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">git common dir</text>
+<rect x="1092" y="120" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="1092" y="120" width="128" height="48" rx="6" fill="#ffffff" stroke="#0a0e1a" stroke-width="1"/>
+<text x="1156" y="141" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Retry</text>
+<text x="1156" y="156" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">gate allows, PR</text>
+<rect x="452" y="360" width="128" height="48" rx="6" fill="#f5f6f9"/>
+<rect x="452" y="360" width="128" height="48" rx="6" fill="rgba(10,14,26,0.02)" stroke="rgba(10,14,26,0.20)" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="516" y="381" fill="#0a0e1a" font-size="12" font-weight="600" font-family="'DM Sans', sans-serif" text-anchor="middle">Shadow check</text>
+<text x="516" y="396" fill="#4d5470" font-size="9" font-family="'JetBrains Mono', monospace" text-anchor="middle">logged only</text>
+<text x="16" y="455" fill="#4d5470" font-size="8" font-family="'JetBrains Mono', monospace" letter-spacing="0.14em">LEGEND</text>
+<rect x="96" y="446" width="16" height="12" rx="2" fill="rgba(59,75,212,0.08)" stroke="#3b4bd4"/>
+<text x="120" y="456" fill="#4d5470" font-size="10" font-family="'DM Sans', sans-serif">Your decision, or the one stop</text>
+<rect x="328" y="446" width="16" height="12" rx="2" fill="rgba(77,84,112,0.10)" stroke="#7c8298"/>
+<text x="352" y="456" fill="#4d5470" font-size="10" font-family="'DM Sans', sans-serif">Your input</text>
+<rect x="560" y="446" width="16" height="12" rx="2" fill="#ffffff" stroke="#0a0e1a"/>
+<text x="584" y="456" fill="#4d5470" font-size="10" font-family="'DM Sans', sans-serif">A step</text>
+<rect x="792" y="446" width="16" height="12" rx="2" fill="rgba(10,14,26,0.03)" stroke="rgba(10,14,26,0.30)"/>
+<text x="816" y="456" fill="#4d5470" font-size="10" font-family="'DM Sans', sans-serif">Jev, advice with a source</text>
+<rect x="1024" y="446" width="16" height="12" rx="2" fill="rgba(10,14,26,0.02)" stroke="rgba(10,14,26,0.20)" stroke-dasharray="4,3"/>
+<text x="1048" y="456" fill="#4d5470" font-size="10" font-family="'DM Sans', sans-serif">Optional, never blocks</text>
+</svg></div></section>
+<footer>Built from the design onboarding spec and the dry runs on 2026-09-26. Jev answers carry their source; a missing key skips the check.</footer>
+</div></body></html>

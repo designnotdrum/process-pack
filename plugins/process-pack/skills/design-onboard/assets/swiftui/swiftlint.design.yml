@@ -1,0 +1,9 @@
+# SwiftLint rule that blocks color literals. Merge custom_rules into the
+# repo's .swiftlint.yml. Every color comes from the asset catalog or the
+# theme type instead.
+custom_rules:
+  no_color_literals:
+    name: "No color literals"
+    regex: '(#colorLiteral|\bColor\s*\(\s*(red|hue|white|hex)\s*:|\bColor\s*\(\s*\.(sRGB|displayP3|sRGBLinear)\b|\bUIColor\s*\(\s*(red|white|hue|displayP3Red)\s*:|\bNSColor\s*\(\s*(red|srgbRed|calibratedRed|white|hue)\s*:)'
+    message: "Use a named color from the asset catalog or the theme type."
+    severity: error

@@ -1,0 +1,6 @@
+.card {
+  color: #333;
+  background: rgb(0 0 0);
+  border-color: oklch(0.7 0.1 200);
+  outline-color: white;
+}

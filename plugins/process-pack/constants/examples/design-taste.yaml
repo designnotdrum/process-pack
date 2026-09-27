@@ -1,0 +1,135 @@
+# Design taste file, anonymized worked example.
+# Schema: ../schemas/design-taste.schema.json
+#
+# The real file lives at ~/.config/process-pack/design-taste.yaml and is never
+# committed. The design-onboard skill reads it and copies the rules that apply
+# into each repo's PRODUCT.md and AGENTS.md. It never links to the home
+# directory file, because agents running in the cloud cannot read it.
+#
+# Every rule follows the anatomy in skills/taste-rules/SKILL.md: default
+# stance, applicability gate, named exceptions, escape hatch. The file holds
+# no brand values (palette, typefaces, product names) and no default reference
+# products: references are chosen per repo.
+
+version: "1.0"
+
+looks_to_avoid:
+  - id: no-purple-gradients-or-neon
+    default_stance: No purple-to-blue gradients and no neon accent colors.
+    applicability_gate: Any surface in the product UI or its marketing site.
+    named_exceptions:
+      - The product's own brand, recorded in DESIGN.md, is purple or neon.
+    escape_hatch: The person says in the session that this surface may use it.
+  - id: no-glassmorphism
+    default_stance: No frosted glass panels and no heavy backdrop blur.
+    applicability_gate: Any container, card, modal, or navigation bar.
+    named_exceptions:
+      - A platform control that is translucent by convention, such as a native macOS sidebar.
+    escape_hatch: The person says in the session that this surface may use it.
+  - id: no-gradient-text
+    default_stance: Text is a solid color.
+    applicability_gate: Any text, headings included.
+    named_exceptions: []
+    escape_hatch: The person says in the session that this heading may use it.
+  - id: no-centered-saas-landing-stack
+    default_stance: A landing page is not a centered hero, a logo strip, three feature cards, and a centered call to action, in that order.
+    applicability_gate: Marketing and landing pages.
+    named_exceptions:
+      - A single-purpose page whose only job is one sign-up form.
+    escape_hatch: The person picks that layout from the rendered direction mocks.
+  - id: defaults-are-a-starting-point
+    default_stance: Component library defaults (shadcn, Material, Bootstrap, system defaults) are restyled to the repo's tokens before a screen ships.
+    applicability_gate: Any component taken from a library.
+    named_exceptions:
+      - Internal tools with no external users, when DESIGN.md says so.
+    escape_hatch: The person says in the session that the default is fine for this screen.
+
+craft_floor:
+  - id: three-type-levels
+    default_stance: Every screen uses at least three distinct type levels, set by size and weight, so the reader can see what matters first.
+    applicability_gate: Any screen with more than one block of text.
+    named_exceptions:
+      - A single-message screen, such as a full-page error with one line.
+    escape_hatch: The person says in the session that this screen is exempt.
+  - id: interactive-states
+    default_stance: Every interactive element has hover, focus-visible, active, and disabled states.
+    applicability_gate: Buttons, links, inputs, menu items, and any element with a click or key handler.
+    named_exceptions:
+      - Touch-only platforms skip hover.
+    escape_hatch: The person says in the session that this element is exempt.
+  - id: data-states
+    default_stance: Every surface that shows data has an empty state, a loading state, and an error state, each designed rather than left blank.
+    applicability_gate: Lists, tables, dashboards, feeds, search results, and detail views that load data.
+    named_exceptions:
+      - Data that is compiled into the page and cannot be missing or fail.
+    escape_hatch: The person says in the session that this surface is exempt.
+
+color_discipline:
+  - id: colors-from-tokens
+    default_stance: Every color comes from a design token. No hex, rgb, hsl, oklch, or palette utility classes in component code.
+    applicability_gate: All app code outside the token file.
+    named_exceptions:
+      - Third-party brand marks that must keep their own colors, marked in code with a reason.
+    escape_hatch: The person approves the literal in the session and the line carries an allow comment with the reason.
+  - id: color-has-a-job
+    default_stance: Every non-neutral color states what it tells the user (action, status, selection, brand), and is used only for that.
+    applicability_gate: Any token or usage that is not a neutral.
+    named_exceptions:
+      - Illustrations and data visualizations, which follow their own palette in DESIGN.md.
+    escape_hatch: The person says in the session that this use is intended.
+  - id: status-not-by-hue-alone
+    default_stance: Status is never shown by color alone. It also has an icon, a label, or a shape.
+    applicability_gate: Success, warning, error, and info states, and any colored badge or indicator.
+    named_exceptions: []
+    escape_hatch: The person says in the session that this indicator is exempt.
+
+accessibility_floor:
+  - id: wcag-22-aa-every-theme
+    default_stance: Every theme meets WCAG 2.2 AA, including contrast for text, icons, and focus indicators.
+    applicability_gate: Every theme the product ships, light and dark included.
+    named_exceptions:
+      - Decorative elements that carry no information.
+    escape_hatch: The person says in the session that a specific element is exempt, and the reason is recorded.
+  - id: reduced-motion
+    default_stance: Motion respects prefers-reduced-motion. Non-essential animation stops, and essential transitions shorten or fade.
+    applicability_gate: Any animation or transition longer than a hover color change.
+    named_exceptions: []
+    escape_hatch: The person says in the session that this motion is essential and cannot be reduced.
+
+copy:
+  rules:
+    - id: sentence-case
+      default_stance: UI copy uses sentence case, including buttons, titles, tabs, and menu items.
+      applicability_gate: All user-facing strings.
+      named_exceptions:
+        - Proper nouns and product names keep their own casing.
+      escape_hatch: The person says in the session that this string is exempt.
+    - id: no-em-dashes
+      default_stance: No em dashes in UI copy. Use a comma, a full stop, or a colon.
+      applicability_gate: All user-facing strings.
+      named_exceptions: []
+      escape_hatch: The person says in the session that this string is exempt.
+    - id: no-restating-labels
+      default_stance: Copy never restates its own label. A field labelled "Email" does not get help text saying "Enter your email".
+      applicability_gate: Help text, placeholders, descriptions, and tooltips next to a label.
+      named_exceptions: []
+      escape_hatch: The person says in the session that the repetition is intended.
+  points_at:
+    - patterns-sentence-case-ui-copy
+    - voice-guide
+    - ui-copy
+
+critique_method:
+  dimensions:
+    - hierarchy
+    - identity
+    - containment and space
+    - typography
+    - color
+    - density and rhythm
+    - motion and state
+    - consistency
+  each_point_needs_fix: true
+  notes:
+    - Score each dimension, then list problems in order of how much they hurt the user.
+    - A point without a concrete fix (which element, which change) is not a finding.

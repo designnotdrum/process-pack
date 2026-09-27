@@ -1,0 +1,9 @@
+# The gate has no config file of its own. Which files count as UI comes from
+# the design-onboard skill's stacks.json, detected per app. To override it for
+# one repo, add this block to <repo-root>/.process/repo.yaml (read only when
+# PyYAML is installed):
+design:
+  ui_globs:
+    - "apps/web/app/**/*.tsx"
+    - "apps/web/components/**/*.tsx"
+    - "apps/web/app/**/*.css"

@@ -84,3 +84,18 @@ adversarial_pre_merge_review:
   extra_risk_criteria:
     - "any change to the shared authentication/session middleware (`src/common/auth/`)"
     - "any change to the release/publish script that ships a build to this repo's deploy path"
+
+# Written by the design-onboard skill. Each UI skill's pinned commit is in
+# skills-lock.json at the repo root, not here.
+design:
+  onboarded_at: "2026-09-26"
+  impeccable_version: "4.4.0"
+  stack: tailwind
+  path: greenfield
+  ui_skills:
+    - name: fixing-accessibility
+      source: ibelick/ui-skills
+      reason: Accessibility scan used by the design-review skill on every UI change.
+    - name: baseline-ui
+      source: ibelick/ui-skills
+      reason: Fast cleanup pass for spacing and hierarchy on new screens.

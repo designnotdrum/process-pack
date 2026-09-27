@@ -1,0 +1,4 @@
+[
+  { "fg": "--foreground", "bg": "--background", "min": 4.5 },
+  { "fg": "--muted", "bg": "--card", "min": 4.5 }
+]

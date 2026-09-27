@@ -1,0 +1,4 @@
+{
+  "_comment": "Copy this file into <repo-root>/.process/ under the same name without '.example', only to turn the nudge off for one repo. Which files count as UI is set with design.ui_globs in .process/repo.yaml, not here.",
+  "enabled": false
+}

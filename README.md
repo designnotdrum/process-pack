@@ -81,7 +81,7 @@ flowchart LR
 
 ## What's in the box
 
-**15 skills, grouped by when they fire:**
+**17 skills, grouped by when they fire:**
 
 *Plan & dispatch*
 - **`lane-planner`** - before more than one delegate runs against a repo: the ownership table (one owner per file, phase gating, merge order) that has to exist before dispatch, not after a collision.
@@ -106,9 +106,17 @@ flowchart LR
 - **`desk-research`** - grounds a technical or design direction in prior art before you commit: a source index, a synthesis, and candidate directions instead of a pile of links.
 - **`pp-init`** - the onboarding interview above, and the correction-miner that turns recurring corrections into candidate rules.
 
-**2 hooks** (enforcement the model can't skip):
+*Design*
+- **`design-onboard`** - sets a repo up for good UI work on day one: PRODUCT.md and DESIGN.md through impeccable, a picked visual direction or an audit of the existing one, and guardrails. See "Design onboarding" below.
+- **`design-review`** - reviews a branch's UI changes before its pull request, fixes what it finds, and writes the record the review gate checks.
+
+**4 hooks** (enforcement the model can't skip):
 - **`wall-guard`** - `PreToolUse` on Bash. Blocks a command that invokes one config's runtime from another's session (personal from work and the reverse), with an allowlist override for genuine cases.
 - **`stub-guard`** - `PreToolUse` on `git commit`. Greps the staged diff for the local-only stub markers your repo declares and blocks the commit with the file list.
+- **`design-onboard-nudge`** - `SessionStart`. In a repo with UI files and no DESIGN.md, tells the agent to run `design-onboard` first. Never blocks.
+- **`design-review-gate`** - `PreToolUse` on `gh pr create`. Blocks a pull request that changes UI files until `design-review` has recorded a review of the branch's latest UI commit.
+
+The two design hooks register themselves through the plugin's `hooks/hooks.json`. The other two are wired by hand in `settings.json`, as their READMEs describe.
 
 **Board viewer** (`board-viewer/`) - renders one `board.json` two ways, a Gantt (lanes over time with dependencies) and a Kanban (columns by state). Data is the contract; this is just a renderer. Publishable as a single file for anyone watching from a phone.
 
@@ -117,6 +125,22 @@ flowchart LR
 Its load-bearing field is `ready()`, which is required and runs *before* recording starts. It must assert something only the working feature renders — every cheap proxy has at some point passed on a page that was not the page under test: HTTP 200 on a sign-in redirect, a session cookie on a blank page, network-idle on an app frozen in skeletons, an absence of skeletons on a signed-out form. When it fails the recorder writes a failure frame, refuses to record, and exits non-zero: a missing recording is a visible problem, a recording of loading placeholders is an invisible one.
 
 Run `examples/demo.scenario.ts` against the bundled static page to see a finished recording in about a minute, with no auth and no secrets.
+
+**Jev client** (`tools/jev/`) - asks Jev, TypeSafe's model, named questions over a text state. It uses `TYPESAFE_API_KEY`, falls back to OpenRouter's `typesafe/jev-router` when only `OPENROUTER_API_KEY` is set, and skips the call when neither is set. Every answer carries its source.
+
+## Design onboarding
+
+UI work in a new repo tends to look like library defaults for its first several sessions, with each screen inventing its own values and nobody reviewing the result. The design pieces close that gap in any repo, with impeccable as the design engine.
+
+- **Your taste, once.** `~/.config/process-pack/design-taste.yaml` holds your design rules: looks to avoid, a craft floor, color discipline, an accessibility floor, copy rules, and a critique method. Schema: `constants/schemas/design-taste.schema.json`. Anonymized example: `constants/examples/design-taste.yaml`. Onboarding copies the rules into each repo, so cloud agents that cannot read your home directory still follow them.
+- **`design-onboard`** runs impeccable's init, then one of two paths. A repo with no UI gets references, impeccable's direction round (a rolled direction, challengers, and impeccable's own pick on a decision page) for you to choose from, and a DESIGN.md with real tokens. A repo with UI gets an audit, a benchmark, and a recommendation: lean in, polish hard, or a new direction, with a written case for any change. Both end with guardrails: a check that blocks hardcoded colors, a contrast test, 3 to 5 UI Skills installed at a pinned commit with the `skills` CLI, and design rules in AGENTS.md.
+- **`design-review`** screenshots the screens a branch touches, runs the reviewer method, impeccable's critique and the repo's accessibility scan, fixes what it finds in at most two rounds, and writes a review record.
+- **Two hooks** remind (`design-onboard-nudge`) and enforce (`design-review-gate`). The gate applies only in repos onboarded for design, so client and open-source repos are never blocked.
+- **Jev** gives a second opinion in three places: which branch an existing UI should take, whether a direction mock uses a look your taste file bans, and, in shadow mode only, whether a diff changes what users see.
+
+Stacks covered: Tailwind and shadcn, plain CSS (with Vue, Svelte, and Astro), and SwiftUI. Any other stack gets DESIGN.md without automated checks, and onboarding says so.
+
+Enforcement runs in Claude Code only (laptop sessions and Cyrus). The skills, scripts, and hook decisions are written so that Codex, OpenCode, or pi can be added later with a small adapter each: skills name no Claude-only tool as the only way to do a step, UI Skills install to the shared `.agents/skills/`, and each hook's decision is a plain function.
 
 ---
 
