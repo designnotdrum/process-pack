@@ -56,8 +56,17 @@ const prompt = args.at(-1);
 const fileKey = /fileKey: (\S+)/.exec(prompt)?.[1] ?? "";
 
 // What the generated code returns: one entry a unit, read from its UNITS line.
+const fail = (message) => {
+  process.stderr.write(`stub codex: ${message}\n`);
+  process.exit(2);
+};
 const line = code.split("\n").find((l) => l.startsWith("const UNITS = "));
-const units = line ? JSON.parse(line.slice("const UNITS = ".length, -1)) : [];
+let units = [];
+try {
+  units = line ? JSON.parse(line.slice("const UNITS = ".length, -1)) : [];
+} catch (error) {
+  fail(`cannot read the UNITS line of the code: ${error.message}`);
+}
 const results = units.map((unit) => ({ id: unit.id, status: "written", name: `${unit.name} ${unit.version}` }));
 if (scenario === "unit-failed" && results.length > 0) {
   results[results.length - 1] = { id: results.at(-1).id, status: "failed", error: "The font DM Sans Medium could not be loaded." };
@@ -65,12 +74,14 @@ if (scenario === "unit-failed" && results.length > 0) {
 const returned = { tokens: { made: [], updated: [] }, units: results, warnings: [] };
 
 const fixture = { success: "success", "unit-failed": "success", "changed-code": "success", "tool-error": "tool-error", "no-call": "no-call", crash: "crash" }[scenario];
-if (!fixture) {
-  process.stderr.write(`stub codex: unknown scenario ${scenario}\n`);
-  process.exit(2);
-}
+if (!fixture) fail(`unknown scenario ${scenario}`);
 const sent = scenario === "changed-code" ? code.replace("const CONFIG", "const  CONFIG") : code;
-const template = readFileSync(path.join(here, "..", "fixtures", `${fixture}.jsonl`), "utf8");
+let template = "";
+try {
+  template = readFileSync(path.join(here, "..", "fixtures", `${fixture}.jsonl`), "utf8");
+} catch (error) {
+  fail(`cannot read the ${fixture} fixture: ${error.message}`);
+}
 process.stdout.write(
   template
     .replaceAll('"__CODE__"', () => JSON.stringify(sent))

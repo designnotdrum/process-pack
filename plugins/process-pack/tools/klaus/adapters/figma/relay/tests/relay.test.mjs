@@ -131,6 +131,8 @@ test("a reply without a use_figma call is a failure, with what Codex said", asyn
   const run = await relay(root, [folder], { scenarios: "no-call" });
   assert.equal(run.code, 1);
   assert.match(outputOf(run.report).failed[0].error, /Codex did not call use_figma\. It replied: I cannot find a use_figma tool\./);
+  assert.equal(run.calls.length, 1);
+  assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "generated" }, Card: { "1.0.0": "generated" } }, "nothing is marked sent");
 });
 
 test("the token cap stops before the call that would pass it, and defers the rest", async () => {
@@ -199,6 +201,8 @@ test("--run downloads the CI artifact with gh and relays the release in it", asy
   assert.deepEqual(outputOf(run.report).written, ["Button", "Card"]);
   // The ledger is the repo's, not the downloaded copy's.
   assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "sent" }, Card: { "1.0.0": "sent" } });
+  assert.equal(existsSync(run.gh[6]), false, "the downloaded artifact is removed after the run");
+  assert.equal(outputOf(run.report).adapter.details.folder, "the klaus-figma artifact of run 123456");
 });
 
 test("a code file that changed after it was generated is not sent", async () => {
@@ -229,4 +233,5 @@ test("screenshot uploads are listed as not sent, and stay generated", async () =
   const output = outputOf(run.report);
   assert.deepEqual(output.deferred, [{ id: "screen:/settings", kind: "screen", reason: "upload-not-supported" }]);
   assert.ok(output.warnings.some((w) => /does not upload screenshots yet/.test(w)));
+  assert.equal(ledgerOf(root).screens["/settings"]?.["v1.0.0"], undefined, "the relay records no upload as sent");
 });

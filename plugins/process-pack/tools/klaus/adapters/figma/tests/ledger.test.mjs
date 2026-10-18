@@ -8,6 +8,7 @@ import {
   anyVersionSent,
   componentSent,
   emptyLedger,
+  entryOf,
   entrySent,
   GENERATED,
   readLedger,
@@ -51,6 +52,14 @@ test("a version 1 ledger counted code files as written, so its entries read as g
   });
 });
 
+test("a ledger written to a file reads back the same", () => {
+  const ledger = emptyLedger();
+  recordComponent(ledger, "Button", "1.0.0");
+  recordComponent(ledger, "Card", "2.0.0", SENT);
+  recordEntry(ledger, { kind: "screen", route: "/settings", release: "v3.0.0" }, GENERATED);
+  assert.deepEqual(readLedger(ledgerFile(ledger)), ledger);
+});
+
 test("an entry with an unknown status is dropped, and a file that is not a ledger reads as empty", () => {
   const ledger = readLedger(ledgerFile({ version: 2, components: { Button: { "1.0.0": "sent", "1.1.0": "maybe" }, Card: [] }, screens: {} }));
   assert.deepEqual(ledger.components, { Button: { "1.0.0": SENT } });
@@ -65,6 +74,8 @@ test("a manifest entry is recorded and checked by its kind", () => {
   assert.equal(entrySent(ledger, { kind: "component", name: "Button", version: "1.0.0" }), true);
   assert.equal(screenSent(ledger, "/", "v1.0.0"), true);
   assert.throws(() => recordEntry(ledger, { kind: "retain" }, SENT), /kind of "component" or "screen"/);
+  assert.throws(() => entrySent(ledger, { kind: "retain" }), /kind of "component" or "screen"/);
+  assert.deepEqual(entryOf({ kind: "component", id: "Button", name: "Button", version: "1.1.0", cells: [] }), { kind: "component", name: "Button", version: "1.1.0" });
 });
 
 test("a component named like an object property does not reach the prototype", () => {

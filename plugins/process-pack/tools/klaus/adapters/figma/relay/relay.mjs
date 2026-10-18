@@ -217,7 +217,7 @@ function checkCodex(codex) {
   }
   const url = figma.transport?.url ?? DEFAULT_FIGMA_URL;
   if (!/^https:\/\/[^\s"\\]+$/.test(url)) throw new UserError(`The ${FIGMA_SERVER} MCP server's URL is not one the relay can pass on: ${url}`);
-  return { url, auth: figma.auth_status ?? null };
+  return { url };
 }
 
 /** Runs one `codex exec` and collects what it printed. Never throws. */
@@ -237,6 +237,7 @@ function spawnCodex(codex, args, input, cwd, timeoutMs) {
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
+      setTimeout(() => child.kill("SIGKILL"), 5000).unref();
     }, timeoutMs);
     child.stdout.setEncoding("utf8").on("data", (chunk) => (stdout += chunk));
     child.stderr.setEncoding("utf8").on("data", (chunk) => {
@@ -276,6 +277,9 @@ async function sendFile({ codex, args, code, workdir, timeoutMs, fileKey, events
   if (unreadable > 0) warnings.push(`${unreadable} lines of Codex's output were not JSON events.`);
 
   for (const call of summary.calls) {
+    // What Codex's own events say it sent. The relay cannot see what Figma's server received,
+    // so this trusts Codex's event log. Whitespace at either end is ignored: a model may drop the
+    // file's last newline, and that changes nothing the code does.
     const sent = call.arguments?.code;
     if (typeof sent !== "string" || sent.trim() !== text) {
       errors.push(`Codex changed the code before it reached ${FIGMA_TOOL}, so its result is not trusted.`);
@@ -342,24 +346,33 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
  * @returns {Promise<{ report: object, reportFile: string | null, exitCode: number }>}
  */
 export async function runRelay(options) {
-  const now = options.now ?? (() => new Date());
-  const log = options.log ?? (() => {});
-  const codex = options.codex ?? "codex";
   const root = path.resolve(options.root ?? process.cwd());
-  const dryRun = Boolean(options.dryRun);
-  const model = options.model ?? DEFAULT_MODEL;
-  const effort = options.effort ?? DEFAULT_EFFORT;
-  if (!MODEL.test(model)) throw new UserError(`--model ${JSON.stringify(model)} is not a model id.`);
-  if (!EFFORT.test(effort)) throw new UserError(`--effort ${JSON.stringify(effort)} is not an effort level.`);
-  const maxCalls = options.maxCalls ?? null;
-  const timeoutMs = (options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
+  if (!MODEL.test(options.model ?? DEFAULT_MODEL)) throw new UserError(`--model ${JSON.stringify(options.model)} is not a model id.`);
+  if (!EFFORT.test(options.effort ?? DEFAULT_EFFORT)) throw new UserError(`--effort ${JSON.stringify(options.effort)} is not an effort level.`);
 
   const settings = readSettings(root, options.config);
   const ledgerPath = options.ledger ? path.resolve(root, options.ledger) : path.join(root, settings.outputDir, "ledger.json");
   if (Boolean(options.folder) === Boolean(options.run)) throw new UserError("Give a release folder or --run <id>, not both and not neither.");
-  const folder = options.run
-    ? findReleaseFolder(downloadArtifact({ gh: options.gh ?? "gh", run: options.run, repo: options.repo, artifact: options.artifact ?? DEFAULT_ARTIFACT }), options.release)
-    : path.resolve(root, options.folder);
+  if (!options.run) return relayRelease(options, { root, settings, ledgerPath, folder: path.resolve(root, options.folder), source: null });
+  const downloaded = downloadArtifact({ gh: options.gh ?? "gh", run: options.run, repo: options.repo, artifact: options.artifact ?? DEFAULT_ARTIFACT });
+  try {
+    const source = `the ${options.artifact ?? DEFAULT_ARTIFACT} artifact of run ${options.run}`;
+    return await relayRelease(options, { root, settings, ledgerPath, folder: findReleaseFolder(downloaded, options.release), source });
+  } finally {
+    rmSync(downloaded, { recursive: true, force: true });
+  }
+}
+
+/** Relays the release in folder. source names the artifact it came from, or is null for a local folder. */
+async function relayRelease(options, { root, settings, ledgerPath, folder, source }) {
+  const now = options.now ?? (() => new Date());
+  const log = options.log ?? (() => {});
+  const codex = options.codex ?? "codex";
+  const dryRun = Boolean(options.dryRun);
+  const model = options.model ?? DEFAULT_MODEL;
+  const effort = options.effort ?? DEFAULT_EFFORT;
+  const maxCalls = options.maxCalls ?? null;
+  const timeoutMs = (options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
   const manifest = readManifest(folder);
   const fileKey = options.fileKey ?? manifest.fileKey;
   if (!FILE_KEY.test(fileKey ?? "")) throw new UserError("The manifest has no Figma file key. Set outputs.figma.target, or pass --file-key.");
@@ -530,7 +543,8 @@ export async function runRelay(options) {
       summary,
       links: [{ label: "Figma file", url: `https://www.figma.com/design/${fileKey}` }],
       details: {
-        folder,
+        // A downloaded artifact is removed after the run, so its temporary path would point nowhere.
+        folder: source ?? folder,
         ledger: ledgerPath,
         model,
         effort,

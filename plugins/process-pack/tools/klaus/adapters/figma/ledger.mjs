@@ -70,10 +70,10 @@ export function readLedger(file) {
   return { version: LEDGER_VERSION, components: cleanTable(ledger.components), screens: cleanTable(ledger.screens) };
 }
 
-const entryOf = (table, key) => (Object.hasOwn(table, key) ? table[key] : undefined);
+const ownEntry = (table, key) => (Object.hasOwn(table, key) ? table[key] : undefined);
 
 function mark(table, key, value, status) {
-  const entry = entryOf(table, key) ?? {};
+  const entry = ownEntry(table, key) ?? {};
   // Generating a sent version's code again does not take it out of Figma.
   if (!(status === GENERATED && entry[value] === SENT)) entry[value] = status;
   table[key] = entry;
@@ -85,11 +85,22 @@ export const recordComponent = (ledger, name, version, status = GENERATED) => ma
 export const recordScreen = (ledger, route, release, status = GENERATED) => mark(ledger.screens, route, release, status);
 
 /** True when the relay has sent this version. A generated version is not in Figma yet. */
-export const componentSent = (ledger, name, version) => entryOf(ledger.components, name)?.[version] === SENT;
-export const screenSent = (ledger, route, release) => entryOf(ledger.screens, route)?.[release] === SENT;
+export const componentSent = (ledger, name, version) => ownEntry(ledger.components, name)?.[version] === SENT;
+export const screenSent = (ledger, route, release) => ownEntry(ledger.screens, route)?.[release] === SENT;
 
 /** True when any version of the component has reached Figma. */
-export const anyVersionSent = (ledger, name) => Object.values(entryOf(ledger.components, name) ?? {}).includes(SENT);
+export const anyVersionSent = (ledger, name) => Object.values(ownEntry(ledger.components, name) ?? {}).includes(SENT);
+
+/** The ledger entry of a generated unit, as the manifest lists it for the relay. */
+export function entryOf(unit) {
+  if (unit.kind === "component") return { kind: "component", name: unit.name, version: unit.version };
+  if (unit.kind === "screen") return { kind: "screen", route: unit.route, release: unit.release };
+  throw unknownKind(unit.kind);
+}
+
+function unknownKind(kind) {
+  return new Error(`A ledger entry needs a kind of "component" or "screen", not ${JSON.stringify(kind)}.`);
+}
 
 /**
  * Records the unit a manifest names, as written by the generator in `ledgerEntries`.
@@ -100,12 +111,12 @@ export const anyVersionSent = (ledger, name) => Object.values(entryOf(ledger.com
 export function recordEntry(ledger, entry, status) {
   if (entry.kind === "component") recordComponent(ledger, entry.name, entry.version, status);
   else if (entry.kind === "screen") recordScreen(ledger, entry.route, entry.release, status);
-  else throw new Error(`A ledger entry needs a kind of "component" or "screen", not ${JSON.stringify(entry.kind)}.`);
+  else throw unknownKind(entry.kind);
 }
 
 /** True when the relay has sent the unit a manifest names. */
 export function entrySent(ledger, entry) {
   if (entry.kind === "component") return componentSent(ledger, entry.name, entry.version);
   if (entry.kind === "screen") return screenSent(ledger, entry.route, entry.release);
-  return false;
+  throw unknownKind(entry.kind);
 }

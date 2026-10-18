@@ -19,7 +19,7 @@ import { selectComponents } from "../../frame/components.mjs";
 import { writeJsonFile } from "../../frame/json-file.mjs";
 import { packUnits } from "./batch.mjs";
 import { captureComponent, captureScreen, openStorybook, readStoryIndex, storyCandidates } from "./capture.mjs";
-import { anyVersionSent, componentSent, readLedger, recordComponent, recordScreen, screenSent } from "./ledger.mjs";
+import { anyVersionSent, componentSent, entryOf, readLedger, recordComponent, recordScreen, screenSent } from "./ledger.mjs";
 import { screenRoutes, uploadFor } from "./screens.mjs";
 import {
   CHARS_PER_TOKEN,
@@ -231,7 +231,7 @@ export function createAdapter(browser = {}) {
         files: files.map((file) => ({ name: file.name, chars: file.code.length, units: file.units.map((unit) => unit.id) })),
         // What the relay records in the ledger for each unit once use_figma confirms it.
         ledgerEntries: Object.fromEntries([
-          ...sendable.map((unit) => [unit.id, ledgerEntryOf(unit)]),
+          ...sendable.map((unit) => [unit.id, entryOf(unit)]),
           ...uploads.map((upload) => [upload.id, { kind: "screen", route: upload.screen, release: upload.release }]),
         ]),
         uploads,
@@ -288,11 +288,6 @@ async function buildComponent(storybook, item, options, readComponent) {
     story: options.stories[item.name],
   });
   return buildComponentUnit({ item, capture, options });
-}
-
-function ledgerEntryOf(unit) {
-  if (unit.kind === "component") return { kind: "component", name: unit.name, version: unit.version };
-  return { kind: "screen", route: unit.route, release: unit.release };
 }
 
 /** The file key from a key or a Figma URL, or null when the target is neither. */

@@ -55,5 +55,9 @@ test("the code's result is found in plain text, in text around it, in a JSON str
   assert.deepEqual(readCodeResult({ content: [{ type: "text", text: JSON.stringify({ result: text }) }] }), returned);
   assert.deepEqual(readCodeResult({ content: [], structured_content: { result: returned } }), returned);
   assert.equal(readCodeResult({ content: [{ type: "text", text: "Done" }] }), null);
-  assert.equal(readCodeResult({ content: [{ type: "text", text: '{"units":[{"id":1}]}' }] }), null, "a unit needs an id and a status");
+});
+
+test("a unit list without an id and a status on every unit is not the code's result", () => {
+  assert.equal(readCodeResult({ content: [{ type: "text", text: '{"units":[{"id":1}]}' }] }), null);
+  assert.equal(readCodeResult({ content: [{ type: "text", text: '{"units":[{"id":"Button"}]}' }] }), null);
 });

@@ -19,5 +19,10 @@ if (!process.env.STUB_GH_SOURCE) {
   process.stderr.write("no valid artifacts found to download\n");
   process.exit(1);
 }
-const dir = args[args.indexOf("--dir") + 1];
+const at = args.indexOf("--dir");
+const dir = at === -1 ? undefined : args[at + 1];
+if (!dir) {
+  process.stderr.write("stub gh: --dir is missing\n");
+  process.exit(2);
+}
 cpSync(process.env.STUB_GH_SOURCE, dir, { recursive: true });

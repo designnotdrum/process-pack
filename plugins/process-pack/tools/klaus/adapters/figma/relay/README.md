@@ -45,7 +45,7 @@ From the repo root, after the generator has written a release folder:
 node scripts/klaus/adapters/figma/relay/relay.mjs .klaus/figma/v1.4.0
 ```
 
-Or straight from a CI run's artifact, downloaded with `gh` into a new temporary folder:
+Or straight from a CI run's artifact. `gh` downloads it into a new temporary folder, which is removed after the run:
 
 ```sh
 node scripts/klaus/adapters/figma/relay/relay.mjs --run 1234567890 --repo acme/app --artifact klaus-figma
@@ -63,7 +63,7 @@ node scripts/klaus/adapters/figma/relay/relay.mjs --run 1234567890 --repo acme/a
    - The default model is `gpt-6-luna` at low effort, because the job is copying. `--model` and `--effort` change it.
 4. Reads Codex's JSON events. A unit is marked `sent` in the ledger only when all of these hold:
    - `use_figma` finished without an error.
-   - The code it received is the file's code.
+   - The code it received, by Codex's own events, is the file's code. Whitespace at either end is ignored.
    - The code's own result lists the unit as `written` or `exists`.
 5. Writes a run report to `.klaus/reports/` in the frame's format, with the output name `figma-relay`.
 

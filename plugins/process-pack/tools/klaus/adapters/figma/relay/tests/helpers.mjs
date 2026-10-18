@@ -1,12 +1,13 @@
 /** Shared setup for the relay's tests: a repo with generated code, and the relay run against stubs. */
 import { execFile } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAdapter } from "../../index.mjs";
 import { buttonCapture } from "../../tests/helpers.mjs";
 
+/** The Klaus prototype's Figma file key. A file key names a file; it is not a credential. */
 export const KEY = "zSRhsvwtutOIPvHyWF9Wf2";
 export const RELAY = fileURLToPath(new URL("../relay.mjs", import.meta.url));
 export const STUBS = fileURLToPath(new URL("./stub", import.meta.url));
@@ -78,31 +79,25 @@ export function relay(root, args, { scenarios = "success", mcp, ghSource } = {})
   if (mcp !== undefined) env.STUB_CODEX_MCP = JSON.stringify(mcp);
   if (ghSource) env.STUB_GH_SOURCE = ghSource;
   return new Promise((resolve) => {
-    execFile(process.execPath, [RELAY, ...args, "--root", root, "--json"], { env, cwd: root }, (error, stdout, stderr) => {
-      let calls = [];
-      try {
-        const dir = path.join(log, "codex");
-        const count = readdirSync(dir).filter((name) => name.endsWith(".json")).length;
-        calls = Array.from({ length: count }, (_, i) => ({
-          args: JSON.parse(readFileSync(path.join(dir, `call-${i + 1}.json`), "utf8")).args,
-          stdin: readFileSync(path.join(dir, `call-${i + 1}.stdin`)),
-        }));
-      } catch {
-        calls = [];
-      }
+    execFile(process.execPath, [RELAY, ...args, "--root", root, "--json"], { env, cwd: root, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => {
+      // A stub that made no call leaves no log folder, and a run that stopped early prints no report.
+      const dir = path.join(log, "codex");
+      const count = existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith(".json")).length : 0;
+      const calls = Array.from({ length: count }, (_, i) => ({
+        args: JSON.parse(readFileSync(path.join(dir, `call-${i + 1}.json`), "utf8")).args,
+        stdin: readFileSync(path.join(dir, `call-${i + 1}.stdin`)),
+      }));
       let report = null;
-      try {
-        report = JSON.parse(stdout);
-      } catch {
-        report = null;
+      let reportError = null;
+      if (stdout.trim() !== "") {
+        try {
+          report = JSON.parse(stdout);
+        } catch (parseError) {
+          reportError = parseError;
+        }
       }
-      let gh = null;
-      try {
-        gh = JSON.parse(readFileSync(ghLog, "utf8"));
-      } catch {
-        gh = null;
-      }
-      resolve({ code: error ? error.code : 0, stdout, stderr, calls, report, gh });
+      const gh = existsSync(ghLog) ? JSON.parse(readFileSync(ghLog, "utf8")) : null;
+      resolve({ code: error ? error.code : 0, stdout, stderr, calls, report, reportError, gh });
     });
   });
 }

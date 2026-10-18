@@ -81,9 +81,9 @@ export function summarizeEvents(events) {
     if (event.type === "item.started" && isFigmaCall) started += 1;
     else if (event.type === "item.completed" && item) {
       if (isFigmaCall) {
-        calls.push({ status: String(item.status), arguments: readArguments(item.arguments), result: item.result ?? null, error: item.error?.message ?? null });
+        calls.push({ status: String(item.status ?? "unknown"), arguments: readArguments(item.arguments), result: item.result ?? null, error: item.error?.message ?? null });
       } else if (item.type === "mcp_tool_call") otherTools.push(`${item.server}.${item.tool}`);
-      else if (item.type === "command_execution") otherTools.push(`a shell command (${String(item.command).slice(0, 80)})`);
+      else if (item.type === "command_execution") otherTools.push(`a shell command (${String(item.command ?? "unknown").slice(0, 80)})`);
       else if (item.type === "agent_message" && typeof item.text === "string") message = item.text;
       else if (item.type === "error" && item.message) failures.push(String(item.message));
     } else if (event.type === "turn.completed" && event.usage && typeof event.usage === "object") usage = addUsage(usage, event.usage);
@@ -93,7 +93,11 @@ export function summarizeEvents(events) {
   return { calls, started: Math.max(started, calls.length), otherTools, usage, failure: failures.length > 0 ? failures.join(" ") : null, message };
 }
 
-/** Relay tokens: input plus output, as Codex counts them. Cached input is part of input. */
+/**
+ * Relay tokens: input plus output, which is the API's total_tokens. Cached input is part of
+ * input, and reasoning output is part of output (Codex reads it from output_tokens_details),
+ * so adding either again would count it twice.
+ */
 export function relayTokens(usage) {
   return usage ? usage.input_tokens + usage.output_tokens : null;
 }
