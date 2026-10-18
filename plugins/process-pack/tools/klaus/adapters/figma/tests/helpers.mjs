@@ -17,7 +17,7 @@ export function buttonCapture({ states = false } = {}) {
   };
 }
 
-export const OPTIONS = { icons: false, olderVersionsPage: "Older versions", screenVersionsKept: 20 };
+export const OPTIONS = { icons: false, screenVersionsKept: 20 };
 
 /** A component unit for Button at a version, from the recorded capture. */
 export function buttonUnit({ version = "1.0.0", page = "Generator test", options = OPTIONS, capture = buttonCapture() } = {}) {

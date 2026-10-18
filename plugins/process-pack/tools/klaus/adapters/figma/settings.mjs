@@ -23,19 +23,22 @@ export const TOKENS_PER_EDITABLE_SCREEN = 3000;
 
 export const STATES = Object.freeze(["loading", "disabled"]);
 
+/** The one mode the variable collection has. */
+export const MODE_NAME = "Light";
+
+/** Where earlier versions of a component go when a new version is written. */
+export const OLDER_VERSIONS_PAGE = "Older versions";
+
+/** Where screens go. */
+export const SCREENS_PAGE = "Screens";
+
 export const DEFAULT_OPTIONS = Object.freeze({
   /** Folder of a static Storybook build, relative to the repo root. */
   storybookDir: "storybook-static",
   /** Name of the variable collection that holds the colour tokens. */
   collectionName: "Tokens",
-  /** Name of the one mode the collection has. */
-  modeName: "Light",
   /** One page for every component. Empty means one page per component, named after it. */
   page: "",
-  /** Where earlier versions of a component go when a new version is written. */
-  olderVersionsPage: "Older versions",
-  /** Where screens go. */
-  screensPage: "Screens",
   /** Inventory variant props that become Figma variant properties, in order. */
   axes: ["variant", "size"],
   /** Extra states to draw, as a State property: any of "loading" and "disabled". Empty keeps Variant and Size only. */
@@ -102,7 +105,7 @@ export function readOptions(settings) {
   const options = { ...DEFAULT_OPTIONS, ...given };
 
   for (const key of ["storybookDir", "screenshotsDir", "outputDir", "globals"]) text(options, key);
-  for (const key of ["collectionName", "modeName", "olderVersionsPage", "screensPage"]) name(options, key);
+  name(options, "collectionName");
   name(options, "page", { empty: true });
   for (const key of ["icons", "label", "editableScreens"]) bool(options, key);
   whole(options, "componentsPerCall", 1, 50);

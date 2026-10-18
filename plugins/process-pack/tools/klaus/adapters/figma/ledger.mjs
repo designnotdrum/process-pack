@@ -8,7 +8,7 @@
  * generated code leaves a set that already exists alone.
  */
 import { existsSync } from "node:fs";
-import { readJsonFile, writeJsonFile } from "../../frame/json-file.mjs";
+import { readJsonFile } from "../../frame/json-file.mjs";
 
 export const LEDGER_VERSION = 1;
 
@@ -23,10 +23,6 @@ export function readLedger(file) {
     return emptyLedger();
   }
   return ledger;
-}
-
-export function writeLedger(file, ledger) {
-  writeJsonFile(file, ledger);
 }
 
 function add(table, key, value) {

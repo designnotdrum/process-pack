@@ -150,3 +150,12 @@ test("a set that fails is removed again and the next unit still runs", async () 
   });
   assert.equal(strays, 0, "no loose component is left on the first page");
 });
+
+test("a pre-release is older than its release, and pre-release tags compare part by part", async () => {
+  const figma = newFigma();
+  for (const version of ["1.1.0-rc.2", "1.1.0-rc.10", "1.1.0", "1.1.0-rc.11"]) await run(figma, [buttonUnit({ version })]);
+
+  assert.deepEqual(names(figma.page("Generator test")), ["Button 1.1.0"]);
+  // rc.2 and rc.10 were written in turn, so rc.2 moved when rc.10 arrived. rc.11 is older than 1.1.0 and goes straight on.
+  assert.deepEqual(names(figma.page("Older versions")), ["Button 1.1.0-rc.2", "Button 1.1.0-rc.10", "Button 1.1.0-rc.11"]);
+});

@@ -45,9 +45,8 @@ All of them sit under `outputs.figma.options` in `klaus.config.json` and all hav
 | Setting | Default | Meaning |
 |---|---|---|
 | `storybookDir` | `storybook-static` | A static Storybook build, relative to the repo root. |
-| `collectionName`, `modeName` | `Tokens`, `Light` | The variable collection and its mode. |
+| `collectionName` | `Tokens` | The variable collection. It has one mode, `Light`. |
 | `page` | empty | One page for every component. Empty gives each component a page named after it. |
-| `olderVersionsPage` | `Older versions` | Where earlier versions go. |
 | `axes` | `["variant", "size"]` | The inventory variant props that become Figma variant properties, in order. |
 | `states` | `[]` | `"loading"` and `"disabled"` add a `State` property. It is off by default so the variants keep the prototype's `Variant=..., Size=...` names. |
 | `icons` | `false` | Adds a hidden icon layer behind a `Show icon` property, from the icon a story draws. |

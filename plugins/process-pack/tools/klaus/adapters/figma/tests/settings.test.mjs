@@ -6,7 +6,6 @@ import { DEFAULT_OPTIONS, pageFor, readOptions } from "../settings.mjs";
 test("an empty block gets every default", () => {
   assert.deepEqual(readOptions({ enabled: true }), { ...DEFAULT_OPTIONS });
   assert.equal(DEFAULT_OPTIONS.screenVersionsKept, 20);
-  assert.equal(DEFAULT_OPTIONS.olderVersionsPage, "Older versions");
   assert.equal(DEFAULT_OPTIONS.editableScreens, false);
   assert.deepEqual(DEFAULT_OPTIONS.axes, ["variant", "size"]);
   assert.deepEqual(DEFAULT_OPTIONS.states, []);

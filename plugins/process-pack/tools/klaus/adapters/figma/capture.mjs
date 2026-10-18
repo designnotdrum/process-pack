@@ -113,7 +113,8 @@ export function argsParam(args) {
     .map(([key, value]) => {
       if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(key)) throw new Error(`"${key}" cannot be set from a story URL.`);
       if (typeof value === "boolean") return `${key}:!${value}`;
-      if (!/^[A-Za-z0-9 _-]*$/.test(String(value))) throw new Error(`The value "${value}" of ${key} cannot be set from a story URL.`);
+      // Storybook reads only these from a URL: letters, numbers, spaces, underscores and dashes, and decimal numbers.
+      if (!/^([A-Za-z0-9 _-]*|-?\d+\.\d+)$/.test(String(value))) throw new Error(`The value "${value}" of ${key} cannot be set from a story URL.`);
       return `${key}:${String(value).replace(/ /g, "+")}`;
     })
     .join(";");
@@ -145,7 +146,7 @@ export async function openStorybook({ root, directory, globals }) {
       page,
       async show(id, args = {}) {
         const query = [`id=${encodeURIComponent(id)}`, "viewMode=story"];
-        if (globals) query.push(`globals=${globals}`);
+        if (globals) query.push(`globals=${encodeURIComponent(globals)}`);
         const parameter = argsParam(args);
         if (parameter) query.push(`args=${parameter}`);
         await page.goto(`http://127.0.0.1:${port}/iframe.html?${query.join("&")}`);
@@ -241,10 +242,8 @@ export async function captureComponent(storybook, request) {
     throw new Error(`None of the stories for ${name} (${candidates.join(", ")}) change when ${prop} is set from the URL. Add a story that renders from its args, or name one in outputs.figma.options.stories.`);
   }
 
-  const propertyNames = await (async () => {
-    await storybook.show(story, argsFor(combos[0]));
-    return page.evaluate(listCustomProperties);
-  })();
+  await storybook.show(story, argsFor(combos[0]));
+  const propertyNames = await page.evaluate(listCustomProperties);
 
   const cells = [];
   let tokens = [];

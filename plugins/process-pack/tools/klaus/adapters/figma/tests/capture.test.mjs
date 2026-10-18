@@ -11,6 +11,7 @@ const story = (id, title, name, importPath = "./x.stories.tsx") => ({ id, type: 
 test("story args are written the way a Storybook URL takes them", () => {
   assert.equal(argsParam({ variant: "secondary", size: "compact-sm", children: "Save changes", disabled: true, loading: false }), "variant:secondary;size:compact-sm;children:Save+changes;disabled:!true;loading:!false");
   assert.equal(argsParam({}), "");
+  assert.equal(argsParam({ size: "1.5" }), "size:1.5");
   assert.throws(() => argsParam({ children: "a;b" }), /cannot be set from a story URL/);
   assert.throws(() => argsParam({ "bad key": "x" }), /cannot be set from a story URL/);
 });
@@ -82,7 +83,7 @@ test("a real build is read cell by cell", { skip: !process.env.KLAUS_TEST_STORYB
       icons: false,
     });
     assert.equal(capture.cells.length, 4);
-    assert.ok(capture.tokens.length > 0);
+    assert.ok(capture.tokens.some((t) => t.name === "--primary"), `expected the primary token, got ${capture.tokens.map((t) => t.name)}`);
     const primary = capture.cells[0].tree;
     assert.equal(primary.kind, "box");
     assert.equal(primary.children[0].text, "Button");

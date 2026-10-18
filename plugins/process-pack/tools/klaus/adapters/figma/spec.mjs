@@ -23,6 +23,8 @@
  * colour is not bound to a variable. r, g and b are 0 to 255, a is 0 to 1.
  */
 
+import { OLDER_VERSIONS_PAGE } from "./settings.mjs";
+
 const SCOPES = {
   background: ["FRAME_FILL", "SHAPE_FILL"],
   text: ["TEXT_FILL"],
@@ -75,7 +77,7 @@ class Tokens {
     const slot = this.index.get(css);
     for (const scope of SCOPES[use]) this.used[slot].scopes.add(scope);
     const alpha = Math.min(1, rgba[3] / token.rgba[3]);
-    return [slot, token.rgba[0], token.rgba[1], token.rgba[2], round(alpha * 1000) / 1000];
+    return [slot, token.rgba[0], token.rgba[1], token.rgba[2], Math.round(alpha * 1000) / 1000];
   }
 
   list() {
@@ -193,7 +195,7 @@ class Builder {
     const limit = Math.min(node.w, node.h) / 2;
     const radius = node.radius.map((r) => round(Math.min(r, limit)));
     if (radius.some((r) => r > 0)) entry.r = same(radius) ? radius[0] : radius;
-    if (node.opacity < 1) entry.o = round(node.opacity * 1000) / 1000;
+    if (node.opacity < 1) entry.o = Math.round(node.opacity * 1000) / 1000;
     if (node.clip) entry.clip = 1;
 
     return [this.nodes.add(entry), children.map((c) => c.tree)];
@@ -230,8 +232,6 @@ export function describe(purpose) {
   return [useWhen && `Use when: ${useWhen}.`, notFor && `Not for: ${notFor}.`].filter(Boolean).join(" ");
 }
 
-const stripId = (text) => String(text).replace(/\s+/g, " ").trim();
-
 /** The first run of text in a captured tree. */
 function firstText(node) {
   if (node.kind === "text") return node;
@@ -248,7 +248,7 @@ function firstText(node) {
  * @param {object} args
  * @param {{ id: string, name: string, version: string, page: string, description: string }} args.item
  * @param {object} args.capture  From captureComponent.
- * @param {{ icons: boolean, olderVersionsPage: string }} args.options
+ * @param {{ icons: boolean }} args.options
  */
 export function buildComponentUnit({ item, capture, options }) {
   const builder = new Builder({ tokens: capture.tokens });
@@ -284,7 +284,7 @@ export function buildComponentUnit({ item, capture, options }) {
     name: item.name,
     version: item.version,
     page: item.page,
-    older: options.olderVersionsPage,
+    older: OLDER_VERSIONS_PAGE,
     description: item.description,
     axes,
     iconProperty: hasIcon ? 1 : 0,
@@ -320,6 +320,6 @@ export function buildScreenUnit({ item, capture, options }) {
     nodes: builder.nodes.items,
     svgs: builder.svgs.items,
     tokens: [],
-    warnings: [...builder.warnings].map(stripId),
+    warnings: [...builder.warnings],
   };
 }

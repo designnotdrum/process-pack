@@ -224,6 +224,8 @@ export function readStory(arg) {
     const sentinel = { hsl: "123 87% 45%", rgb: "12 200 34", plain: "rgb(12, 200, 34)" };
     const holders = [document.documentElement, ...watched];
     for (const token of tokens) {
+      // Put back what the page had set itself, so one capture does not change the next.
+      const saved = holders.map((holder) => [holder, holder.style.getPropertyValue(token.name), holder.style.getPropertyPriority(token.name)]);
       for (const holder of holders) holder.style.setProperty(token.name, sentinel[token.kind], "important");
       watched.forEach((element, index) => {
         const style = getComputedStyle(element);
@@ -231,7 +233,10 @@ export function readStory(arg) {
           if (style[property] !== before[index][column]) (found[index][key] ??= []).push(token.name);
         });
       });
-      for (const holder of holders) holder.style.removeProperty(token.name);
+      for (const [holder, value, priority] of saved) {
+        if (value === "") holder.style.removeProperty(token.name);
+        else holder.style.setProperty(token.name, value, priority);
+      }
     }
     // A palette step such as --gray-500 is behind a semantic token such as --muted. Prefer the semantic one,
     // and among those the last declared, which is the one nearest the component.

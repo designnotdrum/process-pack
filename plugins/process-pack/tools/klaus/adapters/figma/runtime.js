@@ -221,6 +221,12 @@ function parseVersion(node, name) {
   return VERSION.test(version) ? version : null;
 }
 
+/** The part of a version after its first dash and before any build tag, or null. */
+function preRelease(version) {
+  const found = /^[^-+]*-([^+]*)/.exec(version);
+  return found ? found[1].split(".") : null;
+}
+
 function compareVersions(a, b) {
   const left = a.split(/[-+]/)[0].split(".").map(Number);
   const right = b.split(/[-+]/)[0].split(".").map(Number);
@@ -228,7 +234,26 @@ function compareVersions(a, b) {
     const d = (left[i] || 0) - (right[i] || 0);
     if (d !== 0) return d < 0 ? -1 : 1;
   }
+  // The same numbers: a pre-release is lower than the release, and tags compare part by part.
+  const pa = preRelease(a);
+  const pb = preRelease(b);
+  if (!pa && !pb) return 0;
+  if (!pa) return 1;
+  if (!pb) return -1;
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    if (pa[i] === undefined) return -1;
+    if (pb[i] === undefined) return 1;
+    const x = /^\d+$/.test(pa[i]);
+    const y = /^\d+$/.test(pb[i]);
+    if (x && y && Number(pa[i]) !== Number(pb[i])) return Number(pa[i]) < Number(pb[i]) ? -1 : 1;
+    if (x !== y) return x ? -1 : 1;
+    if (!x && pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1;
+  }
   return 0;
+}
+
+function message(e) {
+  return String(e && e.message ? e.message : e);
 }
 
 /** The page with this name, loaded, or null when the file has none. */
@@ -246,9 +271,9 @@ async function pageNamed(name) {
   return page;
 }
 
-function freeX(page) {
+function freeX(nodes) {
   let right = -80;
-  for (const n of page.children) right = Math.max(right, n.x + n.width);
+  for (const n of nodes) right = Math.max(right, n.x + n.width);
   return right + 80;
 }
 
@@ -327,11 +352,11 @@ async function writeComponent(U) {
     const moved = [];
     let archive = older;
     if (latest) {
-      const x = newest ? newest.x : freeX(page);
+      const x = newest ? newest.x : freeX(page.children);
       const y = newest ? newest.y : 0;
       for (const old of siblings) {
         archive = archive || (await pageNamed(U.older));
-        const at = freeX(archive);
+        const at = freeX(archive.children);
         archive.appendChild(old);
         old.x = at;
         old.y = 0;
@@ -342,7 +367,7 @@ async function writeComponent(U) {
       node.y = y;
     } else {
       archive = archive || (await pageNamed(U.older));
-      const at = freeX(archive);
+      const at = freeX(archive.children);
       archive.appendChild(node);
       node.x = at;
       node.y = 0;
@@ -360,7 +385,7 @@ async function writeComponent(U) {
     for (const n of created.slice().reverse()) {
       try { n.remove(); } catch (ignored) { /* already gone with its set */ }
     }
-    return { id: U.id, status: "failed", error: String(e && e.message ? e.message : e) };
+    return { id: U.id, status: "failed", error: message(e) };
   }
 }
 
@@ -392,7 +417,7 @@ async function writeScreen(U) {
     frame.name = name;
     frame.clipsContent = true;
     const earlier = page.children.filter(function (n) { return n.type === "FRAME" && screenKey(n.name) === U.route; });
-    const x = earlier.length > 0 ? freeXOf(earlier) : 0;
+    const x = earlier.length > 0 ? freeX(earlier) : 0;
     const y = earlier.length > 0 ? earlier[0].y : freeY(page);
     page.appendChild(frame);
     frame.x = x;
@@ -403,14 +428,8 @@ async function writeScreen(U) {
     for (const n of created) {
       try { n.remove(); } catch (ignored) { /* already gone */ }
     }
-    return { id: U.id, status: "failed", error: String(e && e.message ? e.message : e) };
+    return { id: U.id, status: "failed", error: message(e) };
   }
-}
-
-function freeXOf(nodes) {
-  let right = -80;
-  for (const n of nodes) right = Math.max(right, n.x + n.width);
-  return right + 80;
 }
 
 async function retainScreens(U) {
@@ -420,7 +439,7 @@ async function retainScreens(U) {
     for (const route of U.routes) removed.push.apply(removed, trimScreen(page, route, U.keep));
     return { id: U.id, status: "written", removed: removed };
   } catch (e) {
-    return { id: U.id, status: "failed", error: String(e && e.message ? e.message : e) };
+    return { id: U.id, status: "failed", error: message(e) };
   }
 }
 
@@ -428,7 +447,7 @@ const result = { tokens: { made: [], updated: [] }, units: [], warnings: warning
 try {
   result.tokens = await ensureTokens();
 } catch (e) {
-  result.tokens = { error: String(e && e.message ? e.message : e), made: [], updated: [] };
+  result.tokens = { error: message(e), made: [], updated: [] };
   note("The variables could not be written, so colours are not bound: " + result.tokens.error);
 }
 for (const U of UNITS) {

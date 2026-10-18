@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { resolveConfig, runKlaus, validateConfig } from "../../../frame/index.mjs";
 import adapter, { createAdapter, DEFAULT_VERSION, fileKeyOf } from "../index.mjs";
 import { readLedger } from "../ledger.mjs";
-import { MAX_CODE_CHARS } from "../settings.mjs";
+import { MAX_CODE_CHARS, TOKENS_PER_EDITABLE_SCREEN, TOKENS_PER_SCREEN_IMAGE } from "../settings.mjs";
 import { runCode } from "./fake-figma.mjs";
 import { buttonCapture, newFigma } from "./helpers.mjs";
 
@@ -153,8 +153,8 @@ test("estimate: a screenshot upload and an editable screen are costed apart from
   const editable = context(root, { entries: [], screens: { mode: "listed", routes: ["/a"] }, options: { editableScreens: true, screensBaseUrl: "http://localhost:3000" } });
   const [imageCost] = (await adapter.estimate(await adapter.plan(image), image)).items;
   const [editableCost] = (await adapter.estimate(await adapter.plan(editable), editable)).items;
-  assert.ok(imageCost.tokens < 1200 && imageCost.tokens > 0);
-  assert.ok(editableCost.tokens > 1200);
+  assert.deepEqual(imageCost, { id: "screen:/a", calls: 1, tokens: TOKENS_PER_SCREEN_IMAGE, usd: 0 });
+  assert.deepEqual(editableCost, { id: "screen:/a", calls: 1, tokens: TOKENS_PER_EDITABLE_SCREEN, usd: 0 });
 });
 
 test("write leaves code files, a manifest and a ledger, and the next plan has nothing left", async () => {

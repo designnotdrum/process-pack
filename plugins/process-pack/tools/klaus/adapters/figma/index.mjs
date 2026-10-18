@@ -19,11 +19,13 @@ import { selectComponents } from "../../frame/components.mjs";
 import { writeJsonFile } from "../../frame/json-file.mjs";
 import { packUnits } from "./batch.mjs";
 import { captureComponent, captureScreen, openStorybook, readStoryIndex, storyCandidates } from "./capture.mjs";
-import { hasComponent, hasScreen, readLedger, recordComponent, recordScreen, writeLedger } from "./ledger.mjs";
+import { hasComponent, hasScreen, readLedger, recordComponent, recordScreen } from "./ledger.mjs";
 import { screenRoutes, uploadFor } from "./screens.mjs";
 import {
   CHARS_PER_TOKEN,
   MAX_CODE_CHARS,
+  MODE_NAME,
+  SCREENS_PAGE,
   TOKENS_PER_COMPONENT,
   TOKENS_PER_EDITABLE_SCREEN,
   TOKENS_PER_SCREEN_IMAGE,
@@ -108,7 +110,7 @@ export function createAdapter(browser = {}) {
       for (const route of screenRoutes(ctx.selection.screens, ctx.inventory)) {
         const id = `screen:${route}`;
         if (hasScreen(ledger, route, release) && !retry.has(id)) continue;
-        items.push({ id, kind: "screen", route, release, page: options.screensPage, editable: options.editableScreens });
+        items.push({ id, kind: "screen", route, release, page: SCREENS_PAGE, editable: options.editableScreens });
       }
       return { items };
     },
@@ -184,17 +186,18 @@ export function createAdapter(browser = {}) {
         }
       }
 
-      const config = { collection: options.collectionName, mode: options.modeName };
+      const config = { collection: options.collectionName, mode: MODE_NAME };
       const { files, tooLarge } = packUnits(units, { config, perFile: options.componentsPerCall });
       for (const { unit, chars } of tooLarge) {
-        failed.push({ id: unit.id, error: `Its code is ${chars} characters, more than the ${MAX_CODE_CHARS} one call takes. Narrow outputs.figma.options.axes or states.` });
+        const advice = unit.kind === "screen" ? "Use a screenshot for this screen instead of editableScreens." : "Narrow outputs.figma.options.axes or states.";
+        failed.push({ id: unit.id, error: `Its code is ${chars} characters, more than the ${MAX_CODE_CHARS} one call takes. ${advice}` });
       }
       const packed = new Set(files.flatMap((file) => file.units.map((unit) => unit.id)));
 
       // Image screens: the relay uploads the images, then runs this to keep the last N versions of each.
       let afterUploads = null;
       if (imageRoutes.length > 0) {
-        const retention = { kind: "retain", id: "retain-screens", page: options.screensPage, keep: options.screenVersionsKept, routes: imageRoutes, tokens: [] };
+        const retention = { kind: "retain", id: "retain-screens", page: SCREENS_PAGE, keep: options.screenVersionsKept, routes: imageRoutes, tokens: [] };
         const { files: kept } = packUnits([retention], { config });
         afterUploads = { ...kept[0], name: "figma-retention.js" };
       }
@@ -203,7 +206,7 @@ export function createAdapter(browser = {}) {
       fs.mkdirSync(directory, { recursive: true });
       for (const name of fs.readdirSync(directory)) {
         // Only the names this adapter writes. A file someone else left in the folder stays.
-      if (/^figma-(\d{3}|retention)\.js$/.test(name) || name === "manifest.json") fs.rmSync(path.join(directory, name));
+      if (/^figma-(\d+|retention)\.js$/.test(name) || name === "manifest.json") fs.rmSync(path.join(directory, name));
       }
       const everyFile = afterUploads ? [...files, afterUploads] : files;
       for (const file of everyFile) fs.writeFileSync(path.join(directory, file.name), file.code);
@@ -233,7 +236,7 @@ export function createAdapter(browser = {}) {
         else if (unit.kind === "screen") recordScreen(ledger, unit.route, unit.release);
       }
       for (const upload of uploads) recordScreen(ledger, upload.screen, upload.release);
-      writeLedger(ledgerFile(root, options), ledger);
+      writeJsonFile(ledgerFile(root, options), ledger);
 
       runs.set(ctx, { directory: path.relative(root, directory).split(path.sep).join("/"), manifest });
       const written = [...packed, ...uploads.map((upload) => upload.id)];

@@ -70,9 +70,10 @@ test("sizes come from the computed styles: a fixed height, hugging width, and th
 });
 
 test("an outline has a 1px stroke bound to a token and no fill", () => {
-  const outline = root(buttonUnit(), "outline", "sm").box;
+  const unit = buttonUnit();
+  const outline = root(unit, "outline", "sm").box;
   assert.equal(outline.sw, 1);
-  assert.equal(outline.sc[0] >= 0, true);
+  assert.equal(unit.tokens[outline.sc[0]].name, "color/secondary");
   assert.equal(outline.f, undefined);
 });
 
@@ -83,8 +84,10 @@ test("text carries the computed font", () => {
 
 test("a repeated box or text is stored once", () => {
   const unit = buttonUnit();
-  // Each variant is a box and a text, so 18 variants use 36 nodes.
-  assert.ok(unit.nodes.length < unit.cells.length * 2 - 10, `${unit.nodes.length} distinct nodes for ${unit.cells.length} variants`);
+  // 18 variants are 36 boxes and texts. Secondary and ghost draw the same box, so the set has
+  // 13 distinct boxes (3 each for primary, secondary, destructive and outline, and 1 for link)
+  // and 6 distinct texts (one for each text colour).
+  assert.equal(unit.nodes.length, 19);
   assert.ok(JSON.stringify(unit).length < 6000, "a 6 x 3 set is a few kilobytes");
 });
 

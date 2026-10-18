@@ -27,11 +27,9 @@ test("a file is closed before the next unit would take it past 50,000 characters
   const units = Array.from({ length: 7 }, (_, i) => tinyUnit(`C${i}`, { description: "d".repeat(17000) }));
   const { files, tooLarge } = packUnits(units, { config: CONFIG });
   assert.equal(tooLarge.length, 0);
-  assert.ok(files.length >= 4, `expected the 7 units to need several files, got ${files.length}`);
-  for (const file of files) {
-    assert.ok(file.code.length <= MAX_CODE_CHARS, `${file.name} has ${file.code.length} characters`);
-    assert.ok(file.units.length < 10, "the size limit cut the file before the unit count did");
-  }
+  // Two units are 34,000 characters and fit with the runtime. A third would not.
+  assert.deepEqual(files.map((f) => f.units.length), [2, 2, 2, 1]);
+  for (const file of files) assert.ok(file.code.length <= MAX_CODE_CHARS, `${file.name} has ${file.code.length} characters`);
   // Every unit lands once, in order.
   assert.deepEqual(names(files).flat(), units.map((u) => u.id));
 });
@@ -99,4 +97,9 @@ test("a file header of any length does not push a file over the limit", () => {
   const units = Array.from({ length: 10 }, (_, i) => tinyUnit(`${"Long".repeat(40)}${i}`, { description: "d".repeat(3000) }));
   const { files } = packUnits(units, { config: CONFIG });
   for (const file of files) assert.ok(file.code.length <= MAX_CODE_CHARS);
+});
+
+test("the small unit the tests use has the same fields as a real one", () => {
+  const real = Object.keys(buttonUnit()).sort();
+  assert.deepEqual(Object.keys(tinyUnit("X")).sort(), real);
 });
