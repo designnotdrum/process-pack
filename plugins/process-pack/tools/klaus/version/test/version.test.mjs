@@ -4,10 +4,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import ts from 'typescript'
 import { UserError } from '../../frame/errors.mjs'
 import { buildInventory } from '../../inventory/inventory.mjs'
 import { pickVersions, readCaptures } from '../version.mjs'
-import { cleanup, commitAll, fixtures, initRepo, klausModules, rectPng, squarePng, tmpDir, writeFiles } from './helpers.mjs'
+import { cleanup, commitAll, fixtures, initRepo, klausModules, rectPng, squarePng, tmpDir, typeScriptBefore54, writeFiles } from './helpers.mjs'
 
 after(cleanup)
 
@@ -292,6 +293,7 @@ export function findRegions() { return { regions: [] } }
       const run = await pickVersions({ root: repo, inventory: buildInventory({ root: repo, folders: FOLDERS }), previous: third.inventory, from: 'v1.2.0', release: 'v1.3.0', captures, dryRun: true })
       assert.equal(run.report.pixelDiff, 'dieter')
       assert.equal(reportOf(run.report, 'Delta').level, 'none')
+      assert.deepEqual(reportOf(run.report, 'Delta').reasons.filter((r) => r.includes('capture changed')), [], 'the repo diff decided, so no capture-changed reason may appear')
     } finally {
       fs.rmSync(path.join(repo, 'scripts'), { recursive: true, force: true })
     }
@@ -330,6 +332,22 @@ describe('input that cannot be versioned', () => {
     await assert.rejects(pickVersions({ root: repo, inventory: inventory(), previous: baseline, from: 'v0.0.1', release: 'v1.1.0' }), (e) => e instanceof UserError && e.message.includes('"v0.0.1" is not a commit'))
   })
 
+  test('counts a stored version that is not x.y.z as 1.0.0, and says so', async () => {
+    const { inventory: baseline } = await pickVersions({ root: repo, inventory: inventory(), baseline: true, release: 'v1.0.0' })
+    entryOf(baseline, 'Alpha').version = 'v1.2'
+    // One entry with a good version keeps the inventory from reading as freshly built.
+    baseline.entries.push({ ...entryOf(baseline, 'Alpha'), name: 'Spare', file: 'packages/ui/src/spare.tsx', version: '1.0.0' })
+    const run = await pickVersions({ root: repo, inventory: inventory(), previous: baseline, from: 'v1.0.0', release: 'v1.1.0' })
+    assert.equal(entryOf(run.inventory, 'Alpha').version, '1.0.0')
+    assert.deepEqual(run.report.notes, ['Alpha: the version "v1.2" is not x.y.z, so it was counted as 1.0.0.'])
+  })
+
+  test('says so when the repo\'s TypeScript cannot tell which way a type changed', async () => {
+    const { inventory: baseline } = await pickVersions({ root: repo, inventory: inventory(), baseline: true, release: 'v1.0.0' })
+    const run = await pickVersions({ root: repo, inventory: inventory(), previous: baseline, from: 'v1.0.0', release: 'v1.1.0', ts: typeScriptBefore54(ts) })
+    assert.deepEqual(run.report.notes, ['The repo\'s TypeScript is older than 5.4 and cannot say which way a prop type changed, so any difference in a prop type counts as major.'])
+  })
+
   test('refuses a previous inventory that holds no versions', async () => {
     const fresh = inventory()
     await assert.rejects(pickVersions({ root: repo, inventory: inventory(), previous: fresh, from: 'v1.0.0', release: 'v1.1.0' }), (e) => e instanceof UserError && /holds no versions to bump/.test(e.message))
@@ -360,9 +378,9 @@ describe('input that cannot be versioned', () => {
   test('rejects a captures file that points at nothing', () => {
     const dir = tmpDir('klaus-caps')
     fs.writeFileSync(path.join(dir, 'captures.json'), JSON.stringify({ components: { Alpha: 'missing.png' } }))
-    assert.throws(() => readCaptures(path.join(dir, 'captures.json')), /capture for components "Alpha" does not exist/)
+    assert.throws(() => readCaptures(path.join(dir, 'captures.json')), (e) => e instanceof UserError && /capture for components "Alpha" does not exist/.test(e.message))
     fs.writeFileSync(path.join(dir, 'captures.json'), JSON.stringify({ screens: ['/'] }))
-    assert.throws(() => readCaptures(path.join(dir, 'captures.json')), /"screens" must be an object/)
+    assert.throws(() => readCaptures(path.join(dir, 'captures.json')), (e) => e instanceof UserError && /"screens" must be an object/.test(e.message))
   })
 })
 
@@ -404,21 +422,30 @@ describe('entries that are not a single component', () => {
     assert.equal(reportOf(changed.report, 'Icon set').level, 'patch')
   })
 
-  test('two entries with the same name keep their screenshots apart', async () => {
+  const twin = (file) => ({ name: 'Button', kind: 'shared', folder: 'x', file, props: [], variants: {}, parts: [], version: '', screenshot: '', usedIn: [] })
+  const twins = () => ({ schemaVersion: 1, folders: [], entries: [twin('packages/ui/src/button.tsx'), twin('apps/web/app/button.tsx')] })
+
+  test('two entries with the same name take captures named by file and keep their screenshots apart', async () => {
     const repo = tmpDir('klaus-repo')
-    const entry = (file) => ({ name: 'Button', kind: 'shared', folder: 'x', file, props: [], variants: {}, parts: [], version: '', screenshot: '', usedIn: [] })
-    const inventory = { schemaVersion: 1, folders: [], entries: [entry('packages/ui/src/button.tsx'), entry('apps/web/app/button.tsx')] }
-    const captures = readCaptures(writeCaptures(tmpDir('klaus-caps'), { components: { Button: white } }))
-    const { inventory: result } = await pickVersions({ root: repo, inventory, baseline: true, captures })
+    const captures = readCaptures(writeCaptures(tmpDir('klaus-caps'), { components: { 'packages/ui/src/button.tsx#Button': white, 'apps/web/app/button.tsx#Button': block6 } }))
+    const { inventory: result, report } = await pickVersions({ root: repo, inventory: twins(), baseline: true, captures })
     assert.deepEqual(result.entries.map((e) => e.screenshot), [
       '.klaus/screenshots/components/packages-ui-src-button.tsx--Button/1.0.0.png',
       '.klaus/screenshots/components/apps-web-app-button.tsx--Button/1.0.0.png',
     ])
-    for (const e of result.entries) assert.deepEqual(read(repo, e.screenshot), white)
+    assert.deepEqual(read(repo, result.entries[0].screenshot), white)
+    assert.deepEqual(read(repo, result.entries[1].screenshot), block6)
+    assert.deepEqual(report.notes, [])
   })
-})
 
-describe('where screenshots are kept', () => {
+  test('a capture named only "Button" is not given to two different components', async () => {
+    const repo = tmpDir('klaus-repo')
+    const captures = readCaptures(writeCaptures(tmpDir('klaus-caps'), { components: { Button: white } }))
+    const { inventory: result, report } = await pickVersions({ root: repo, inventory: twins(), baseline: true, captures })
+    assert.deepEqual(result.entries.map((e) => e.screenshot), ['', ''])
+    assert.deepEqual(report.notes, ['2 entries are named "Button", so the capture for "Button" was not used. Name each as file#Button.'])
+  })
+
   test('two entries whose names slug to the same folder do not overwrite each other', async () => {
     const repo = tmpDir('klaus-repo')
     const entry = (name) => ({ name, kind: 'shared', folder: 'x', file: `src/${name}.tsx`, props: [], variants: {}, parts: [], version: '', screenshot: '', usedIn: [] })

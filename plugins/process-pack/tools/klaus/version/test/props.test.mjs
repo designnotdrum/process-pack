@@ -4,7 +4,7 @@ import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import ts from 'typescript'
 import { compareTrees } from '../props.mjs'
-import { cleanup, makeTree, writeFiles } from './helpers.mjs'
+import { cleanup, makeTree, typeScriptBefore54, writeFiles } from './helpers.mjs'
 
 after(cleanup)
 
@@ -314,6 +314,25 @@ describe('when the compiler cannot load a file', () => {
     const head = makeTree(['common'], { [`${COMPONENTS}/Widget.tsx`]: 'export function Widget() { return null; }\n' })
     const result = compare(base, head, [{ primary: 'Widget', file: `${COMPONENTS}/Widget.tsx` }]).get('Widget')
     assert.equal(result.level, 'none')
-    assert.match(result.note, /could not load/)
+    assert.match(result.note, /could not load .*\/Widget\.tsx\.$/)
+  })
+})
+
+describe('with a TypeScript that cannot say which way a type changed', () => {
+  test('any difference in a prop type is major, and the result says it compared text only', () => {
+    const file = `${COMPONENTS}/Widget.tsx`
+    const component = (size) => `export function Widget(_props: { size?: ${size} }) { return null; }\n`
+    const base = makeTree(['common'], { [file]: component('"sm"') })
+    const head = makeTree(['common'], { [file]: component('"sm" | "md"') })
+    const job = { key: 'Widget', primary: 'Widget', names: ['Widget'], baseFile: path.join(base, file), headFile: path.join(head, file) }
+
+    const modern = compareTrees({ ts, base, head, jobs: [job] }).get('Widget')
+    assert.equal(modern.level, 'minor')
+    assert.equal(modern.textOnly, undefined)
+
+    const old = compareTrees({ ts: typeScriptBefore54(ts), base, head, jobs: [job] }).get('Widget')
+    assert.equal(old.level, 'major')
+    assert.equal(old.textOnly, true)
+    assert.equal(find(old, 'type changed incompatibly', 'size').level, 'major')
   })
 })

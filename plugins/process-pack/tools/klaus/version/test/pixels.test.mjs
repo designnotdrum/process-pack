@@ -62,7 +62,7 @@ describe('the bundled PNG reader', () => {
   test('refuses what it cannot read, with a message', () => {
     assert.throws(() => readPng(Buffer.from('not a png at all')), (e) => e instanceof UserError && /not a PNG/.test(e.message))
     const interlaced = encodeRawPng({ width: 1, height: 1, rows: [Buffer.from([1, 2, 3, 4])], interlace: 1 })
-    assert.throws(() => readPng(interlaced), /interlaced/)
+    assert.throws(() => readPng(interlaced), (e) => e instanceof UserError && /interlaced/.test(e.message))
     const whole = squarePng(4, 4)
     assert.throws(() => readPng(whole.subarray(0, whole.length - 30)), (e) => e instanceof UserError && /cut short/.test(e.message))
   })
@@ -80,7 +80,7 @@ describe('the bundled PNG reader', () => {
     const png = squarePng(2, 2)
     const header = Buffer.from(png)
     header.writeUInt32BE(12, 8) // the IHDR chunk now claims 12 bytes instead of 13
-    assert.throws(() => readPng(header), /header is the wrong size/)
+    assert.throws(() => readPng(header), (e) => e instanceof UserError && /header is the wrong size/.test(e.message))
 
     const outOfRange = encodeRawPng({ width: 2, height: 1, color: 3, rows: [Buffer.from([0, 2])], palette: [0, 0, 0, 255, 255, 255] })
     assert.throws(() => readPng(outOfRange), (e) => e instanceof UserError && /palette index/.test(e.message))

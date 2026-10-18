@@ -26,9 +26,10 @@ import { higher } from './bump.mjs'
  * @typedef {{ key: string, baseFile: string, headFile: string, primary: string, names: string[] }} Job
  *   One component family. `baseFile` and `headFile` are absolute paths to the file at each release,
  *   `primary` is the family's main component and `names` lists every component to compare.
- * @typedef {{ level: 'none'|'minor'|'major', changes: Change[], note?: string, unresolved?: string[] }} Comparison
+ * @typedef {{ level: 'none'|'minor'|'major', changes: Change[], note?: string, unresolved?: string[], textOnly?: true }} Comparison
  *   `unresolved` lists imports in the component's file that the compiler could not resolve. A prop
- *   typed with one reads as `any` on both sides, so a change to it cannot be seen.
+ *   typed with one reads as `any` on both sides, so a change to it cannot be seen. `textOnly` is set
+ *   when the repo's TypeScript is older than 5.4 and cannot say which way a type changed.
  */
 
 /** How far a comparison follows object types a prop is made of, such as the rows of a list prop. */
@@ -69,7 +70,7 @@ export function compareTrees({ ts, base, head, jobs }) {
     for (const job of group) {
       const result = compareJob(ts, checker, differ, program, job)
       const unresolved = [...new Set(failed.filter((f) => (f.file === job.baseFile || f.file === job.headFile) && !isAmbient(f.name)).map((f) => f.name))]
-      results.set(job.key, unresolved.length ? { ...result, unresolved } : result)
+      results.set(job.key, { ...result, ...(unresolved.length && { unresolved }), ...(!differ.canCompareTypes && { textOnly: true }) })
     }
   }
   return results
@@ -106,7 +107,10 @@ function createCombinedProgram(ts, trees, options, rootNames, failed) {
 function compareJob(ts, checker, differ, program, job) {
   const baseSource = program.getSourceFile(job.baseFile)
   const headSource = program.getSourceFile(job.headFile)
-  if (!baseSource || !headSource) return { level: 'none', changes: [], note: `The compiler could not load ${baseSource ? job.headFile : job.baseFile}.` }
+  if (!baseSource || !headSource) {
+    const missing = [!baseSource && job.baseFile, !headSource && job.headFile].filter(Boolean)
+    return { level: 'none', changes: [], note: `The compiler could not load ${missing.join(' or ')}.` }
+  }
 
   const before = exportedValues(ts, checker, baseSource)
   const after = exportedValues(ts, checker, headSource)
@@ -290,5 +294,5 @@ function createDiffer(ts, checker) {
     }
   }
 
-  return { diffProps }
+  return { diffProps, canCompareTypes: Boolean(assignable) }
 }

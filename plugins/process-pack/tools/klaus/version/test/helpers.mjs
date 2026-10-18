@@ -155,3 +155,19 @@ export function rectPng(width, height, { x = 0, y = 0, w = 0, h = 0 } = {}) {
 export function squarePng(width, height, { x = 0, y = 0, size = 0 } = {}) {
   return rectPng(width, height, { x, y, w: size, h: size })
 }
+
+/**
+ * The same TypeScript, with a type checker that has no `isTypeAssignableTo`, as before TypeScript 5.4.
+ * The checker keeps its other methods, so the program reads as it always did.
+ */
+export function typeScriptBefore54(ts) {
+  return {
+    ...ts,
+    createProgram: (...args) => {
+      const program = ts.createProgram(...args)
+      const checker = Object.create(program.getTypeChecker(), { isTypeAssignableTo: { value: undefined } })
+      program.getTypeChecker = () => checker
+      return program
+    },
+  }
+}

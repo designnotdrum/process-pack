@@ -64,7 +64,7 @@ A screen has no props. It is versioned by its own capture only, and its version 
 }
 ```
 
-Components are matched to entries by inventory `name`. Screens are listed by route. An entry or screen with no capture this release is left as it was.
+Components are matched to entries by inventory `name`. When two entries share a name, name each capture as `file#name`, for example `packages/ui/src/button.tsx#Button`: a capture named only `Button` is then not used, and the run says so. Screens are listed by route. An entry or screen with no capture this release is left as it was.
 
 ### Screenshots
 
@@ -119,9 +119,9 @@ The bundled PNG reader reads every colour type and bit depth, one pass. It does 
 - A component whose props are a union of object types is merged the way the inventory merges it. A change to a prop's type that appears in only some members is not seen.
 - Method-style members: TypeScript compares method parameters loosely, so narrowing a parameter on a prop declared with method syntax can read as compatible.
 - A generic component is compared by the printed type, so any difference in a prop type is major.
-- `isTypeAssignableTo` is public from TypeScript 5.4. On an older version, any difference in a prop type is major.
+- `isTypeAssignableTo` is public from TypeScript 5.4. On an older version, any difference in a prop type is major, and the run says so in `notes`.
+- A stored version that is not `x.y.z` counts as 1.0.0, and the run says so in `notes`.
 - One call gives one bump for the whole span from `--from` to the checkout. To get one bump per release, run it for each release in turn.
-- Entries that share a name share a capture, because captures are matched by name.
 
 ## Tests
 

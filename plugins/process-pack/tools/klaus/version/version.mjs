@@ -168,8 +168,23 @@ export async function pickVersions({ root: given, inventory, previous, from, rel
   // The diff is loaded only when there is a capture to compare. A baseline compares nothing.
   const hasCaptures = Object.keys(captures.components).length + Object.keys(captures.screens).length > 0
   const pixelDiff = !baseline && hasCaptures ? await loadPixelDiff(root, diff) : null
-  const known = new Set(entries.map((e) => e.name))
-  for (const name of Object.keys(captures.components)) if (!known.has(name)) notes.push(`The capture for "${name}" matches no entry in the inventory.`)
+  // A capture is keyed by the entry's name, or by `file#name` when two entries share a name.
+  const nameCounts = new Map()
+  for (const entry of entries) nameCounts.set(entry.name, (nameCounts.get(entry.name) ?? 0) + 1)
+  const captureKey = (entry) => `${entry.file}#${entry.name}`
+  const captureFor = (entry) => captures.components[captureKey(entry)] ?? (nameCounts.get(entry.name) === 1 ? captures.components[entry.name] : undefined)
+  const known = new Set(entries.flatMap((e) => [e.name, captureKey(e)]))
+  for (const key of Object.keys(captures.components)) {
+    if (!known.has(key)) notes.push(`The capture for "${key}" matches no entry in the inventory.`)
+  }
+  for (const [name, count] of nameCounts) {
+    const qualified = entries.filter((e) => e.name === name).every((e) => captures.components[captureKey(e)])
+    if (count > 1 && captures.components[name] && !qualified) notes.push(`${count} entries are named "${name}", so the capture for "${name}" was not used. Name each as file#${name}.`)
+  }
+  const compareCapture = (storedFile, capture) => {
+    if (!pixelDiff) throw new Error('A capture was compared before a pixel diff was loaded.')
+    return capturesDiffer(pixelDiff.lib, storedFile, capture)
+  }
 
   // Props: the old side is the previous release's files, the new side is the checkout.
   const candidates = entries.filter((e) => matches.has(e) && e.kind !== 'icon-set')
@@ -196,6 +211,7 @@ export async function pickVersions({ root: given, inventory, previous, from, rel
       }
       if (jobs.length) {
         const results = compareTrees({ ts: ts ?? loadTypeScript(root), base: snapshot.dir, head: root, jobs })
+        if ([...results.values()].some((r) => r.textOnly)) notes.push('The repo\'s TypeScript is older than 5.4 and cannot say which way a prop type changed, so any difference in a prop type counts as major.')
         for (const entry of candidates) {
           const result = results.get(entry.name + '\0' + entry.file)
           if (result) comparisons.set(entry, result)
@@ -218,7 +234,7 @@ export async function pickVersions({ root: given, inventory, previous, from, rel
   const reportEntries = []
   const versioned = entries.map((entry) => {
     const old = matches.get(entry)
-    const capture = captures.components[entry.name]
+    const capture = captureFor(entry)
     const changes = comparisons.get(entry)?.changes ?? []
     const reasons = []
     let level = 'none'
@@ -235,12 +251,14 @@ export async function pickVersions({ root: given, inventory, previous, from, rel
     const comparable = Boolean(capture && storedFile && fs.existsSync(storedFile))
     if (capture && old?.screenshot && !comparable) notes.push(`${entry.name}: the stored screenshot ${old.screenshot} is missing, so the capture was not compared.`)
     if (comparable) {
-      const visual = capturesDiffer(pixelDiff.lib, storedFile, capture)
+      const visual = compareCapture(storedFile, capture)
       if (visual.changed) {
         level = higher(level, 'patch')
         reasons.push(`capture changed (${visual.detail})`)
       }
     }
+
+    if (old?.version && !isVersion(old.version)) notes.push(`${entry.name}: the version "${old.version}" is not x.y.z, so it was counted as ${BASELINE}.`)
 
     let version
     if (baseline || !old) version = BASELINE
@@ -269,7 +287,7 @@ export async function pickVersions({ root: given, inventory, previous, from, rel
     const storedFile = old?.screenshot ? path.resolve(root, old.screenshot) : null
     const comparable = Boolean(storedFile && fs.existsSync(storedFile))
     if (old?.screenshot && !comparable) notes.push(`Screen ${route}: the stored screenshot ${old.screenshot} is missing, so the capture was not compared.`)
-    const visual = comparable ? capturesDiffer(pixelDiff.lib, storedFile, capture) : null
+    const visual = comparable ? compareCapture(storedFile, capture) : null
     const named = baseline ? BASELINE : release
     const changed = baseline || !old || Boolean(visual?.changed)
     const version = changed ? named : old.version

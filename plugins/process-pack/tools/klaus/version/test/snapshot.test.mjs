@@ -48,11 +48,14 @@ describe('unpacking a commit', () => {
 
   test('links the repo\'s node_modules in, and removing the snapshot leaves them alone', () => {
     const { repo, first } = repoWithTwoCommits()
+    const modules = fs.realpathSync(klausModules)
+    const listing = fs.readdirSync(modules)
     const snapshot = snapshotCommit(repo, first)
-    assert.equal(fs.realpathSync(path.join(snapshot.dir, 'node_modules')), fs.realpathSync(klausModules))
+    assert.equal(fs.realpathSync(path.join(snapshot.dir, 'node_modules')), modules)
     snapshot.remove()
     assert.equal(fs.existsSync(snapshot.dir), false)
-    assert.equal(fs.existsSync(path.join(klausModules, 'typescript', 'package.json')), true)
+    assert.deepEqual(fs.readdirSync(modules), listing, 'removing the snapshot must not touch the linked node_modules')
+    assert.equal(fs.existsSync(path.join(modules, 'typescript', 'package.json')), true)
   })
 
   test('finds the commit a tag names, and says when a ref is not one', () => {
