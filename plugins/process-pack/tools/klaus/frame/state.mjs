@@ -14,9 +14,9 @@
  * "unwritten" holds the ids a run planned and did not write, whether the cap
  * deferred them or the write failed. The next run hands them back to the plan.
  */
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import path from "node:path";
+import { readFileSync } from "node:fs";
 import { UserError } from "./errors.mjs";
+import { writeJsonFile } from "./json-file.mjs";
 
 export const STATE_VERSION = 1;
 
@@ -55,19 +55,7 @@ export function readState(file) {
   return state;
 }
 
-/** Writes the state file through a temporary file so a crash cannot leave half a file. */
+/** Writes the state file. */
 export function writeState(file, state) {
-  mkdirSync(path.dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.tmp`;
-  writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`);
-  try {
-    renameSync(temp, file);
-  } catch (error) {
-    try {
-      unlinkSync(temp);
-    } catch {
-      // Keep the rename error, which is the one that matters.
-    }
-    throw error;
-  }
+  writeJsonFile(file, state);
 }

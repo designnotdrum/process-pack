@@ -74,8 +74,9 @@
         "mode": { "enum": ["release", "schedule"], "default": "release" },
         "tagPattern": {
           "description": "Git tag glob that marks a release.",
+          "title": "a git tag glob that does not start with a dash",
           "type": "string",
-          "pattern": "^[A-Za-z0-9._*?/-]{1,64}$",
+          "pattern": "^[A-Za-z0-9._*?/][A-Za-z0-9._*?/-]{0,63}$",
           "default": "v*"
         },
         "cron": {
@@ -90,7 +91,7 @@
     "noSecret": {
       "not": {
         "type": "string",
-        "description": "looks like a secret value. Give the name of an environment variable or a login instead",
+        "title": "looks like a secret value. Give the name of an environment variable or a login instead",
         "pattern": "(?:^|[^A-Za-z0-9])(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|figd_[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|eyJ[A-Za-z0-9_-]{10,}[.][A-Za-z0-9_-]{10,})|-----BEGIN [A-Z ]*PRIVATE KEY-----|://[^/ :@]+:[^/ @]+@|[Bb]earer [A-Za-z0-9._~+/=-]{16,}|[Bb]asic [A-Za-z0-9+/=]{16,}|^(?=[A-Za-z0-9_+=-]*[0-9])(?=[A-Za-z0-9_+=-]*[A-Za-z])[A-Za-z0-9_+=-]{40,}$"
       }
     },
@@ -104,32 +105,32 @@
     "path": {
       "description": "a repository path without spaces",
       "allOf": [
-        { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9_@.*/+-]+$", "description": "a repository path without spaces" },
+        { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9_@.*/+-]+$", "title": "a repository path without spaces" },
         { "$ref": "#/$defs/noSecret" }
       ]
     },
     "route": {
       "description": "a route that starts with a slash and has no spaces",
       "allOf": [
-        { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^/[^ ]*$", "description": "a route that starts with a slash and has no spaces" },
+        { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^/[^ ]*$", "title": "a route that starts with a slash and has no spaces" },
         { "$ref": "#/$defs/noSecret" }
       ]
     },
     "envName": {
       "allOf": [
-        { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,38}$", "description": "the name of an environment variable, upper case with underscores" },
+        { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,38}$", "title": "the name of an environment variable, upper case with underscores" },
         { "$ref": "#/$defs/noSecret" }
       ]
     },
     "loginName": {
       "allOf": [
-        { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$", "description": "the name of a login, lower case with dashes" },
+        { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$", "title": "the name of a login, lower case with dashes" },
         { "$ref": "#/$defs/noSecret" }
       ]
     },
     "routeName": {
       "allOf": [
-        { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$", "description": "a route name, lower case with dashes" },
+        { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$", "title": "a route name, lower case with dashes" },
         { "$ref": "#/$defs/noSecret" }
       ]
     },

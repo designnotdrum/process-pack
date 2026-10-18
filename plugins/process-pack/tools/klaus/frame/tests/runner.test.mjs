@@ -175,6 +175,31 @@ test("a write that fails is reported, retried next run, and marks the run failed
   assert.deepEqual(state.outputs.storybook.unwritten, ["B"]);
 });
 
+test("a write result with a malformed failed entry fails the output with a clear message", async () => {
+  const adapter = fakeAdapter({ log: [], ids: ["A"] });
+  adapter.write = () => ({ written: [], failed: [null] });
+  const { report } = await run({ config: configOf(), inventory: inventoryOf({ A: 1 }), adapters: { storybook: adapter } });
+
+  assert.equal(report.outputs[0].failedStep, "write");
+  assert.match(report.outputs[0].error, /failed as an array of \{ id, error \} objects/);
+});
+
+test("warns about items that can never fit and about secrets too short to redact", async () => {
+  const config = configOf({
+    outputs: { storybook: { enabled: true, secrets: ["SHORT_SECRET"] } },
+    spendingCap: { maxRelayTokens: 250 },
+  });
+  const cost = (id) => ({ calls: 1, tokens: id === "Huge" ? 900 : 100, usd: 0 });
+  const adapter = fakeAdapter({ log: [], ids: ["Huge", "A"], cost });
+  const { report } = await run({
+    config, inventory: inventoryOf({ Huge: 5, A: 1 }), adapters: { storybook: adapter }, env: { SHORT_SECRET: "abc" },
+  });
+
+  const warnings = report.outputs[0].warnings.join("\n");
+  assert.match(warnings, /SHORT_SECRET/);
+  assert.match(warnings, /will never be written: Huge/);
+});
+
 test("a write that reports the same id twice fails the output instead of double counting", async () => {
   const adapter = fakeAdapter({ log: [], ids: ["A"] });
   adapter.write = () => ({ written: ["A", "A"], actual: { calls: 1 } });
@@ -191,6 +216,7 @@ test("an adapter that returns fewer ids than it was given leaves the rest unwrit
   const { report, state } = await run({ config: configOf(), inventory: inventoryOf({ A: 2, B: 1 }), adapters: { storybook: adapter } });
 
   assert.deepEqual(report.outputs[0].deferred.map((d) => [d.id, d.reason]), [["B", "not-written"]]);
+  assert.match(report.outputs[0].warnings.join("\n"), /neither wrote nor failed these items.*: B/);
   assert.deepEqual(state.outputs.storybook.unwritten, ["B"]);
 });
 
@@ -276,6 +302,7 @@ test("a dry run plans and estimates but never writes, and leaves the state alone
   assert.equal(report.dryRun, true);
   assert.equal(report.outputs[0].status, "dry-run");
   assert.deepEqual(report.outputs[0].written, []);
+  assert.deepEqual(report.outputs[0].warnings, []);
   assert.equal(report.outputs[0].estimated.calls, 2);
   assert.equal(report.status, "ok");
   assert.deepEqual(state, emptyState());
@@ -349,6 +376,8 @@ test("the report adds up cost across outputs and keeps estimated and actual apar
   assert.equal(report.totals.written, 3);
   assert.deepEqual(report.totals.estimated, { calls: 3, tokens: 300, usd: 0.03 });
   assert.deepEqual(report.totals.actual, { calls: 3, tokens: 240, usd: 0.024 });
+  assert.deepEqual(report.outputs[0].actual, { calls: 2, tokens: 160, usd: 0.016 });
+  assert.deepEqual(report.outputs[1].actual, { calls: 1, tokens: 80, usd: 0.008 });
   assert.deepEqual(report.outputs[0].adapter.links, [{ label: "Result", url: "https://example.test/v1.0.0" }]);
   assert.equal(report.startedAt, "2026-10-18T06:00:01.000Z");
 });

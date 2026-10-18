@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import { UserError } from "./errors.mjs";
 
 /**
@@ -21,5 +22,25 @@ export function readJsonFile(file, what = "File") {
   } catch (error) {
     const where = /\(line \d+ column \d+\)/.exec(error.message)?.[0];
     throw new UserError(`${what} ${file} is not valid JSON${where ? ` ${where}` : ""}.`);
+  }
+}
+
+/**
+ * Writes a JSON file through a temporary file, so a crash cannot leave half a
+ * file for the next reader. Creates the folder if it is missing.
+ */
+export function writeJsonFile(file, value) {
+  mkdirSync(path.dirname(file), { recursive: true });
+  const temp = `${file}.${process.pid}.tmp`;
+  try {
+    writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`);
+    renameSync(temp, file);
+  } catch (error) {
+    try {
+      unlinkSync(temp);
+    } catch {
+      // Keep the original error, which is the one that matters.
+    }
+    throw error;
   }
 }

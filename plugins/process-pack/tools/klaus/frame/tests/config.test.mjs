@@ -123,6 +123,12 @@ test("rejects an unknown output name, a missing enabled flag and wrong types", (
   assert.match(validateConfig([]).errors[0], /must be an object/);
 });
 
+test("rejects a tag pattern that git would read as an option", () => {
+  const { errors } = validateConfig(base({ trigger: { tagPattern: "--output=x" } }));
+  assert.match(errors[0], /trigger\.tagPattern: must be a git tag glob that does not start with a dash/);
+  assert.deepEqual(validateConfig(base({ trigger: { tagPattern: "release-*" } })).errors, []);
+});
+
 test("rejects a spending cap that is negative or not a whole number", () => {
   assert.match(validateConfig(base({ spendingCap: { maxComponentWrites: -1 } })).errors[0], /at least 0/);
   assert.match(validateConfig(base({ spendingCap: { maxRelayTokens: 1.5 } })).errors[0], /must be an integer/);

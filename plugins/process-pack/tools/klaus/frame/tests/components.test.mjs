@@ -41,6 +41,8 @@ test("the new-component rule applies only to components the output has never rec
   const names = (rule) => selectComponents(inventory, { newComponents: rule }, { isNew }).map((c) => c.name);
 
   assert.deepEqual(names({ rule: "all" }), ["Button", "Banner", "Nav", "Orphan"]);
+  // With no rule configured, a component the output never received is still selected.
+  assert.deepEqual(selectComponents(inventory, {}, { isNew }).map((c) => c.name), ["Button", "Banner", "Nav", "Orphan"]);
   assert.deepEqual(names({ rule: "none" }), ["Button"]);
   assert.deepEqual(names({ rule: "min-usage", minUsage: 4 }), ["Button", "Nav", "Orphan"]);
 });

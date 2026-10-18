@@ -2,20 +2,29 @@
  * A small JSON Schema checker for klaus.config.schema.json, so the schema file
  * is the one place the config shape is defined and no dependency is needed.
  *
- * It supports only the keywords the schema uses. A schema that uses another
- * keyword throws, so a keyword is never silently ignored.
+ * It supports only the keywords the schema uses, and no recursive schemas. A
+ * schema that uses another keyword throws, so a keyword is never silently
+ * ignored.
  *
  * Error messages name the path and the rule. They never repeat the value, so a
  * secret pasted into the config does not reach a CI log.
  */
 
+// title doubles as the wording of an error: "must be <title>" for pattern, "<title>" for not.
 const ANNOTATIONS = new Set(["$schema", "$id", "$defs", "title", "description", "default", "examples"]);
 const KEYWORDS = new Set([
   "type", "enum", "pattern", "minLength", "maxLength", "minimum", "maximum",
   "items", "minItems", "maxItems", "uniqueItems",
   "properties", "required", "additionalProperties",
-  "not", "anyOf", "allOf", "$ref",
+  "not", "allOf", "$ref",
 ]);
+
+const patterns = new Map();
+
+function matchesPattern(pattern, value) {
+  if (!patterns.has(pattern)) patterns.set(pattern, new RegExp(pattern));
+  return patterns.get(pattern).test(value);
+}
 
 function typeOf(value) {
   if (value === null) return "null";
@@ -62,8 +71,8 @@ function check(schema, value, path, root, errors) {
       errors.push(`${path}: must be at least ${schema.minLength} character${schema.minLength === 1 ? "" : "s"}.`);
     }
     if (schema.maxLength !== undefined && value.length > schema.maxLength) errors.push(`${path}: must be at most ${schema.maxLength} characters.`);
-    if (schema.pattern !== undefined && !new RegExp(schema.pattern).test(value)) {
-      errors.push(`${path}: must be ${schema.description ?? `a string matching ${schema.pattern}`}.`);
+    if (schema.pattern !== undefined && !matchesPattern(schema.pattern, value)) {
+      errors.push(`${path}: must be ${schema.title ?? `a string matching ${schema.pattern}`}.`);
     }
   }
 
@@ -100,21 +109,12 @@ function check(schema, value, path, root, errors) {
     }
   }
 
-  if (schema.anyOf !== undefined) {
-    const branches = schema.anyOf.map((branch) => {
-      const branchErrors = [];
-      check(branch, value, path, root, branchErrors);
-      return branchErrors;
-    });
-    if (!branches.some((e) => e.length === 0)) errors.push(`${path}: matches none of the allowed shapes.`);
-  }
-
   for (const branch of schema.allOf ?? []) check(branch, value, path, root, errors);
 
   if (schema.not !== undefined) {
     const inner = [];
     check(schema.not, value, path, root, inner);
-    if (inner.length === 0) errors.push(`${path}: ${schema.not.description ?? "matches a shape that is not allowed"}.`);
+    if (inner.length === 0) errors.push(`${path}: ${schema.not.title ?? "matches a shape that is not allowed"}.`);
   }
 }
 

@@ -81,6 +81,7 @@ async function runOutput({ name, settings, adapter, run }) {
     return { record: outputRecord(name, { status: "skipped", reason: "up-to-date", warnings: notes }) };
   }
 
+  // A dry run skips this check on purpose: it is how costs are shown before secrets exist.
   const missing = dryRun ? [] : settings.secrets.filter((secret) => !env[secret]);
   if (missing.length > 0) {
     return {
@@ -140,6 +141,17 @@ async function runOutput({ name, settings, adapter, run }) {
   const failed = result.failed.map((f) => ({ id: f.id, error: redact(f.error) }));
 
   const warnings = [...notes];
+  const short = settings.secrets.filter((secret) => env[secret] && env[secret].length < 8);
+  if (short.length > 0) {
+    warnings.push(`These secrets are shorter than 8 characters, so they are not removed from reports: ${short.join(", ")}.`);
+  }
+  const never = capped.deferred.filter((d) => d.reason === "larger-than-token-cap").map((d) => d.id);
+  if (never.length > 0) {
+    warnings.push(`These items need more relay tokens than spendingCap.maxRelayTokens allows and will never be written: ${never.join(", ")}.`);
+  }
+  if (!dryRun && notWritten.length > 0) {
+    warnings.push(`The adapter neither wrote nor failed these items, so they stay unwritten: ${notWritten.map((d) => d.id).join(", ")}.`);
+  }
   const wrote = !dryRun && capped.allowed.length > 0;
   if (wrote && result.actual === null) warnings.push("The adapter did not report what the writes cost.");
 
@@ -185,7 +197,10 @@ function readWriteResult(raw, allowed, output) {
   if (!raw || !Array.isArray(raw.written)) throw new Error(`${output} write must return an object with a written array.`);
   const given = new Set(allowed.map((item) => item.id));
   const failed = raw.failed ?? [];
-  const reported = [...raw.written, ...failed.map((f) => f?.id)];
+  if (!Array.isArray(failed) || failed.some((f) => !f || typeof f !== "object")) {
+    throw new Error(`${output} write must return failed as an array of { id, error } objects.`);
+  }
+  const reported = [...raw.written, ...failed.map((f) => f.id)];
   for (const id of reported) {
     if (!given.has(id)) throw new Error(`${output} write reported "${id}", which was not in the items it was given.`);
   }

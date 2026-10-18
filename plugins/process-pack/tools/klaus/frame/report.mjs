@@ -16,9 +16,9 @@
  * what the whole plan would have cost. actual is null only when the adapter
  * wrote and did not say what it cost. Costs are { calls, tokens, usd }.
  */
-import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { sumCosts } from "./cost.mjs";
+import { writeJsonFile } from "./json-file.mjs";
 
 export const REPORT_SCHEMA_VERSION = 1;
 
@@ -50,8 +50,7 @@ export function reportFileName(startedAt) {
 }
 
 export function writeReport(dir, report) {
-  mkdirSync(dir, { recursive: true });
   const file = path.join(dir, reportFileName(new Date(report.startedAt)));
-  writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`);
+  writeJsonFile(file, report);
   return file;
 }

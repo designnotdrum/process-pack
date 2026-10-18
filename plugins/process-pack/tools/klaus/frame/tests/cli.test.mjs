@@ -170,7 +170,8 @@ test("an adapter file that cannot be loaded is a bug, not a usage error: exit 3 
 
   assert.equal(code, 3);
   assert.match(err, /adapter exploded on load/);
-  assert.match(err, /at /);
+  // A real stack has a frame that points back into the adapter file.
+  assert.ok(err.includes(path.join(repo, "adapters", "storybook", "index.mjs")), err);
 });
 
 test("a state file that is not a state file stops the run with exit 2", () => {
@@ -185,7 +186,9 @@ test("a state file that is not a state file stops the run with exit 2", () => {
 
 test("validate accepts a good config and rejects a secret value without printing it", () => {
   const good = makeRepo();
-  assert.equal(klaus(good, "validate").code, 0);
+  const ok = klaus(good, "validate");
+  assert.equal(ok.code, 0);
+  assert.match(ok.out, /klaus\.config\.json is valid/);
 
   const token = ["gh", "p_", "a1B2c3D4".repeat(5)].join("");
   const bad = makeRepo({ config: { outputs: { storybook: { enabled: true, target: token } } } });
@@ -198,10 +201,10 @@ test("validate accepts a good config and rejects a secret value without printing
 test("a run with a secret in the config stops before any adapter runs", () => {
   const token = ["gh", "p_", "a1B2c3D4".repeat(5)].join("");
   const repo = makeRepo({ config: { outputs: { storybook: { enabled: true, target: token } } } });
-  const { code, err } = klaus(repo, "run", "--trigger", "manual");
+  const { code, err, out } = klaus(repo, "run", "--trigger", "manual");
 
   assert.equal(code, 2);
   assert.match(err, /outputs\.storybook\.target: looks like a secret value/);
-  assert.ok(!err.includes(token));
+  assert.ok(!(err + out).includes(token));
   assert.equal(existsSync(path.join(repo, ".klaus")), false);
 });
