@@ -10,7 +10,7 @@
 import { renderFile } from "./codegen.mjs";
 import { MAX_CODE_CHARS } from "./settings.mjs";
 
-/** Room for the file header, which says "file 12 of 40" and is written after the packing. */
+/** The most characters a file header can take. The header names the file and its units, and is written after the packing. */
 const HEADER_ROOM = 120;
 
 /**
@@ -22,18 +22,20 @@ const HEADER_ROOM = 120;
  * @returns {{ files: Array<{ name: string, code: string, units: object[] }>, tooLarge: Array<{ unit: object, chars: number }> }}
  */
 export function packUnits(units, { config, perFile = 10, maxChars = MAX_CODE_CHARS }) {
-  const room = maxChars - HEADER_ROOM;
-  const size = (group) => renderFile({ units: group, config, header: "" }).length;
+  // Sized with a header of the greatest length, so a file never comes out over the limit once its real header is in.
+  // Each size call renders only the file being filled, which holds at most perFile units.
+  const placeholder = "x".repeat(HEADER_ROOM);
+  const size = (group) => renderFile({ units: group, config, header: placeholder }).length;
   const groups = [];
   const tooLarge = [];
   let current = [];
   for (const unit of units) {
     const alone = size([unit]);
-    if (alone > room) {
+    if (alone > maxChars) {
       tooLarge.push({ unit, chars: alone });
       continue;
     }
-    if (current.length > 0 && (current.length >= perFile || size([...current, unit]) > room)) {
+    if (current.length > 0 && (current.length >= perFile || size([...current, unit]) > maxChars)) {
       groups.push(current);
       current = [];
     }
@@ -44,8 +46,9 @@ export function packUnits(units, { config, perFile = 10, maxChars = MAX_CODE_CHA
   const files = groups.map((group, i) => {
     const name = `figma-${String(i + 1).padStart(3, "0")}.js`;
     const names = group.map((unit) => unit.id).join(", ");
-    const header = `Klaus Figma code, file ${i + 1} of ${groups.length}: ${names}`.replace(/[^\x20-\x7e]+/g, " ").slice(0, HEADER_ROOM - 10);
+    const header = `Klaus Figma code, file ${i + 1} of ${groups.length}: ${names}`.replace(/[^\x20-\x7e]+/g, " ").slice(0, HEADER_ROOM);
     const code = renderFile({ units: group, config, header });
+    // The sizes above were measured with a header of the greatest length, so this cannot happen.
     if (code.length > maxChars) throw new Error(`${name} came to ${code.length} characters, over the ${maxChars} limit.`);
     return { name, code, units: group };
   });

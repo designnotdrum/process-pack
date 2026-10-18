@@ -311,15 +311,18 @@ test("editable screens are captured from the running app and written as code", a
   assert.deepEqual(ran.units.map((u) => [u.id, u.status, u.name]), [["screen:/settings", "written", "/settings v1.0.0"]]);
 });
 
-test("a rerun of a release does not leave an old file behind", async () => {
+test("a rerun of a release does not leave an old code file behind, and does not touch other files", async () => {
   const root = tempRepo();
   const figma = createAdapter(fakeBrowser().browser);
   const stale = path.join(outputOf(root), "figma-009.js");
+  const notes = path.join(outputOf(root), "figma-notes.js");
   mkdirSync(outputOf(root), { recursive: true });
   writeFileSync(stale, "old");
+  writeFileSync(notes, "mine");
   const ctx = context(root);
   await figma.write(await figma.plan(ctx), ctx);
   assert.equal(existsSync(stale), false);
+  assert.equal(readFileSync(notes, "utf8"), "mine");
 });
 
 test("report says where the code is and links the Figma file", async () => {
@@ -336,6 +339,8 @@ test("report says where the code is and links the Figma file", async () => {
 
   const dry = await figma.report({ written: [], failed: [], deferred: [], dryRun: true }, context(root, { dryRun: true }));
   assert.match(dry.summary, /dry run/);
+  assert.deepEqual(dry.links, [{ label: "Figma file", url: `https://www.figma.com/design/${KEY}` }], "a dry run still links the file");
+  assert.equal(dry.details, undefined, "a dry run makes no manifest, so it has no details");
 });
 
 test("the file key comes from a key or a Figma URL", () => {

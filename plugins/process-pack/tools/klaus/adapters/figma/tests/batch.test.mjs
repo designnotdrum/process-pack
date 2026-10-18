@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { packUnits } from "../batch.mjs";
+import { RUNTIME_CODE } from "../codegen.mjs";
 import { MAX_CODE_CHARS } from "../settings.mjs";
 import { runCode } from "./fake-figma.mjs";
 import { CONFIG, buttonUnit, newFigma, run, tinyUnit } from "./helpers.mjs";
@@ -86,4 +87,16 @@ test("units reach Figma in the order they were given", async () => {
   const figma = newFigma();
   const result = await run(figma, [tinyUnit("B"), tinyUnit("A")]);
   assert.deepEqual(result.units.map((u) => u.id), ["B", "A"]);
+});
+
+test("the runtime still parses after its comments are stripped", () => {
+  const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
+  assert.doesNotThrow(() => new AsyncFunction("figma", "CONFIG", "TOKENS", "UNITS", RUNTIME_CODE));
+  assert.ok(!/^\s*\/\//m.test(RUNTIME_CODE), "no comment lines are left");
+});
+
+test("a file header of any length does not push a file over the limit", () => {
+  const units = Array.from({ length: 10 }, (_, i) => tinyUnit(`${"Long".repeat(40)}${i}`, { description: "d".repeat(3000) }));
+  const { files } = packUnits(units, { config: CONFIG });
+  for (const file of files) assert.ok(file.code.length <= MAX_CODE_CHARS);
 });

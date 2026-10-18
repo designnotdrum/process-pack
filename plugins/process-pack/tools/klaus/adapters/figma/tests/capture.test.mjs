@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { argsParam, captureComponent, combinations, loadPlaywright, openStorybook, readStoryIndex, storyCandidates } from "../capture.mjs";
+import { argsParam, captureComponent, combinations, loadPlaywright, openStorybook, readStoryIndex, serve, storyCandidates } from "../capture.mjs";
 
 const story = (id, title, name, importPath = "./x.stories.tsx") => ({ id, type: "story", title, name, importPath });
 
@@ -44,6 +44,23 @@ test("a folder that is not a static build is refused with the way to fix it", as
   const root = mkdtempSync(path.join(tmpdir(), "klaus-sb-"));
   mkdirSync(path.join(root, "nope"));
   await assert.rejects(openStorybook({ root, directory: "nope", globals: "" }), /not a static Storybook build\. Run "storybook build" first/);
+});
+
+test("the local server answers a bad request with an error and keeps running", async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "klaus-serve-"));
+  writeFileSync(path.join(dir, "iframe.html"), "<html></html>");
+  const { server, port } = await serve(dir);
+  try {
+    const get = (url, init) => fetch(`http://127.0.0.1:${port}${url}`, init);
+    assert.equal((await get("/iframe.html")).status, 200);
+    assert.equal((await get("/%ZZ")).status, 400, "a malformed percent sequence");
+    assert.equal((await get("/..%2f..%2fetc%2fpasswd")).status, 403, "a path out of the folder");
+    assert.equal((await get("/iframe.html", { method: "POST", body: "x" })).status, 405);
+    assert.equal((await get("/missing.js")).status, 404);
+    assert.equal((await get("/iframe.html")).status, 200, "still serving after the bad requests");
+  } finally {
+    server.close();
+  }
 });
 
 test("Playwright is looked for in the repo the design files are for", () => {

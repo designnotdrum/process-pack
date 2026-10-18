@@ -111,7 +111,7 @@ export function createFigma({ pages = ["Button"], fonts = { "DM Sans": ["Regular
       return text;
     },
     createNodeFromSvg(svg) {
-      if (!svg.startsWith("<svg")) throw new Error("Not an SVG.");
+      if (typeof svg !== "string" || !svg.startsWith("<svg")) throw new Error("Not an SVG.");
       const frame = new Node("FRAME", { name: "svg", width: 24, height: 24 });
       frame.appendChild(new Node("VECTOR", { fills: [], strokes: [{ type: "SOLID", color: { r: 0, g: 0, b: 0 } }] }));
       return frame;
@@ -181,7 +181,13 @@ export function createFigma({ pages = ["Button"], fonts = { "DM Sans": ["Regular
 
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
 
-/** Runs generated code the way use_figma does: as the body of an async function with `figma` in scope. */
+/**
+ * Runs generated code the way use_figma does: as the body of an async function with `figma` in scope.
+ *
+ * Trust boundary: `code` must be code the adapter's own codegen produced inside this test suite.
+ * The Function constructor runs it with the full privileges of the test process, so never pass it
+ * anything else, and keep dynamic execution in this file.
+ */
 export function runCode(code, figma) {
   return new AsyncFunction("figma", code)(figma);
 }

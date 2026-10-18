@@ -202,7 +202,8 @@ export function createAdapter(browser = {}) {
       const directory = path.join(root, options.outputDir, safeName(release));
       fs.mkdirSync(directory, { recursive: true });
       for (const name of fs.readdirSync(directory)) {
-        if (/^figma-.*\.js$/.test(name) || name === "manifest.json") fs.rmSync(path.join(directory, name));
+        // Only the names this adapter writes. A file someone else left in the folder stays.
+      if (/^figma-(\d{3}|retention)\.js$/.test(name) || name === "manifest.json") fs.rmSync(path.join(directory, name));
       }
       const everyFile = afterUploads ? [...files, afterUploads] : files;
       for (const file of everyFile) fs.writeFileSync(path.join(directory, file.name), file.code);

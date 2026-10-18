@@ -44,10 +44,21 @@ export function loadPlaywright(root) {
 }
 
 /** Serves a folder on a free local port. Only paths inside the folder are served. */
-async function serve(directory) {
+export async function serve(directory) {
   const base = path.resolve(directory);
   const server = http.createServer((request, response) => {
-    const requested = path.resolve(base, `.${decodeURIComponent(request.url.split("?")[0])}`);
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      response.writeHead(405).end();
+      return;
+    }
+    let requested;
+    try {
+      requested = path.resolve(base, `.${decodeURIComponent(request.url.split("?")[0])}`);
+    } catch {
+      // A malformed percent sequence is a bad request, not a reason to stop the run.
+      response.writeHead(400).end();
+      return;
+    }
     if (requested !== base && !requested.startsWith(`${base}${path.sep}`)) {
       response.writeHead(403).end();
       return;
@@ -146,13 +157,19 @@ export async function openStorybook({ root, directory, globals }) {
         await page.evaluate(() => document.fonts.ready);
       },
       async close() {
-        await browser.close();
-        server.close();
+        try {
+          await browser.close();
+        } finally {
+          server.close();
+        }
       },
     };
   } catch (error) {
-    await browser?.close();
-    server.close();
+    try {
+      await browser?.close();
+    } finally {
+      server.close();
+    }
     throw error;
   }
 }
@@ -192,24 +209,25 @@ export async function captureComponent(storybook, request) {
 
   const combos = combinations(allAxes);
   // Pick the first story whose args change what is drawn. A story with a fixed render ignores them.
+  // The args tried are the first axis with two values, which may be the State axis for a component with no variant props.
+  const checked = allAxes.findIndex((axis) => axis.values.length > 1);
   let story = null;
-  const firstAxis = axes[0];
   for (const id of candidates) {
-    if (!firstAxis || firstAxis.values.length < 2) {
+    if (checked < 0) {
       story = id;
       break;
     }
     const probe = async (value) => {
-      const first = combos[0].slice();
-      first[0] = value;
-      await storybook.show(id, argsFor(first));
+      const combination = combos[0].slice();
+      combination[checked] = value;
+      await storybook.show(id, argsFor(combination));
       return page.evaluate(() => {
         const element = document.querySelector("#storybook-root")?.firstElementChild;
         return element ? `${element.className}|${getComputedStyle(element).backgroundColor}|${element.getBoundingClientRect().width}` : "";
       });
     };
     try {
-      const [a, b] = [await probe(firstAxis.values[0]), await probe(firstAxis.values[1])];
+      const [a, b] = [await probe(allAxes[checked].values[0]), await probe(allAxes[checked].values[1])];
       if (a !== "" && a !== b) {
         story = id;
         break;
@@ -219,7 +237,8 @@ export async function captureComponent(storybook, request) {
     }
   }
   if (!story) {
-    throw new Error(`None of the stories for ${name} (${candidates.join(", ")}) change when ${firstAxis.prop} is set from the URL. Add a story that renders from its args, or name one in outputs.figma.options.stories.`);
+    const prop = allAxes[checked].prop ?? allAxes[checked].values[1];
+    throw new Error(`None of the stories for ${name} (${candidates.join(", ")}) change when ${prop} is set from the URL. Add a story that renders from its args, or name one in outputs.figma.options.stories.`);
   }
 
   const propertyNames = await (async () => {
@@ -244,10 +263,14 @@ export async function captureComponent(storybook, request) {
   if (icons) {
     const signature = classLists[0].filter((c) => classLists.every((list) => list.includes(c)));
     for (const entry of storybook.entries.filter((e) => candidates.includes(e.id) && e.id !== story)) {
-      await storybook.show(entry.id);
-      for (const found of await page.evaluate(findIcons, { signature })) {
-        if (found.loading) spinner ??= found;
-        else icon ??= found;
+      try {
+        await storybook.show(entry.id);
+        for (const found of await page.evaluate(findIcons, { signature })) {
+          if (found.loading) spinner ??= found;
+          else icon ??= found;
+        }
+      } catch (error) {
+        warnings.push(`Story ${entry.id} was not searched for icons: ${error.message}`);
       }
     }
     if (!icon) warnings.push(`${name}: no story draws an icon inside it, so no icon layer was made.`);

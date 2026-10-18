@@ -141,7 +141,7 @@ test("a set that fails is removed again and the next unit still runs", async () 
   const result = await run(figma, [broken, { ...buttonUnit({ version: "1.0.0", page: "Fine" }), id: "Fine" }]);
 
   assert.equal(result.units[0].status, "failed");
-  assert.match(result.units[0].error, /./);
+  assert.match(result.units[0].error, /Not an SVG/, "the failure is the unreadable icon, not something else");
   assert.equal(result.units[1].status, "written");
   assert.deepEqual(names(figma.page("Broken")), [], "nothing is left on the page after a failure");
   let strays = 0;
