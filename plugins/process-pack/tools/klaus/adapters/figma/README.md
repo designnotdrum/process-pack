@@ -20,14 +20,14 @@ The values come from the browser's computed styles, not from the CSS files. On M
 | File | Holds |
 |---|---|
 | `figma-001.js`, `figma-002.js`, ... | Plugin API code. Each file is one `use_figma` call and holds about ten components. |
-| `manifest.json` | The file key, each code file with its character count and units, the uploads, the retention file, and warnings. |
+| `manifest.json` | The file key, each code file with its character count and units, the ledger entry of each unit, the uploads, the retention file, and warnings. |
 | `figma-retention.js` | Present when there are screenshots. Run it after the uploads. It keeps the last N versions of each screen. |
 
 An entry in `uploads` has the image path, the page, and the name the frame must have: `<route> <release>`. The retention code reads that name, so the relay must keep it.
 
 Each code file returns, for every unit, `written`, `exists` or `failed` with an error. A set that fails is removed again and the next unit still runs. The relay reports failures back to Klaus.
 
-`.klaus/figma/ledger.json` records the versions and screens already written, so a run does not send them twice. If the file is lost, the next run plans everything again. The code leaves a set that already exists alone, so the only cost is relay tokens.
+`.klaus/figma/ledger.json` records each component version and screen release as `generated` when its code file exists, and as `sent` once the relay has seen `use_figma` report it written or already there. A run plans every unit that is not sent, so a unit whose relay call failed is generated and sent again. The manifest's `ledgerEntries` tell the relay which version each unit is. If the ledger is lost, the next run plans everything again. The code leaves a set that already exists alone, so the only cost is relay tokens. The relay is in [`relay/`](relay/README.md).
 
 ## What lands in Figma
 

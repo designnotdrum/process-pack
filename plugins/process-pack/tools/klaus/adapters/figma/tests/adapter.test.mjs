@@ -6,7 +6,7 @@ import path from "node:path";
 import { test } from "node:test";
 import { resolveConfig, runKlaus, validateConfig } from "../../../frame/index.mjs";
 import adapter, { createAdapter, DEFAULT_VERSION, fileKeyOf } from "../index.mjs";
-import { readLedger } from "../ledger.mjs";
+import { readLedger, recordComponent, SENT } from "../ledger.mjs";
 import { MAX_CODE_CHARS, TOKENS_PER_EDITABLE_SCREEN, TOKENS_PER_SCREEN_IMAGE } from "../settings.mjs";
 import { runCode } from "./fake-figma.mjs";
 import { buttonCapture, newFigma } from "./helpers.mjs";
@@ -157,7 +157,7 @@ test("estimate: a screenshot upload and an editable screen are costed apart from
   assert.deepEqual(editableCost, { id: "screen:/a", calls: 1, tokens: TOKENS_PER_EDITABLE_SCREEN, usd: 0 });
 });
 
-test("write leaves code files, a manifest and a ledger, and the next plan has nothing left", async () => {
+test("write leaves code files, a manifest and a ledger that says generated, and the units stay planned until sent", async () => {
   const root = tempRepo();
   const { browser, seen } = fakeBrowser();
   const figma = createAdapter(browser);
@@ -178,16 +178,28 @@ test("write leaves code files, a manifest and a ledger, and the next plan has no
   const manifest = JSON.parse(readFileSync(path.join(directory, "manifest.json"), "utf8"));
   assert.equal(manifest.fileKey, KEY);
   assert.equal(manifest.release, "v1.0.0");
+  assert.equal(manifest.schemaVersion, 2);
   assert.deepEqual(manifest.files, [{ name: "figma-001.js", chars: code.length, units: ["Button", "Card"] }]);
+  assert.deepEqual(manifest.ledgerEntries, {
+    Button: { kind: "component", name: "Button", version: "1.0.0" },
+    Card: { kind: "component", name: "Card", version: "1.0.0" },
+  });
   assert.deepEqual(manifest.uploads, []);
   assert.equal(manifest.afterUploads, null);
 
   // The cost is the code's size in relay tokens: about 3.75 characters a token.
   assert.deepEqual(result.actual, { calls: 1, tokens: Math.ceil(code.length / 3.75), usd: 0 });
 
-  const ledger = readLedger(path.join(root, ".klaus/figma/ledger.json"));
-  assert.deepEqual(ledger.components, { Button: ["1.0.0"], Card: ["1.0.0"] });
-  assert.deepEqual((await figma.plan(ctx)).items, [], "a written version is not planned again");
+  const ledgerPath = path.join(root, ".klaus/figma/ledger.json");
+  const ledger = readLedger(ledgerPath);
+  assert.deepEqual(ledger.components, { Button: { "1.0.0": "generated" }, Card: { "1.0.0": "generated" } });
+  assert.deepEqual((await figma.plan(ctx)).items.map((i) => i.id), ["Button", "Card"], "a code file alone does not count as written");
+
+  // The relay records a unit sent once use_figma confirms it. Then it is not planned again.
+  recordComponent(ledger, "Button", "1.0.0", SENT);
+  recordComponent(ledger, "Card", "1.0.0", SENT);
+  writeFileSync(ledgerPath, JSON.stringify(ledger));
+  assert.deepEqual((await figma.plan(ctx)).items, [], "a sent version is not planned again");
 
   // The code is what use_figma runs.
   const ran = await runCode(code, newFigma());
@@ -226,7 +238,7 @@ test("a component whose capture fails is reported failed and the others are writ
 
   assert.deepEqual(result.written, ["Button"]);
   assert.deepEqual(result.failed, [{ id: "Card", error: "No story found for Card." }]);
-  assert.deepEqual(readLedger(path.join(root, ".klaus/figma/ledger.json")).components, { Button: ["1.0.0"] }, "a failed component is not recorded");
+  assert.deepEqual(readLedger(path.join(root, ".klaus/figma/ledger.json")).components, { Button: { "1.0.0": "generated" } }, "a failed component is not recorded");
 });
 
 test("a Storybook build that cannot be opened fails every component with the reason", async () => {
@@ -289,7 +301,8 @@ test("screenshots become an upload list, and a retention file runs after the upl
 
   const retention = readFileSync(path.join(outputOf(root, "v3.0.0"), "figma-retention.js"), "utf8");
   assert.ok(/"keep":5/.test(retention) && retention.includes('"/settings"'));
-  assert.deepEqual(readLedger(path.join(root, ".klaus/figma/ledger.json")).screens, { "/settings": ["v3.0.0"] });
+  assert.deepEqual(readLedger(path.join(root, ".klaus/figma/ledger.json")).screens, { "/settings": { "v3.0.0": "generated" } });
+  assert.deepEqual(manifest.ledgerEntries, { "screen:/settings": { kind: "screen", route: "/settings", release: "v3.0.0" } });
   // The upload costs a call, and the retention file another.
   assert.equal(result.actual.calls, 2);
 });

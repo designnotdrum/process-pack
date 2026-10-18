@@ -19,7 +19,7 @@ import { selectComponents } from "../../frame/components.mjs";
 import { writeJsonFile } from "../../frame/json-file.mjs";
 import { packUnits } from "./batch.mjs";
 import { captureComponent, captureScreen, openStorybook, readStoryIndex, storyCandidates } from "./capture.mjs";
-import { hasComponent, hasScreen, readLedger, recordComponent, recordScreen } from "./ledger.mjs";
+import { anyVersionSent, componentSent, readLedger, recordComponent, recordScreen, screenSent } from "./ledger.mjs";
 import { screenRoutes, uploadFor } from "./screens.mjs";
 import {
   CHARS_PER_TOKEN,
@@ -36,6 +36,9 @@ import { buildComponentUnit, buildScreenUnit, describe } from "./spec.mjs";
 
 /** A component the versioning step has not numbered yet is written as this. */
 export const DEFAULT_VERSION = "1.0.0";
+
+/** Version 2 adds ledgerEntries, which the relay needs to record what it sent. */
+export const MANIFEST_VERSION = 2;
 
 /** Figma allows a few hundred variants in a set. Past this, the set is not worth drawing. */
 const MAX_VARIANTS = 256;
@@ -88,11 +91,12 @@ export function createAdapter(browser = {}) {
       const retry = new Set(ctx.unwrittenFromLastRun);
       const items = [];
 
-      const picked = selectComponents(ctx.inventory, ctx.selection, { isNew: (c) => !ledger.components[c.name] });
+      // A component is new to Figma until the relay has sent one of its versions.
+      const picked = selectComponents(ctx.inventory, ctx.selection, { isNew: (c) => !anyVersionSent(ledger, c.name) });
       for (const entry of picked) {
         if (entry.kind === "icon-set") continue;
         const version = entry.version || DEFAULT_VERSION;
-        if (hasComponent(ledger, entry.name, version) && !retry.has(entry.name)) continue;
+        if (componentSent(ledger, entry.name, version) && !retry.has(entry.name)) continue;
         // A component with no story cannot be drawn. Leave it out of the plan instead of failing every run.
         if (stories && storyCandidates(stories, entry.name, options.stories[entry.name]).length === 0) continue;
         items.push({
@@ -109,7 +113,7 @@ export function createAdapter(browser = {}) {
 
       for (const route of screenRoutes(ctx.selection.screens, ctx.inventory)) {
         const id = `screen:${route}`;
-        if (hasScreen(ledger, route, release) && !retry.has(id)) continue;
+        if (screenSent(ledger, route, release) && !retry.has(id)) continue;
         items.push({ id, kind: "screen", route, release, page: SCREENS_PAGE, editable: options.editableScreens });
       }
       return { items };
@@ -217,21 +221,28 @@ export function createAdapter(browser = {}) {
         tokens: Math.ceil(chars / CHARS_PER_TOKEN) + uploads.length * TOKENS_PER_SCREEN_IMAGE,
         usd: 0,
       };
+      const sendable = units.filter((u) => packed.has(u.id));
       const manifest = {
-        schemaVersion: 1,
+        schemaVersion: MANIFEST_VERSION,
         output: "figma",
         fileKey: fileKeyOf(ctx.settings.target),
         release,
         generatedAt: new Date().toISOString(),
         files: files.map((file) => ({ name: file.name, chars: file.code.length, units: file.units.map((unit) => unit.id) })),
+        // What the relay records in the ledger for each unit once use_figma confirms it.
+        ledgerEntries: Object.fromEntries([
+          ...sendable.map((unit) => [unit.id, ledgerEntryOf(unit)]),
+          ...uploads.map((upload) => [upload.id, { kind: "screen", route: upload.screen, release: upload.release }]),
+        ]),
         uploads,
         afterUploads: afterUploads ? { name: afterUploads.name, chars: afterUploads.code.length } : null,
         warnings: [...new Set(warnings)],
       };
       writeJsonFile(path.join(directory, "manifest.json"), manifest);
 
+      // Generated, not sent: only the relay records a unit as sent, after use_figma confirms it.
       const ledger = readLedger(ledgerFile(root, options));
-      for (const unit of units.filter((u) => packed.has(u.id))) {
+      for (const unit of sendable) {
         if (unit.kind === "component") recordComponent(ledger, unit.name, unit.version);
         else if (unit.kind === "screen") recordScreen(ledger, unit.route, unit.release);
       }
@@ -277,6 +288,11 @@ async function buildComponent(storybook, item, options, readComponent) {
     story: options.stories[item.name],
   });
   return buildComponentUnit({ item, capture, options });
+}
+
+function ledgerEntryOf(unit) {
+  if (unit.kind === "component") return { kind: "component", name: unit.name, version: unit.version };
+  return { kind: "screen", route: unit.route, release: unit.release };
 }
 
 /** The file key from a key or a Figma URL, or null when the target is neither. */
