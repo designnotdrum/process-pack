@@ -16,11 +16,17 @@ export class UserError extends Error {}
  * @returns {import('./rank.mjs').Vocabulary}
  */
 export function readVocabulary(file) {
-  let raw
+  let text
   try {
-    raw = JSON.parse(fs.readFileSync(file, 'utf8'))
+    text = fs.readFileSync(file, 'utf8')
   } catch (error) {
     if (error.code === 'ENOENT') throw new UserError(`The vocabulary file ${file} does not exist.`)
+    throw new UserError(`Could not read the vocabulary file ${file}: ${error.message}`)
+  }
+  let raw
+  try {
+    raw = JSON.parse(text)
+  } catch (error) {
     throw new UserError(`The vocabulary file ${file} is not valid JSON: ${error.message}`)
   }
   const isWords = (list) => Array.isArray(list) && list.every((word) => typeof word === 'string' && word.trim())

@@ -59,6 +59,11 @@ describe('renderFind', () => {
     assert.match(copies, /The same name is also in: `apps\/web\/app\/components\/ui\/skeleton\.tsx`/)
   })
 
+  test('falls back to the file when a local component has no route', () => {
+    const pool = { entries: [entry('OrdersTable', { kind: 'local', file: 'apps/web/app/orders/OrdersTable.tsx' })] }
+    assert.match(renderFind('orders table', rank(pool, 'orders table')), /local to apps\/web\/app\/orders\/OrdersTable\.tsx/)
+  })
+
   test('says nothing fits below the threshold, still lists the closest, and points to the case', () => {
     const text = renderFind(WEAK, rank(inventory, WEAK))
     assert.match(text, /Nothing fits\. No component scores 0\.20 or more/)

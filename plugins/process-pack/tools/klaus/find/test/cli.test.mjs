@@ -121,6 +121,26 @@ describe('errors the person can fix', () => {
     }
   })
 
+  test('an inventory that cannot be read is not called invalid JSON', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'klaus-find-unreadable-'))
+    try {
+      fs.mkdirSync(path.join(repo, 'inventory.json'))
+      const { code, err } = run(['tooltip'], { cwd: repo })
+      assert.equal(code, 2)
+      assert.match(err, /Could not read the inventory .*inventory\.json/)
+      assert.doesNotMatch(err, /not valid JSON/)
+      fs.rmSync(path.join(repo, 'inventory.json'), { recursive: true })
+      fs.writeFileSync(path.join(repo, 'inventory.json'), JSON.stringify(inventory))
+      fs.mkdirSync(path.join(repo, 'vocabulary.json'))
+      const vocab = run(['--vocabulary', 'vocabulary.json', 'tooltip'], { cwd: repo })
+      assert.equal(vocab.code, 2)
+      assert.match(vocab.err, /Could not read the vocabulary file/)
+      assert.doesNotMatch(vocab.err, /not valid JSON/)
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
   test('an inventory that is not JSON, or not this version', () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'klaus-find-bad-'))
     try {
@@ -155,13 +175,27 @@ describe('errors the person can fix', () => {
 })
 
 describe('readInventory', () => {
-  test('fills in what a partial entry leaves out', () => {
+  test('fills in what a partial entry leaves out, and counts the entries it cannot use', () => {
     const file = path.join(root, 'partial.json')
-    fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, entries: [{ name: 'Bare' }, { nope: true }] }))
+    fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, entries: [{ name: 'Bare' }, { nope: true }, null] }))
     const read = readInventory(file)
     assert.deepEqual(read.folders, [])
+    assert.equal(read.skipped, 2)
     assert.equal(read.entries.length, 1)
     assert.deepEqual(read.entries[0], { kind: 'app', file: '', purpose: null, name: 'Bare', props: [], variants: {}, parts: [], usedIn: [] })
+  })
+
+  test('the command warns on stderr about entries it skipped and still answers', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'klaus-find-skip-'))
+    try {
+      fs.writeFileSync(path.join(repo, 'inventory.json'), JSON.stringify({ schemaVersion: 1, entries: [entry('Tooltip'), { nope: true }] }))
+      const { code, out, err } = run(['tooltip'], { cwd: repo })
+      assert.equal(code, 0)
+      assert.match(out, /1\. Tooltip/)
+      assert.equal(err, 'Skipped 1 inventory entry with no name. Write the inventory again if that is not expected.\n')
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true })
+    }
   })
 })
 
@@ -175,11 +209,29 @@ describe('as a process', () => {
     assert.match(bad.stderr, /Say what the new component is for/)
   })
 
-  test('runs through a link to the script, as a copied folder might be called', () => {
+  test('runs through a link to the script', () => {
     const link = path.join(root, 'link.mjs')
     fs.symlinkSync(script, link)
     const result = spawnSync(process.execPath, [link, '--root', root, 'tooltip'], { encoding: 'utf8' })
     assert.equal(result.status, 0)
     assert.match(result.stdout, /1\. Tooltip/)
+  })
+
+  test('runs from a copy of the folder, as design-onboard installs it', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'klaus-find-copy-'))
+    try {
+      const installed = path.join(repo, 'scripts', 'klaus', 'find')
+      fs.cpSync(path.dirname(script), installed, { recursive: true, filter: (source) => !source.includes(`${path.sep}test`) })
+      const copy = path.join(installed, 'find.mjs')
+      const missing = spawnSync(process.execPath, [copy, 'tooltip'], { cwd: repo, encoding: 'utf8' })
+      assert.equal(missing.status, 2)
+      assert.match(missing.stderr, /Write one with: node scripts\/klaus\/inventory\/inventory\.mjs/)
+      fs.writeFileSync(path.join(repo, 'inventory.json'), JSON.stringify(inventory))
+      const found = spawnSync(process.execPath, [copy, 'tooltip'], { cwd: repo, encoding: 'utf8' })
+      assert.equal(found.status, 0)
+      assert.match(found.stdout, /1\. Tooltip/)
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true })
+    }
   })
 })

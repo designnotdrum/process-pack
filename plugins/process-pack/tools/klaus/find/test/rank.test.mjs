@@ -105,10 +105,17 @@ describe('rank', () => {
     assert.equal(ranking.candidates[0].name, 'Stepper')
   })
 
-  test('says nothing fits when even the best component is under the threshold', () => {
+  test('says nothing fits when no component shares a word with the purpose', () => {
     const ranking = rank(inventory, 'a dial showing how confident the team is in a hypothesis, from 0 to 100')
     assert.equal(ranking.nothingFits, true)
-    assert.ok(ranking.candidates.length === 0 || ranking.candidates[0].score < THRESHOLD)
+    assert.deepEqual(ranking.candidates, [])
+  })
+
+  test('says nothing fits when the best component is under the threshold', () => {
+    const ranking = rank(inventory, 'tooltip alpha beta gamma delta epsilon zeta eta theta iota kappa lambda')
+    assert.equal(ranking.nothingFits, true)
+    assert.ok(ranking.candidates.length > 0, 'the closest components are still listed')
+    assert.ok(ranking.candidates[0].score < THRESHOLD, `best score ${ranking.candidates[0].score} is below ${THRESHOLD}`)
   })
 
   test('applies the threshold to the best score', () => {
@@ -173,9 +180,11 @@ describe('rank', () => {
     assert.deepEqual(skeletons[0].alsoAt, ['apps/web/app/components/ui/skeleton.tsx'])
   })
 
-  test('keeps two icon sets apart', () => {
+  test('keeps two icon sets apart, even when the file is missing', () => {
     const pool = { entries: [entry('Icon set', { kind: 'icon-set', file: 'a/icons', icons: ['Moon'] }), entry('Icon set', { kind: 'icon-set', file: 'b/icons', icons: ['Moon'] })] }
     assert.equal(rank(pool, 'moon').candidates.length, 2)
+    const bare = { entries: [entry('Icon set', { kind: 'icon-set', file: '', icons: ['Moon'] }), entry('Icon set', { kind: 'icon-set', file: '', icons: ['Moon'] })] }
+    assert.equal(rank(bare, 'moon').candidates.length, 1)
   })
 
   test('is the same every time, with ties broken by shared first and then by name', () => {

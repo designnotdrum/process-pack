@@ -11,7 +11,7 @@ const code = (text) => `\`${text}\``
 const score = (candidate) => candidate.score.toFixed(2)
 
 function where(candidate) {
-  if (candidate.kind === 'local') return `local to ${candidate.route}`
+  if (candidate.kind === 'local') return `local to ${candidate.route ?? candidate.file}`
   return candidate.kind === 'icon-set' ? 'icon set' : candidate.kind
 }
 

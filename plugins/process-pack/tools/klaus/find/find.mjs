@@ -39,32 +39,40 @@ const OPTIONS = {
 const USAGE = 'Usage: find.mjs [--case] [--root <dir>] [--inventory <file>] [--vocabulary <file>] "<what the new component is for>"'
 
 /** The command that writes inventory.json, as it can be typed from where the person is. */
-function inventoryCommand() {
+function inventoryCommand(cwd) {
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'inventory', 'inventory.mjs')
-  return `node ${path.relative(process.cwd(), script) || script}`
+  return `node ${path.relative(cwd, script) || script}`
 }
 
 /**
- * Reads inventory.json and fills in anything an older or partial file leaves out.
+ * Reads inventory.json and fills in anything an older or partial file leaves out. `skipped` counts
+ * the entries that have no name and so cannot be matched.
  *
  * @param {string} file
+ * @param {string} [cwd] Where the person is, so the command it suggests can be typed from there.
  */
-export function readInventory(file) {
+export function readInventory(file, cwd = process.cwd()) {
+  let text
+  try {
+    text = fs.readFileSync(file, 'utf8')
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new UserError(`There is no inventory at ${file}. Write one with: ${inventoryCommand(cwd)}`)
+    throw new UserError(`Could not read the inventory ${file}: ${error.message}`)
+  }
   let raw
   try {
-    raw = JSON.parse(fs.readFileSync(file, 'utf8'))
+    raw = JSON.parse(text)
   } catch (error) {
-    if (error.code === 'ENOENT') throw new UserError(`There is no inventory at ${file}. Write one with: ${inventoryCommand()}`)
     throw new UserError(`The inventory ${file} is not valid JSON: ${error.message}`)
   }
   if (raw?.schemaVersion !== 1 || !Array.isArray(raw.entries)) {
-    throw new UserError(`${file} is not an inventory this version of Klaus can read (schemaVersion 1 with a list of entries). Write a new one with: ${inventoryCommand()}`)
+    throw new UserError(`${file} is not an inventory this version of Klaus can read (schemaVersion 1 with a list of entries). Write a new one with: ${inventoryCommand(cwd)}`)
   }
+  const named = raw.entries.filter((entry) => entry && typeof entry.name === 'string')
   return {
     folders: Array.isArray(raw.folders) ? raw.folders : [],
-    entries: raw.entries
-      .filter((entry) => entry && typeof entry.name === 'string')
-      .map((entry) => ({ kind: 'app', file: '', purpose: null, ...entry, props: entry.props ?? [], variants: entry.variants ?? {}, parts: entry.parts ?? [], usedIn: entry.usedIn ?? [] })),
+    skipped: raw.entries.length - named.length,
+    entries: named.map((entry) => ({ kind: 'app', file: '', purpose: null, ...entry, props: entry.props ?? [], variants: entry.variants ?? {}, parts: entry.parts ?? [], usedIn: entry.usedIn ?? [] })),
   }
 }
 
@@ -91,9 +99,10 @@ export function main(argv, { out = (text) => process.stdout.write(text), err = (
     if (!purpose) throw new UserError(`Say what the new component is for, in a few words.\n${USAGE}`)
 
     const root = path.resolve(cwd, values.root ?? '.')
-    const inventory = readInventory(path.resolve(cwd, values.inventory ?? path.join(root, 'inventory.json')))
+    const inventory = readInventory(path.resolve(cwd, values.inventory ?? path.join(root, 'inventory.json')), cwd)
     const vocabularyFile = values.vocabulary ? path.resolve(cwd, values.vocabulary) : path.join(root, 'klaus.find.json')
-    const vocabulary = values.vocabulary || fs.existsSync(vocabularyFile) ? readVocabulary(vocabularyFile) : {}
+    const vocabulary = (values.vocabulary || fs.existsSync(vocabularyFile)) ? readVocabulary(vocabularyFile) : {}
+    if (inventory.skipped) err(`Skipped ${inventory.skipped} inventory ${inventory.skipped === 1 ? 'entry' : 'entries'} with no name. Write the inventory again if that is not expected.\n`)
 
     const ranking = rank(inventory, purpose, { vocabulary })
     if (!ranking.asked.length) throw new UserError(`Nothing in "${purpose}" can be matched. Say what the new component is for, in a few words.`)
