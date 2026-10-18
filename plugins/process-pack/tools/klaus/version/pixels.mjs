@@ -30,6 +30,7 @@ export async function loadPixelDiff(root, choice = 'auto') {
     throw new UserError(`Could not load the pixel diff ${file}: ${error.message.split('\n')[0]} Run Klaus with --diff bundled to use the bundled diff instead.`)
   }
   if (typeof loaded.diffMask !== 'function' || typeof loaded.findRegions !== 'function') throw new UserError(`${file} must export diffMask and findRegions.`)
+  // A module that does not export `readPng` has its PNGs read by the bundled reader.
   return { name: choice === 'auto' ? 'dieter' : file, lib: { ...bundled, ...loaded } }
 }
 

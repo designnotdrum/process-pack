@@ -104,7 +104,7 @@ A capture counts as changed when the repo's own pixel diff leaves at least one r
 
 - `auto` (default) uses `scripts/dieter/regression/diff.mjs`, Meridian's Dieter diff, when the repo has that file. The noise threshold is then the one the repo's regression check uses.
 - Without it, a bundled diff is used (`bundled-diff.mjs`, `png.mjs`). It needs no install. It is a port of pixelmatch 8.0.0, the version Meridian pins, with Dieter's settings (colour threshold 0.1, anti-aliased pixels ignored, a group of changed pixels on an 8 px grid dropped when under ten pixels). A different pixelmatch version measures colour another way, so a repo whose own diff uses one should pass it with `--diff <path>`.
-- `--diff bundled` forces the bundled diff. `--diff <path>` loads a module that exports `diffMask` and `findRegions` the way Dieter's does.
+- `--diff bundled` forces the bundled diff. `--diff <path>` loads a module that exports `diffMask` and `findRegions` the way Dieter's does. A module that does not also export `readPng` has its PNGs read by the bundled reader.
 
 The bundled PNG reader reads every colour type and bit depth, one pass. It does not read interlaced files, and it ignores a colour key in `tRNS`.
 

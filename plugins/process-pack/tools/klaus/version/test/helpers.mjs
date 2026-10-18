@@ -88,7 +88,9 @@ const paeth = (a, b, c) => {
   const pa = Math.abs(p - a)
   const pb = Math.abs(p - b)
   const pc = Math.abs(p - c)
-  return pa <= pb && pa <= pc ? a : pb <= pc ? b : c
+  if (pa <= pb && pa <= pc) return a
+  if (pb <= pc) return b
+  return c
 }
 
 /** Applies PNG row filter `type` (0 none, 1 sub, 2 up, 3 average, 4 paeth) to a row. */
@@ -98,7 +100,8 @@ function filterRow(type, row, previous, step) {
     const left = i >= step ? row[i - step] : 0
     const up = previous ? previous[i] : 0
     const upLeft = previous && i >= step ? previous[i - step] : 0
-    const predicted = [0, left, up, (left + up) >> 1, paeth(left, up, upLeft)][type]
+    // The average filter predicts floor((left + up) / 2), as the PNG specification says.
+    const predicted = [0, left, up, Math.floor((left + up) / 2), paeth(left, up, upLeft)][type]
     out[i] = (row[i] - predicted) & 0xff
   }
   return out

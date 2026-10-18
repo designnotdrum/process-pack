@@ -64,7 +64,17 @@ describe('the bundled PNG reader', () => {
     const interlaced = encodeRawPng({ width: 1, height: 1, rows: [Buffer.from([1, 2, 3, 4])], interlace: 1 })
     assert.throws(() => readPng(interlaced), /interlaced/)
     const whole = squarePng(4, 4)
-    assert.throws(() => readPng(whole.subarray(0, whole.length - 30)), UserError)
+    assert.throws(() => readPng(whole.subarray(0, whole.length - 30)), (e) => e instanceof UserError && /cut short/.test(e.message))
+  })
+
+  test('refuses a header of the wrong size and a pixel that names a colour the palette does not have', () => {
+    const png = squarePng(2, 2)
+    const header = Buffer.from(png)
+    header.writeUInt32BE(12, 8) // the IHDR chunk now claims 12 bytes instead of 13
+    assert.throws(() => readPng(header), /header is the wrong size/)
+
+    const outOfRange = encodeRawPng({ width: 2, height: 1, color: 3, rows: [Buffer.from([0, 2])], palette: [0, 0, 0, 255, 255, 255] })
+    assert.throws(() => readPng(outOfRange), (e) => e instanceof UserError && /palette index/.test(e.message))
   })
 })
 
@@ -112,7 +122,11 @@ describe('the bundled pixel diff', () => {
   test('does not count a change to the soft pixels on the edge of a shape', () => {
     // Black on the left, white on the right, and a column of grey between them. The grey column
     // moves from one shade to another: that is the anti-aliasing of an edge, not a new shape.
-    const edge = (grey) => readPng(rgbaPng(40, 40, (x) => (x < 20 ? BLACK : x === 20 ? [grey, grey, grey, 255] : WHITE)))
+    const column = (x, grey) => {
+      if (x < 20) return BLACK
+      return x === 20 ? [grey, grey, grey, 255] : WHITE
+    }
+    const edge = (grey) => readPng(rgbaPng(40, 40, (x) => column(x, grey)))
     assert.equal(bundled.diffMask(edge(128), edge(90)).count, 0)
     assert.equal(bundled.diffMask(edge(128), edge(90), { threshold: 0.1, includeAA: true }).count, 40)
   })
@@ -202,6 +216,13 @@ export function findRegions() { return { regions: [{ pixels: 99, box: { x0: 0, y
     writeFiles(root, { 'tools/mine.mjs': fakeDiff('mine') })
     const choice = await loadPixelDiff(root, 'tools/mine.mjs')
     assert.equal(choice.lib.marker, 'mine')
+    const [a, b] = [squarePng(10, 10), squarePng(10, 10)].map((png, i) => {
+      const file = path.join(root, `${i}.png`)
+      fs.writeFileSync(file, png)
+      return file
+    })
+    // The module's diff reports a change in identical captures, so it is the one deciding.
+    assert.deepEqual(capturesDiffer(choice.lib, a, b), { changed: true, detail: '1 changed region, 99 pixels' })
   })
 
   test('says what is wrong when the module is missing or incomplete, or cannot load', async () => {

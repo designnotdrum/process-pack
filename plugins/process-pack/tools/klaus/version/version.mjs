@@ -18,7 +18,7 @@ import { UserError } from '../frame/errors.mjs'
 import { readJsonFile, writeJsonFile } from '../frame/json-file.mjs'
 import { loadTypeScript } from '../inventory/components.mjs'
 import { toPosix } from '../inventory/files.mjs'
-import { BASELINE, bumpVersion, higher, isVersion } from './bump.mjs'
+import { BASELINE, bumpVersion, higher, isVersion, LEVELS } from './bump.mjs'
 import { capturesDiffer, loadPixelDiff } from './pixels.mjs'
 import { compareTrees } from './props.mjs'
 import { headCommit, resolveCommit, snapshotCommit } from './snapshot.mjs'
@@ -63,8 +63,9 @@ export function readCaptures(file) {
 /**
  * Pairs each entry with the entry it was in the previous inventory: the same name in the same
  * file, else the only unclaimed entry of that name. A component that moved keeps its version.
+ * An entry that matches several candidates is left unpaired, with a note saying why.
  */
-function matchPrevious(entries, previousEntries) {
+function matchPrevious(entries, previousEntries, notes) {
   const claimed = new Set()
   const matches = new Map()
   const unmatched = []
@@ -80,6 +81,8 @@ function matchPrevious(entries, previousEntries) {
     if (same.length === 1) {
       claimed.add(same[0])
       matches.set(entry, same[0])
+    } else if (same.length > 1) {
+      notes.push(`${entry.name}: ${same.length} entries with this name were in the previous inventory (${same.map((p) => p.file).join(', ')}), so it was treated as new.`)
     }
   }
   return matches
@@ -88,16 +91,42 @@ function matchPrevious(entries, previousEntries) {
 const describeChange = (c) => `${c.kind}: ${c.where}${c.detail ? ` (${c.detail})` : ''}`
 
 function summarizeChanges(changes) {
-  const live = changes.filter((c) => c.level !== 'none').sort((a, b) => (a.level === b.level ? 0 : a.level === 'major' ? -1 : 1))
+  const live = changes.filter((c) => c.level !== 'none').sort((a, b) => LEVELS.indexOf(b.level) - LEVELS.indexOf(a.level))
   const shown = live.slice(0, SHOWN_REASONS).map(describeChange)
   return live.length > SHOWN_REASONS ? [...shown, `and ${live.length - SHOWN_REASONS} more`] : shown
 }
 
-/** One folder per entry under the screenshot store. Two entries with the same name are told apart by their file. */
+/**
+ * One folder per entry under the screenshot store. Two entries with the same name are told apart by
+ * their file, and a key that still repeats (`a b.tsx` and `a-b.tsx` both slug to `a-b.tsx`) gets a number.
+ */
 function storeKeys(entries) {
   const counts = new Map()
   for (const entry of entries) counts.set(entry.name, (counts.get(entry.name) ?? 0) + 1)
-  return new Map(entries.map((entry) => [entry, counts.get(entry.name) > 1 ? `${slug(entry.file)}--${slug(entry.name)}` : slug(entry.name)]))
+  const used = new Set()
+  return new Map(
+    entries.map((entry) => {
+      const base = counts.get(entry.name) > 1 ? `${slug(entry.file)}--${slug(entry.name)}` : slug(entry.name)
+      let key = base
+      for (let n = 2; used.has(key); n++) key = `${base}-${n}`
+      used.add(key)
+      return [entry, key]
+    }),
+  )
+}
+
+/** The version an entry carries, or the baseline when it carries none. */
+const versionOf = (entry) => (isVersion(entry.version) ? entry.version : BASELINE)
+
+function entryLevel({ baseline, old, level }) {
+  if (baseline) return 'baseline'
+  return old ? level : 'new'
+}
+
+function screenReason({ baseline, old, visual }) {
+  if (baseline) return 'baseline'
+  if (!old) return 'new in this release'
+  return visual?.changed ? `capture changed (${visual.detail})` : null
 }
 
 /**
@@ -132,7 +161,7 @@ export async function pickVersions({ root: given, inventory, previous, from, rel
     if (previous.versioned?.release === release) throw new UserError(`The previous inventory already holds the versions for ${release}. Running it again would bump them twice.`)
     previousEntries = listEntries(previous, 'The previous inventory')
   }
-  const matches = matchPrevious(entries, previousEntries)
+  const matches = matchPrevious(entries, previousEntries, notes)
   // The diff is loaded only when there is a capture to compare. A baseline compares nothing.
   const hasCaptures = Object.keys(captures.components).length + Object.keys(captures.screens).length > 0
   const pixelDiff = !baseline && hasCaptures ? await loadPixelDiff(root, diff) : null
@@ -218,7 +247,7 @@ export async function pickVersions({ root: given, inventory, previous, from, rel
     let screenshot = baseline ? '' : (old?.screenshot ?? '')
     if (capture && (bumped || !comparable)) screenshot = keep(capture, path.join(store, 'components', keys.get(entry), `${version}.png`))
 
-    reportEntries.push({ name: entry.name, file: entry.file, previous: old ? (isVersion(old.version) ? old.version : BASELINE) : null, version, level: baseline ? 'baseline' : old ? level : 'new', reasons, changes })
+    reportEntries.push({ name: entry.name, file: entry.file, previous: old ? versionOf(old) : null, version, level: entryLevel({ baseline, old, level }), reasons, changes })
     return { ...entry, version, screenshot }
   })
 
@@ -243,7 +272,7 @@ export async function pickVersions({ root: given, inventory, previous, from, rel
     let screenshot = old?.screenshot ?? ''
     if (changed || !comparable) screenshot = keep(capture, path.join(store, 'screens', encodeURIComponent(route), `${slug(version)}.png`))
     screens.push({ route, version, screenshot })
-    reportScreens.push({ route, previous: old?.version ?? null, version, changed, reason: baseline ? 'baseline' : !old ? 'new in this release' : visual?.changed ? `capture changed (${visual.detail})` : null })
+    reportScreens.push({ route, previous: old?.version ?? null, version, changed, reason: screenReason({ baseline, old, visual }) })
   }
 
   if (!dryRun) {

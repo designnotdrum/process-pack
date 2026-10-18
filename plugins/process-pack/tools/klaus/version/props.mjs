@@ -119,11 +119,17 @@ function exportedValues(ts, checker, sourceFile) {
     const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0]
     if (!declaration || declaration.getSourceFile() !== sourceFile || !(symbol.flags & ts.SymbolFlags.Value)) continue
     const isDefault = exported.getName() === 'default'
-    const name = isDefault ? (symbol.getName() !== 'default' ? symbol.getName() : declaration.name?.text ?? pascalCase(path.basename(sourceFile.fileName))) : exported.getName()
+    const name = isDefault ? defaultName(symbol, declaration, sourceFile) : exported.getName()
     // `export function X` plus `export default X` is one component. The named export wins.
     if (!isDefault || !found.has(name)) found.set(name, { symbol, declaration })
   }
   return found
+}
+
+/** A default export is named for its declaration, else for its file, the way the inventory names it. */
+function defaultName(symbol, declaration, sourceFile) {
+  if (symbol.getName() !== 'default') return symbol.getName()
+  return declaration.name?.text ?? pascalCase(path.basename(sourceFile.fileName))
 }
 
 /** The type of the first parameter, or of `props` on a class instance. */
@@ -226,7 +232,8 @@ function createDiffer(ts, checker) {
         if (nb && na) {
           const nested = []
           diffProps({ before: nb.props, after: na.props, prefix: `${where}${nb.suffix}.`, depth: depth + 1, out: nested, textOnly, sources })
-          nestedChanges = nested.length
+          // A nested change that only rewrites a type the same way does not stand in for the prop's own check.
+          nestedChanges = nested.filter((c) => c.level !== 'none').length
           out.push(...nested)
         }
       }
@@ -241,9 +248,12 @@ function createDiffer(ts, checker) {
         const printedBefore = print(b.type)
         const printedAfter = print(a.type)
         const same = flagChanged ? was.join('|') === now.join('|') : printedBefore === printedAfter
-        const exact = textOnly || !assignable
-        const forward = exact ? same : flagChanged ? acceptsAllButUndefined(b.type, a.type) : assignable(b.type, a.type)
-        const backward = exact ? same : flagChanged ? acceptsAllButUndefined(a.type, b.type) : assignable(a.type, b.type)
+        const accepts = (from, to) => {
+          if (textOnly || !assignable) return same
+          return flagChanged ? acceptsAllButUndefined(from, to) : assignable(from, to)
+        }
+        const forward = accepts(b.type, a.type)
+        const backward = accepts(a.type, b.type)
         const delta = [...was.filter((m) => !now.includes(m)).map((m) => `- ${m}`), ...now.filter((m) => !was.includes(m)).map((m) => `+ ${m}`)].join(', ')
         if (forward && backward) {
           if (!same && !flagChanged) add('none', 'type rewritten, same meaning', where, b.local, delta || `${printedBefore} -> ${printedAfter}`)

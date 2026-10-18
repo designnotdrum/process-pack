@@ -10,6 +10,7 @@ import { UserError } from '../frame/errors.mjs'
  * with large assets costs no more to read than one without.
  */
 const NEEDED = /\.(?:[cm]?[jt]sx?|json)$/
+const LOCKFILE = /(?:^|\/)(?:package-lock|npm-shrinkwrap)\.json$/
 const MAX_FILE_BYTES = 1_000_000
 
 function git(root, args, options = {}) {
@@ -44,14 +45,17 @@ function readBlobs(root, ids) {
   const out = new Map()
   if (!ids.length) return out
   const run = spawnSync('git', ['-C', root, 'cat-file', '--batch'], { input: `${ids.join('\n')}\n`, maxBuffer: 1 << 30 })
+  if (run.error) throw new UserError(`Could not run git cat-file in ${root}: ${run.error.message}`)
   if (run.status !== 0) throw new UserError(`git cat-file failed in ${root}.`)
   const data = run.stdout
   let at = 0
   while (at < data.length) {
     const eol = data.indexOf(0x0a, at)
+    if (eol < 0) throw new UserError(`git cat-file returned an incomplete answer in ${root}.`)
     const [id, type, size] = data.toString('utf8', at, eol).split(' ')
     if (type === 'missing') throw new UserError(`git could not find the file ${id}.`)
     const length = Number(size)
+    if (!Number.isInteger(length) || eol + 1 + length + 1 > data.length) throw new UserError(`git cat-file returned an incomplete answer in ${root}.`)
     out.set(id, data.subarray(eol + 1, eol + 1 + length))
     at = eol + 1 + length + 1
   }
@@ -75,7 +79,7 @@ export function snapshotCommit(root, commit) {
     const tab = record.indexOf('\t')
     const [mode, type, id, size] = record.slice(0, tab).split(/\s+/)
     const file = record.slice(tab + 1)
-    if (type !== 'blob' || mode === '120000' || !NEEDED.test(file) || Number(size) > MAX_FILE_BYTES) continue
+    if (type !== 'blob' || mode === '120000' || !NEEDED.test(file) || LOCKFILE.test(file) || Number(size) > MAX_FILE_BYTES) continue
     if (file.split('/').includes('node_modules')) continue
     wanted.push({ id, file })
   }

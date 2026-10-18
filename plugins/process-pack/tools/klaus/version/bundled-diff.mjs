@@ -23,13 +23,13 @@ import { readPng } from './png.mjs'
 
 export { readPng }
 
+// Dieter's settings. Its `maxRegions` is left out because regions are not capped here.
 export const PIXEL = {
   threshold: 0.1,
   includeAA: false,
   minRegionPixels: 10,
   cell: 8,
   gapCells: 2,
-  maxRegions: 6,
 }
 
 // sRGB [0..255] to linear [0..1].

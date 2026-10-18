@@ -38,8 +38,8 @@ function writeCaptures(dir, { components = {}, screens = {} }) {
   fs.mkdirSync(dir, { recursive: true })
   const manifest = { components: {}, screens: {} }
   for (const [section, items] of [['components', components], ['screens', screens]]) {
-    for (const [key, png] of Object.entries(items)) {
-      const file = `${section}-${key.replace(/\W+/g, '_')}.png`
+    for (const [index, [key, png]] of Object.entries(items).entries()) {
+      const file = `${section}-${index}-${key.replace(/\W+/g, '_')}.png`
       fs.writeFileSync(path.join(dir, file), png)
       manifest[section][key] = file
     }
@@ -261,6 +261,14 @@ describe('three releases of a small component library', () => {
     assert.ok(run.report.notes.some((n) => n.startsWith('Delta: the stored screenshot') && n.includes('9.9.9.png')))
   })
 
+  test('a release with no captures at all still carries every screen and screenshot forward', async () => {
+    const run = await pickVersions({ root: repo, inventory: buildInventory({ root: repo, folders: FOLDERS }), previous: third.inventory, from: 'v1.2.0', release: 'v1.3.0', dryRun: true })
+    assert.deepEqual(run.inventory.screens, third.inventory.screens)
+    assert.equal(run.report.pixelDiff, null)
+    for (const e of run.inventory.entries) assert.equal(e.screenshot, entryOf(third.inventory, e.name).screenshot)
+    assert.deepEqual(run.report.entries.map((e) => e.level), ['none', 'none', 'none', 'none', 'none', 'none', 'none'])
+  })
+
   test('a capture for a name the inventory does not have is reported', async () => {
     const captures = readCaptures(writeCaptures(tmpDir('klaus-caps'), { components: { Nothing: white } }))
     const run = await pickVersions({ root: repo, inventory: buildInventory({ root: repo, folders: FOLDERS }), previous: third.inventory, from: 'v1.2.0', release: 'v1.3.0', captures, dryRun: true })
@@ -327,6 +335,15 @@ describe('input that cannot be versioned', () => {
     assert.deepEqual(run.report.notes, ['Alpha: packages/ui/src/not-there.tsx does not exist at v1.0.0, so its props were not compared.'])
   })
 
+  test('says so when a name matches several entries of the previous inventory, and treats the entry as new', async () => {
+    const { inventory: baseline } = await pickVersions({ root: repo, inventory: inventory(), baseline: true, release: 'v1.0.0' })
+    const alpha = entryOf(baseline, 'Alpha')
+    baseline.entries = [{ ...alpha, file: 'a/alpha.tsx' }, { ...alpha, file: 'b/alpha.tsx' }]
+    const run = await pickVersions({ root: repo, inventory: inventory(), previous: baseline, from: 'v1.0.0', release: 'v1.1.0' })
+    assert.equal(reportOf(run.report, 'Alpha').level, 'new')
+    assert.deepEqual(run.report.notes, ['Alpha: 2 entries with this name were in the previous inventory (a/alpha.tsx, b/alpha.tsx), so it was treated as new.'])
+  })
+
   test('rejects an inventory that is not one', async () => {
     await assert.rejects(pickVersions({ root: repo, inventory: { entries: [{ name: 'X' }] }, baseline: true }), /without a name and a file/)
     await assert.rejects(pickVersions({ root: repo, inventory: {}, baseline: true }), /entries array/)
@@ -380,6 +397,20 @@ describe('entries that are not a single component', () => {
   })
 })
 
+describe('where screenshots are kept', () => {
+  test('two entries whose names slug to the same folder do not overwrite each other', async () => {
+    const repo = tmpDir('klaus-repo')
+    const entry = (name) => ({ name, kind: 'shared', folder: 'x', file: `src/${name}.tsx`, props: [], variants: {}, parts: [], version: '', screenshot: '', usedIn: [] })
+    const inventory = { schemaVersion: 1, folders: [], entries: [entry('a b'), entry('a-b')] }
+    const captures = readCaptures(writeCaptures(tmpDir('klaus-caps'), { components: { 'a b': white, 'a-b': block6 } }))
+    const { inventory: result } = await pickVersions({ root: repo, inventory, baseline: true, captures })
+    const [first, second] = result.entries.map((e) => e.screenshot)
+    assert.notEqual(first, second)
+    assert.deepEqual(read(repo, first), white)
+    assert.deepEqual(read(repo, second), block6)
+  })
+})
+
 describe('a repo whose root is a folder inside a larger git repo', () => {
   test('reads the old files relative to that folder', async () => {
     const outer = newRepo()
@@ -428,7 +459,9 @@ describe('the command line', () => {
 
     const dry = run(['--root', repo, '--previous', kept, '--from', 'v1.0.0', '--release', 'v1.1.0', '--captures', captures(block6), '--dry-run', '--json'])
     assert.equal(dry.status, 0, dry.stderr)
-    assert.equal(JSON.parse(dry.stdout).entries[0].version, '1.1.0')
+    const dryReport = JSON.parse(dry.stdout)
+    assert.equal(dryReport.entries[0].version, '1.1.0')
+    assert.match(dryReport.entries[0].reasons.join('; '), /type widened: size/)
     assert.equal(JSON.parse(fs.readFileSync(inventoryFile, 'utf8')).entries[0].version, '', 'a dry run writes nothing')
 
     const real = run(['--root', repo, '--previous', kept, '--from', 'v1.0.0', '--release', 'v1.1.0', '--captures', captures(block6)])

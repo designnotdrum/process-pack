@@ -80,6 +80,7 @@ export function readPng(buffer) {
     const type = buffer.toString('latin1', at + 4, at + 8)
     const body = buffer.subarray(at + 8, at + 8 + length)
     if (body.length !== length) throw new UserError('The PNG is cut short.')
+    if (type === 'IHDR' && length !== 13) throw new UserError('The PNG header is the wrong size.')
     if (type === 'IHDR') header = { width: body.readUInt32BE(0), height: body.readUInt32BE(4), depth: body[8], color: body[9], compression: body[10], filter: body[11], interlace: body[12] }
     else if (type === 'PLTE') palette = body
     else if (type === 'tRNS') alphaTable = body
@@ -106,6 +107,7 @@ export function readPng(buffer) {
   if (raw.length !== (rowBytes + 1) * height) throw new UserError('The PNG pixel data is shorter than its header says.')
 
   const pixels = unfilter(raw, rowBytes, height, Math.max(1, bitsPerPixel >> 3))
+  const colours = palette ? Math.floor(palette.length / 3) : 0
   const data = new Uint8Array(width * height * 4)
   for (let y = 0; y < height; y++) {
     const v = rowSamples(pixels.subarray(y * rowBytes, (y + 1) * rowBytes), width * channels, depth, color !== 3)
@@ -115,7 +117,11 @@ export function readPng(buffer) {
       else if (color === 2) data.set([v[x * 3], v[x * 3 + 1], v[x * 3 + 2], 255], out)
       else if (color === 0) data.set([v[x], v[x], v[x], 255], out)
       else if (color === 4) data.set([v[x * 2], v[x * 2], v[x * 2], v[x * 2 + 1]], out)
-      else data.set([palette[v[x] * 3], palette[v[x] * 3 + 1], palette[v[x] * 3 + 2], alphaTable && v[x] < alphaTable.length ? alphaTable[v[x]] : 255], out)
+      else {
+        if (v[x] >= colours) throw new UserError('The PNG uses a palette index that is not in its palette.')
+        const alpha = alphaTable && v[x] < alphaTable.length ? alphaTable[v[x]] : 255
+        data.set([palette[v[x] * 3], palette[v[x] * 3 + 1], palette[v[x] * 3 + 2], alpha], out)
+      }
     }
   }
   return { width, height, data }

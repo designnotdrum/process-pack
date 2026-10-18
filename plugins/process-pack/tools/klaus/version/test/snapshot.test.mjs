@@ -19,6 +19,7 @@ describe('unpacking a commit', () => {
       'packages/ui/src/old.tsx': 'export const Old = 1\n',
       'packages/ui/logo.png': 'not really a png',
       'packages/ui/README.md': 'docs\n',
+      'package-lock.json': '{ "lockfileVersion": 3 }\n',
     })
     const first = commitAll(repo, 'one', 'v1')
     writeFiles(repo, { 'packages/ui/src/old.tsx': 'export const Old = 2\n', 'packages/ui/src/new.tsx': 'export const New = 1\n' })
@@ -35,6 +36,7 @@ describe('unpacking a commit', () => {
       assert.equal(fs.existsSync(path.join(snapshot.dir, 'package.json')), true)
       assert.equal(fs.existsSync(path.join(snapshot.dir, 'packages/ui/logo.png')), false)
       assert.equal(fs.existsSync(path.join(snapshot.dir, 'packages/ui/README.md')), false)
+      assert.equal(fs.existsSync(path.join(snapshot.dir, 'package-lock.json')), false)
     } finally {
       snapshot.remove()
     }
