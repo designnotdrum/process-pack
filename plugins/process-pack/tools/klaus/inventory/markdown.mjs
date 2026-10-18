@@ -13,10 +13,11 @@ function propLine(props) {
   return names.length > SHOWN_PROPS ? `${names.slice(0, SHOWN_PROPS).join(', ')} and ${names.length - SHOWN_PROPS} more` : names.join(', ')
 }
 
-function usedLine(entry) {
+/** Shared folders list importing files and app folders list screens, so the folder's role says which. */
+function usedLine(entry, role) {
   const { usedIn } = entry
   if (!usedIn.length) return 'Not used anywhere yet.'
-  const noun = entry.kind === 'shared' || (entry.kind === 'icon-set' && !usedIn[0].startsWith('/')) ? 'file' : 'screen'
+  const noun = role === 'shared' ? 'file' : 'screen'
   const shown = usedIn.slice(0, SHOWN_USES).map(code).join(', ')
   const more = usedIn.length > SHOWN_USES ? ` and ${usedIn.length - SHOWN_USES} more` : ''
   return `Used in ${plural(usedIn.length, noun)}: ${shown}${more}`
@@ -32,14 +33,14 @@ function purposeLines(entry) {
   return [purpose.useWhen && `- Use when: ${purpose.useWhen}`, purpose.notFor && `- Not for: ${purpose.notFor}`].filter(Boolean)
 }
 
-function entryLines(entry) {
+function entryLines(entry, role) {
   const lines = [`### ${entry.name}`, '', code(entry.file) + (entry.kind === 'local' ? `, local to ${code(entry.route)}` : ''), '', ...purposeLines(entry)]
   if (entry.icons) lines.push(`- Icons (${entry.icons.length}): ${entry.icons.join(', ')}`)
   if (entry.parts.length) lines.push(`- Parts: ${entry.parts.map((p) => p.name).join(', ')}`)
   if (entry.props.length) lines.push(`- Props: ${propLine(entry.props)}`)
   const variants = Object.entries(entry.variants)
   if (variants.length) lines.push(`- Variants: ${variants.map(([name, options]) => `${code(name)} (${options.join(', ')})`).join('; ')}`)
-  lines.push(`- ${usedLine(entry)}`, '')
+  lines.push(`- ${usedLine(entry, role)}`, '')
   return lines
 }
 
@@ -63,7 +64,7 @@ export function renderMarkdown(inventory) {
       .map(([kind, label]) => `${here.filter((e) => e.kind === kind).length} ${label}`)
       .filter((text) => !text.startsWith('0 '))
     lines.push(`## ${folder.path} (${folder.role})`, '', `${plural(here.length, 'entry', 'entries')}${kinds.length ? `: ${kinds.join(', ')}` : ''}.`, '')
-    for (const entry of here) lines.push(...entryLines(entry))
+    for (const entry of here) lines.push(...entryLines(entry, folder.role))
   }
   return `${lines.join('\n').trimEnd()}\n`
 }

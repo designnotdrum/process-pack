@@ -44,7 +44,8 @@ function workspaceSource(dir, subpath) {
   for (const target of targets.filter((t) => typeof t === 'string')) {
     const stripped = target.replace(/\.d\.[cm]?ts$|\.[cm]?[jt]sx?$/, '')
     // Built output is never the answer: it is not what the repo's own code is written against.
-    const candidates = [stripped.replace(/^\.\/dist\//, './src/'), `./src/${path.basename(stripped)}`, stripped].filter((c) => !c.startsWith('./dist/'))
+    const built = /^\.\/(?:dist|lib|build|out)\//
+    const candidates = [stripped.replace(built, './src/'), stripped].filter((c) => !built.test(c))
     for (const candidate of candidates) {
       const found = withExtension(path.join(dir, candidate))
       if (found) return found
@@ -188,7 +189,8 @@ export function readUsage({ ts, root, tsconfigs }) {
     return null
   }
 
-  // Only whole lookups are kept: a result cut short by the cycle guard must not be reused.
+  // Only whole lookups are kept. A null is final: the cycle guard skips only keys this lookup has
+  // already searched, so it never hides a way to resolve the name.
   const resolvedExports = new Map()
   function resolveExport(file, name) {
     const key = `${file}#${name}`

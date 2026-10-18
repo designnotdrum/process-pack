@@ -4,7 +4,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { loadTypeScript, groupFamilies, readAllComponents } from './components.mjs'
 import { readFolders } from './config.mjs'
-import { iconDirOf, isJsxFile, isScreenFile, localRouteOf, pascalCase, toPosix, walk } from './files.mjs'
+import { iconDirOf, isJsxFile, isScreenFile, localRouteOf, pascalCase, resetCaches, toPosix, walk } from './files.mjs'
 import { plural, renderMarkdown } from './markdown.mjs'
 import { createTsconfigLoader } from './tsconfig.mjs'
 import { readUsage } from './usage.mjs'
@@ -84,6 +84,7 @@ function iconSetEntry({ root, folder, dir, files, components, usage }) {
  */
 export function buildInventory({ root: given, folders }) {
   const root = fs.realpathSync(given)
+  resetCaches()
   const ts = loadTypeScript(root)
   const tsconfigs = createTsconfigLoader(ts, root)
 
@@ -163,7 +164,7 @@ function main(args) {
   try {
     folders = readFolders(root, args)
   } catch (error) {
-    usage(error.message)
+    return usage(error.message)
   }
   const inventory = buildInventory({ root, folders })
   fs.mkdirSync(out, { recursive: true })

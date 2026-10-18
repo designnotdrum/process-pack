@@ -161,7 +161,7 @@ function readProps(ts, checker, symbol, declaration, root) {
   if (!propsType || propsType.flags & ts.TypeFlags.Any) return { props: [], variants: {} }
 
   // A props type that is a union of object types lists the props every member shares, which would
-  // hide most of them. Merge the members instead and call a prop required only if every member requires it.
+  // hide most of them. Merge the members instead. A prop is required only if every member has it and requires it.
   // `undefined` comes from an optional parameter and is not a member; any other non-object member is not read.
   const members = (propsType.isUnion() ? propsType.types : [propsType]).filter((t) => t.flags & ts.TypeFlags.Object || t.isIntersection())
   const merged = new Map()
@@ -204,7 +204,8 @@ function literalOptions(ts, type) {
   const values = members.map((t) => t.value)
   // Union members come back in the order TypeScript created the types, which shifts when an
   // unrelated file changes. Sorted options keep a committed inventory from churning.
-  return values.sort((a, b) => (typeof a === 'number' && typeof b === 'number' ? a - b : String(a) < String(b) ? -1 : 1))
+  const text = (v) => String(v)
+  return values.sort((a, b) => (typeof a === 'number' && typeof b === 'number' ? a - b : text(a) < text(b) ? -1 : text(a) > text(b) ? 1 : 0))
 }
 
 const squash = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, '')

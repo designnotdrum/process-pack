@@ -58,6 +58,13 @@ export function walk(dir, accept = isShippedSource) {
 export const isJsxFile = (file) => JSX_FILE.test(file)
 
 const packageRoots = new Map()
+const dirHasScreen = new Map()
+
+/** Forgets what was learned about the file system. A run starts with this, so a second run in one process sees the current files. */
+export function resetCaches() {
+  packageRoots.clear()
+  dirHasScreen.clear()
+}
 
 /** The nearest directory at or above `file` that holds a package.json, else the repo root. */
 export function packageRootOf(file, root) {
@@ -107,8 +114,6 @@ export function screenLabel(file, root) {
   const kind = path.basename(file).replace(/\.[jt]sx?$/, '')
   return kind === 'page' ? route : `${route} (${kind})`
 }
-
-const dirHasScreen = new Map()
 
 function hasScreenFile(dir) {
   if (!dirHasScreen.has(dir)) {

@@ -71,6 +71,7 @@ describe('a family with parts', () => {
   })
 
   test('does not list a lower case export as a component', () => {
+    assert.ok(entry('Dialog'), 'the file is still read')
     assert.ok(!inventory.entries.some((e) => e.name === 'dialogClassName' || e.parts.some((p) => p.name === 'dialogClassName')))
   })
 })
@@ -137,7 +138,9 @@ describe('where used', () => {
   })
 
   test('leaves out tests and stories', () => {
-    assert.ok(!entry('Button').usedIn.some((f) => /\.(test|stories)\./.test(f)))
+    const used = entry('Button').usedIn
+    assert.deepEqual(used, ['apps/web/app/page.tsx'])
+    assert.ok(!used.some((f) => /\.(test|stories)\./.test(f)))
   })
 
   test('lists screens for an app component, following imports through other components', () => {
@@ -150,6 +153,7 @@ describe('where used', () => {
   })
 
   test('does not list a route file as a component', () => {
+    assert.ok(entry('Banner'), 'the scan still finds the components beside the route files')
     assert.ok(!inventory.entries.some((e) => /\/(page|layout)\.tsx$/.test(e.file)))
   })
 })
@@ -219,6 +223,15 @@ describe('the folders', () => {
 
   test('must exist', () => {
     assert.throws(() => readFolders(fixture, ['nowhere']), /does not exist/)
+  })
+
+  test('cannot be listed twice', () => {
+    assert.throws(() => readFolders(fixture, ['packages/ui/src', 'packages/ui/src:app']), /listed twice/)
+  })
+
+  test('must be inside the repo', () => {
+    assert.throws(() => readFolders(fixture, ['packages/../../elsewhere']), /does not exist|outside the repo/)
+    assert.throws(() => readFolders(fixture, ['..']), /outside the repo/)
   })
 
   test('are required', () => {
