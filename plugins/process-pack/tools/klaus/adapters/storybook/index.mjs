@@ -128,7 +128,7 @@ export function createStorybookAdapter({ exec = defaultExec, cwd = () => process
 
       const written = [];
       const failed = [];
-      let bytes = 0; // Storage that stays on Vercel: only items that were written count.
+      let bytes = 0; // Storage that Vercel keeps: a build counts once it is deployed.
       for (const item of plan.items) {
         const work = mkdtempSync(path.join(tmpdir(), "klaus-storybook-"));
         const outcome = { release: item.release, alias: aliasFor(project, item.release), commit };
@@ -148,14 +148,20 @@ export function createStorybookAdapter({ exec = defaultExec, cwd = () => process
             await vercel.deploy(emptyDir, { meta: { [META.kind]: KINDS.index }, prod: true });
           }
 
+          // Two release names can make the same address ("v1.0.0" and "v1-0-0"). Deploying the second
+          // would move the address away from the first, so stop before that happens.
+          const listed = await vercel.listReleases();
+          const taken = listed.find((entry) => entry.release !== item.release && (entry.alias ?? aliasFor(project, entry.release)) === outcome.alias);
+          if (taken) throw new Error(`The address ${outcome.alias} already belongs to release ${taken.release}, so ${item.release} cannot use it.`);
+
           const meta = { [META.kind]: KINDS.release, [META.release]: item.release, [META.alias]: outcome.alias };
           if (commit) meta[META.commit] = commit;
           const deployed = await vercel.deploy(buildDir, { meta });
+          bytes += outcome.buildBytes; // Kept on Vercel from here on, even if a later step fails.
           await vercel.alias(deployed.url, outcome.alias);
           outcome.releaseUrl = `https://${outcome.alias}/`;
 
-          // The list can lag a deployment that has just become ready, so this release is added by hand.
-          const listed = await vercel.listReleases();
+          // The list was read before this release was deployed, so it is added by hand.
           const releases = latestPerRelease([...listed, { release: item.release, alias: outcome.alias, commit: commit ?? null, createdAt: now().getTime() }]);
           const files = renderIndex({ project, releases });
           const indexDir = path.join(work, "index");
@@ -163,7 +169,7 @@ export function createStorybookAdapter({ exec = defaultExec, cwd = () => process
           const index = await vercel.deploy(indexDir, { meta: { [META.kind]: KINDS.index }, prod: true });
           outcome.indexUrl = index.productionUrl ?? index.url;
           outcome.releaseCount = releases.length;
-          bytes += outcome.buildBytes + indexBytes;
+          bytes += indexBytes;
           written.push(item.id);
         } catch (error) {
           failed.push({ id: item.id, error: error.message });

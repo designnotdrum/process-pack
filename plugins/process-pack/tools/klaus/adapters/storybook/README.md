@@ -31,8 +31,9 @@ The adapter starts `npx vercel@64.5.0` for every Vercel call. The version is pin
 3. `write`:
    1. Builds Storybook into a temporary folder.
    2. In an empty project, deploys an empty index to production first (see "Who can open it").
-   3. Deploys the build with `vercel deploy --meta`, then gives it the address `<project>-<release>.vercel.app` with `vercel alias set`. Vercel keeps a deployment that has an alias.
-   4. Lists the release deployments with `vercel list --meta`, writes `index.html` and `versions.json` from them, and deploys those to production.
+   3. Lists the release deployments with `vercel list --meta`. If another release already has this release's address (`v1.0.0` and `v1-0-0` both become `v1-0-0`), the item fails before anything is deployed, so the first release keeps its address.
+   4. Deploys the build with `vercel deploy --meta`, then gives it the address `<project>-<release>.vercel.app` with `vercel alias set`. Vercel keeps a deployment that has an alias.
+   5. Writes `index.html` and `versions.json` from the list plus this release, and deploys those to production.
 4. `report`: the index address, the release address, and the storage cost.
 
 The deployment metadata is `klausKind`, `klausRelease`, `klausAlias` and `klausCommit`. A release that is deployed twice appears once in the index, with its newest deployment.

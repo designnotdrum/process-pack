@@ -92,7 +92,7 @@ export async function buildStorybook({ exec, root, storybookDir, outDir }) {
   }
 }
 
-/** Total size in bytes of every file under a folder. */
+/** Total size in bytes of every file under a folder. A symbolic link is skipped: its entry is neither a file nor a folder. */
 export function directorySize(dir) {
   let total = 0;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {

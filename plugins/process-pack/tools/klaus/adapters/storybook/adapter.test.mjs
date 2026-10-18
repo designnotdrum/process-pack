@@ -77,8 +77,11 @@ function clock() {
   return () => new Date((t += 1000));
 }
 
+// Later than every deployment the fake Vercel creates, as real time is later than the releases before it.
+const afterDeployments = () => new Date(Date.UTC(2026, 9, 18, 7, 0, 0));
+
 async function run({ world, root, config = configWith(), releases = ["v1.0.0"], release = releases.at(-1), state, dryRun = false, env = { VERCEL_TOKEN: TOKEN }, inventory }) {
-  const adapter = createStorybookAdapter({ exec: world.exec, cwd: () => root, now: clock() });
+  const adapter = createStorybookAdapter({ exec: world.exec, cwd: () => root, now: afterDeployments });
   return runKlaus({
     config,
     inventory: inventory ?? { ...inventoryOf({ Button: 3 }), folders: [{ path: "packages/ui/src", role: "shared" }] },
@@ -117,7 +120,7 @@ test("in an empty project an empty index goes to production first, then the rele
   const out = report.outputs[0];
   assert.equal(out.status, "ok");
   assert.deepEqual(out.written, ["v1.0.0"]);
-  assert.deepEqual(vercelCalls(world.calls), ["list", "deploy", "deploy", "alias", "list", "deploy"]);
+  assert.deepEqual(vercelCalls(world.calls), ["list", "deploy", "list", "deploy", "alias", "deploy"]);
   assert.deepEqual(world.calls.map((c) => c.file), ["git", path.join(root, "packages/ui/node_modules/.bin/storybook"), ...Array(6).fill("npx")]);
 
   const [empty, release, index] = world.deployments;
@@ -158,7 +161,7 @@ test("a second release is added to the index next to the first, and both address
 
   assert.deepEqual(second.report.outputs[0].releases, ["v1.1.0"]);
   // The project already has deployments, so there is no empty index this time.
-  assert.deepEqual(world.calls.slice(-5).filter((c) => c.file === "npx").map((c) => c.args[2]), ["list", "deploy", "alias", "list", "deploy"]);
+  assert.deepEqual(world.calls.slice(-5).filter((c) => c.file === "npx").map((c) => c.args[2]), ["list", "list", "deploy", "alias", "deploy"]);
   const index = world.deployments.filter((d) => d.meta.klausKind === "storybook-index").at(-1);
   const html = index.files["index.html"];
   assert.ok(html.includes('<a href="https://acme-storybook-v1-0-0.vercel.app/">v1.0.0</a>'));
@@ -184,14 +187,17 @@ test("one checkout builds one Storybook, so earlier releases in the same run are
 });
 
 test("the design-tool selection does not change what Storybook shows", async () => {
+  const worldA = fakeWorld();
+  const worldB = fakeWorld();
   const selected = configWith();
   const narrow = configOf({
     outputs: { storybook: { enabled: true, target: "acme-storybook", secrets: ["VERCEL_TOKEN"] } },
     selection: { componentGroups: ["packages/other"], screens: { mode: "listed", routes: ["/"] }, newComponents: { rule: "none" } },
   });
-  const a = await run({ world: fakeWorld(), root: repo(), config: selected });
-  const b = await run({ world: fakeWorld(), root: repo(), config: narrow });
+  const a = await run({ world: worldA, root: repo(), config: selected });
+  const b = await run({ world: worldB, root: repo(), config: narrow });
   assert.deepEqual(a.report.outputs[0].written, ["v1.0.0"]);
+  assert.deepEqual(vercelCalls(worldA.calls), vercelCalls(worldB.calls));
   assert.deepEqual(b.report.outputs[0].written, ["v1.0.0"]);
 });
 
@@ -221,7 +227,8 @@ test("a failed Vercel call leaves the release unwritten with the reason, and kee
   assert.equal(report.status, "failed");
   assert.deepEqual(out.written, []);
   assert.deepEqual(out.failed, [{ id: "v1.0.0", error: "vercel alias set failed: alias refused" }]);
-  assert.equal(out.actual.usd, 0); // nothing was kept, so no storage cost
+  // The build was deployed before the alias failed, and Vercel keeps it, so its storage still counts.
+  assert.ok(out.actual.usd > 0.0001 && out.actual.usd < 0.0003);
   assert.deepEqual(state.outputs.storybook.unwritten, ["v1.0.0"]);
   assert.match(out.adapter.summary, /^Storybook for v1\.0\.0 was not deployed: vercel alias set failed: alias refused/);
   assert.ok(!JSON.stringify(report).includes(TOKEN));
@@ -237,9 +244,11 @@ test("a retry after a failure deploys the same release again from the unwritten 
 });
 
 test("fails before any call when the project, the token or the Storybook folder is missing", async () => {
-  const noTarget = await run({ world: fakeWorld(), root: repo(), config: configOf({ outputs: { storybook: { enabled: true, secrets: ["VERCEL_TOKEN"] } } }), dryRun: true, env: {} });
+  const noTargetWorld = fakeWorld();
+  const noTarget = await run({ world: noTargetWorld, root: repo(), config: configOf({ outputs: { storybook: { enabled: true, secrets: ["VERCEL_TOKEN"] } } }), dryRun: true, env: {} });
   assert.match(noTarget.report.outputs[0].error, /needs a "target" in klaus\.config\.json: the name of its Vercel project/);
   assert.equal(noTarget.report.outputs[0].failedStep, "plan");
+  assert.deepEqual(noTargetWorld.calls, []);
 
   const world = fakeWorld();
   const noSecretListed = await run({ world, root: repo(), config: configWith({ secrets: [] }), env: {} });
@@ -248,8 +257,23 @@ test("fails before any call when the project, the token or the Storybook folder 
   assert.deepEqual(vercelCalls(world.calls), []);
 
   const emptyRoot = mkdtempSync(path.join(tmpdir(), "klaus-sb-empty-"));
-  const noStorybook = await run({ world: fakeWorld(), root: emptyRoot, dryRun: true, env: {} });
+  const noStorybookWorld = fakeWorld();
+  const noStorybook = await run({ world: noStorybookWorld, root: emptyRoot, dryRun: true, env: {} });
   assert.match(noStorybook.report.outputs[0].error, /No \.storybook folder was found/);
+  assert.deepEqual(noStorybookWorld.calls, []);
+});
+
+test("a release whose address another release already has is not deployed, so the first keeps its address", async () => {
+  const world = fakeWorld();
+  const root = repo();
+  const first = await run({ world, root, releases: ["v1.0.0"] });
+  // "v1-0-0" and "v1.0.0" both become acme-storybook-v1-0-0.vercel.app.
+  const second = await run({ world, root, releases: ["v1.0.0", "v1-0-0"], state: first.state });
+
+  const out = second.report.outputs[0];
+  assert.deepEqual(out.written, []);
+  assert.match(out.failed[0].error, /The address acme-storybook-v1-0-0\.vercel\.app already belongs to release v1\.0\.0, so v1-0-0 cannot use it\./);
+  assert.equal(world.deployments.filter((d) => d.meta.klausRelease === "v1-0-0").length, 0);
 });
 
 test("a build that cannot run reports that and deploys nothing", async () => {

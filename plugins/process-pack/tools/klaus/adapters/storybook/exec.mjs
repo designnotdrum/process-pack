@@ -7,6 +7,7 @@
  * @property {string} [cwd]
  * @property {Record<string, string | undefined>} [env]  The whole environment of the command.
  * @property {number} [timeoutMs]
+ * @property {number} [maxBuffer]  The most output, in bytes, that is kept from stdout or stderr.
  *
  * @typedef {(file: string, args: string[], options?: ExecOptions) => Promise<{ stdout: string, stderr: string }>} Exec
  */
@@ -21,17 +22,20 @@ function tail(text, length = 800) {
 }
 
 /** @type {Exec} */
-export function exec(file, args, { cwd, env, timeoutMs = TEN_MINUTES } = {}) {
+export function exec(file, args, { cwd, env, timeoutMs = TEN_MINUTES, maxBuffer = 64 * 1024 * 1024 } = {}) {
   return new Promise((resolve, reject) => {
     const child = execFile(
       file,
       args,
-      { cwd, env, timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, encoding: "utf8" },
+      { cwd, env, timeout: timeoutMs, maxBuffer, encoding: "utf8" },
       (error, stdout, stderr) => {
         if (!error) return resolve({ stdout, stderr });
         const output = tail(stderr) || tail(stdout) || error.message;
+        // Node sets `killed` only when it ended the command itself, which here means the timeout.
         if (error.killed) return reject(new Error(`timed out after ${Math.round(timeoutMs / 1000)} s: ${output}`));
-        if (error.code === "ENOBUFS") return reject(new Error(`the command wrote more output than Klaus keeps: ${output}`));
+        if (error.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+          return reject(new Error(`wrote more than ${Math.round(maxBuffer / 1e6)} MB of output, which Klaus does not keep: ${output}`));
+        }
         reject(new Error(output));
       },
     );
