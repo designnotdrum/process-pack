@@ -106,10 +106,14 @@ A capture counts as changed when the repo's own pixel diff leaves at least one r
 - Without it, a bundled diff is used (`bundled-diff.mjs`, `png.mjs`). It needs no install. It is a port of pixelmatch 8.0.0, the version Meridian pins, with Dieter's settings (colour threshold 0.1, anti-aliased pixels ignored, a group of changed pixels on an 8 px grid dropped when under ten pixels). A different pixelmatch version measures colour another way, so a repo whose own diff uses one should pass it with `--diff <path>`.
 - `--diff bundled` forces the bundled diff. `--diff <path>` loads a module that exports `diffMask` and `findRegions` the way Dieter's does. A module that does not also export `readPng` has its PNGs read by the bundled reader.
 
+`diffMask(ref, after)` and `findRegions(mask, width, height)` are called without options, so a module's own defaults decide what counts as noise. A capture that cannot be read, or a diff that throws, stops the run with a message naming the capture, and nothing is written.
+
 The bundled PNG reader reads every colour type and bit depth, one pass. It does not read interlaced files, and it ignores a colour key in `tRNS`.
 
 ## Limits
 
+- An import the compiler cannot resolve reads as `any`, so a prop typed with it cannot be compared. The run lists such imports in `notes`. Imports of stylesheets and images, and modules declared with `declare module`, are not listed.
+- When a field inside an object or list prop changed, only the field changes are reported for that prop. A separate change to the prop's own type at the same time, such as `Row[]` becoming `Row[] | null`, is not reported.
 - Behaviour with the same props is invisible: a changed default value, or a handler that does something else, has no trace in the types.
 - A prop typed with a type from another workspace package is read as that package is now, on both sides.
 - A component whose props are a union of object types is merged the way the inventory merges it. A change to a prop's type that appears in only some members is not seen.

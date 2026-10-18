@@ -55,9 +55,17 @@ export function capturesDiffer(lib, storedFile, captureFile) {
   if (stored.width !== next.width || stored.height !== next.height) {
     return { changed: true, detail: `size ${stored.width}x${stored.height} to ${next.width}x${next.height}` }
   }
-  const { count, mask } = lib.diffMask(stored, next)
+  let count
+  let regions
+  try {
+    // The diff runs with its own defaults, so a repo's diff decides what counts as noise.
+    const found = lib.diffMask(stored, next)
+    count = found.count
+    if (count > 0) regions = lib.findRegions(found.mask, stored.width, stored.height).regions
+  } catch (error) {
+    throw new UserError(`The pixel diff failed on ${captureFile}: ${error.message}`)
+  }
   if (count === 0) return { changed: false, detail: 'identical' }
-  const { regions } = lib.findRegions(mask, stored.width, stored.height)
   const pixels = regions.reduce((sum, region) => sum + region.pixels, 0)
   return regions.length
     ? { changed: true, detail: `${regions.length} changed ${regions.length === 1 ? 'region' : 'regions'}, ${pixels} pixels` }

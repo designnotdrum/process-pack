@@ -267,6 +267,8 @@ export function diffMask(ref, after, { threshold, includeAA } = PIXEL) {
  * cells apart, and drops a group of fewer than `minRegionPixels`. Dieter's version goes on to
  * merge overlapping crops and cap the count, which does not change whether a region is left.
  *
+ * `cappedFrom` is always null. It is there so the result has the shape of Dieter's.
+ *
  * @returns {{ regions: Array<{ pixels: number, box: { x0: number, y0: number, x1: number, y1: number } }>, droppedGroups: number, droppedPixels: number, cappedFrom: null }}
  */
 export function findRegions(mask, w, h, { minRegionPixels, cell, gapCells } = PIXEL) {

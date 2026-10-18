@@ -6,7 +6,7 @@ import { UserError } from '../../frame/errors.mjs'
 import * as bundled from '../bundled-diff.mjs'
 import { readPng } from '../png.mjs'
 import { capturesDiffer, DIETER_DIFF, loadPixelDiff } from '../pixels.mjs'
-import { BLACK, cleanup, encodeRawPng, rgbaPng, squarePng, tmpDir, WHITE, writeFiles } from './helpers.mjs'
+import { BLACK, cleanup, encodeRawPng, pngChunk, rgbaPng, squarePng, tmpDir, WHITE, writeFiles } from './helpers.mjs'
 
 after(cleanup)
 
@@ -65,6 +65,15 @@ describe('the bundled PNG reader', () => {
     assert.throws(() => readPng(interlaced), /interlaced/)
     const whole = squarePng(4, 4)
     assert.throws(() => readPng(whole.subarray(0, whole.length - 30)), (e) => e instanceof UserError && /cut short/.test(e.message))
+  })
+
+  test('refuses pixel data that is far larger than the header describes', () => {
+    const header = Buffer.alloc(13)
+    header.writeUInt32BE(1, 0)
+    header.writeUInt32BE(1, 4)
+    header.set([8, 6, 0, 0, 0], 8)
+    const bomb = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), pngChunk('IHDR', header), pngChunk('IDAT', Buffer.alloc(100_000)), pngChunk('IEND', Buffer.alloc(0))])
+    assert.throws(() => readPng(bomb), (e) => e instanceof UserError && /more pixel data than its header allows/.test(e.message))
   })
 
   test('refuses a header of the wrong size and a pixel that names a colour the palette does not have', () => {
@@ -168,6 +177,12 @@ describe('whether a capture changed', () => {
   test('is yes when the capture has a different size', () => {
     const [a, b] = files(squarePng(40, 40), squarePng(40, 50))
     assert.deepEqual(capturesDiffer(bundled, a, b), { changed: true, detail: 'size 40x40 to 40x50' })
+  })
+
+  test('names the capture when the pixel diff itself throws', () => {
+    const [a, b] = files(squarePng(10, 10), squarePng(10, 10))
+    const broken = { ...bundled, diffMask: () => { throw new Error('boom') } }
+    assert.throws(() => capturesDiffer(broken, a, b), (e) => e instanceof UserError && e.message.includes(b) && /boom/.test(e.message))
   })
 
   test('names the file when it is not a readable PNG', () => {

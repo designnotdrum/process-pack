@@ -242,6 +242,9 @@ describe('three releases of a small component library', () => {
       pickVersions({ root: repo, inventory: buildInventory({ root: repo, folders: FOLDERS }), previous: third.inventory, release: 'v1.2.0' }),
       (e) => e instanceof UserError && /already holds the versions for v1.2.0/.test(e.message),
     )
+    // The refused run changed nothing it was given.
+    assert.equal(entryOf(third.inventory, 'Alpha').version, '3.0.0')
+    assert.equal(third.inventory.versioned.release, 'v1.2.0')
   })
 
   test('a dry run picks the same versions and copies no screenshot', async () => {
@@ -327,6 +330,11 @@ describe('input that cannot be versioned', () => {
     await assert.rejects(pickVersions({ root: repo, inventory: inventory(), previous: baseline, from: 'v0.0.1', release: 'v1.1.0' }), (e) => e instanceof UserError && e.message.includes('"v0.0.1" is not a commit'))
   })
 
+  test('refuses a previous inventory that holds no versions', async () => {
+    const fresh = inventory()
+    await assert.rejects(pickVersions({ root: repo, inventory: inventory(), previous: fresh, from: 'v1.0.0', release: 'v1.1.0' }), (e) => e instanceof UserError && /holds no versions to bump/.test(e.message))
+  })
+
   test('says so when the old file is not in the old release, and leaves the entry unchanged', async () => {
     const { inventory: baseline } = await pickVersions({ root: repo, inventory: inventory(), baseline: true, release: 'v1.0.0' })
     entryOf(baseline, 'Alpha').file = 'packages/ui/src/not-there.tsx'
@@ -358,6 +366,18 @@ describe('input that cannot be versioned', () => {
   })
 })
 
+describe('props typed with something the compiler cannot find', () => {
+  test('are reported, because a change to them cannot be seen', async () => {
+    const repo = newRepo()
+    writeFiles(repo, { 'packages/ui/src/alpha.tsx': `import type { Gone } from "./gone"\n${component('Alpha', 'gone?: Gone;')}` })
+    commitAll(repo, 'one', 'v1')
+    const inventory = () => buildInventory({ root: repo, folders: FOLDERS })
+    const { inventory: baseline } = await pickVersions({ root: repo, inventory: inventory(), baseline: true, release: 'v1' })
+    const run = await pickVersions({ root: repo, inventory: inventory(), previous: baseline, from: 'v1', release: 'v2' })
+    assert.deepEqual(run.report.notes, ['Alpha: the compiler could not resolve "./gone" imported by packages/ui/src/alpha.tsx, so props typed with it were not compared.'])
+  })
+})
+
 describe('entries that are not a single component', () => {
   test('an icon set has no props and is versioned by its capture alone', async () => {
     const repo = newRepo()
@@ -377,6 +397,7 @@ describe('entries that are not a single component', () => {
     commitAll(repo, 'two', 'v2')
     const unchanged = await pickVersions({ root: repo, inventory: inventory(), previous: baseline.inventory, from: 'v1', release: 'v2', captures: caps(white) })
     assert.equal(entryOf(unchanged.inventory, 'Icon set').version, '1.0.0')
+    assert.equal(reportOf(unchanged.report, 'Icon set').level, 'none')
 
     const changed = await pickVersions({ root: repo, inventory: inventory(), previous: baseline.inventory, from: 'v1', release: 'v2', captures: caps(block6) })
     assert.equal(entryOf(changed.inventory, 'Icon set').version, '1.0.1')

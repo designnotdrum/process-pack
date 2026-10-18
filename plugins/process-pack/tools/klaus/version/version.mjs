@@ -160,6 +160,9 @@ export async function pickVersions({ root: given, inventory, previous, from, rel
     if (!release) throw new UserError('Name the release with --release. A screen whose capture changed is named for it.')
     if (previous.versioned?.release === release) throw new UserError(`The previous inventory already holds the versions for ${release}. Running it again would bump them twice.`)
     previousEntries = listEntries(previous, 'The previous inventory')
+    if (previousEntries.length && !previousEntries.some((e) => isVersion(e.version))) {
+      throw new UserError('The previous inventory holds no versions to bump. It looks freshly built. Pass the inventory the last run wrote.')
+    }
   }
   const matches = matchPrevious(entries, previousEntries, notes)
   // The diff is loaded only when there is a capture to compare. A baseline compares nothing.
@@ -197,6 +200,7 @@ export async function pickVersions({ root: given, inventory, previous, from, rel
           const result = results.get(entry.name + '\0' + entry.file)
           if (result) comparisons.set(entry, result)
           if (result?.note) notes.push(`${entry.name}: ${result.note}`)
+          if (result?.unresolved) notes.push(`${entry.name}: the compiler could not resolve ${result.unresolved.slice(0, 5).map((n) => JSON.stringify(n)).join(', ')} imported by ${entry.file}, so props typed with ${result.unresolved.length === 1 ? 'it were' : 'them were'} not compared.`)
         }
       }
     } finally {

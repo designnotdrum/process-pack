@@ -231,6 +231,13 @@ describe('one component changing between two releases', () => {
       has: [['major', 'prop removed', 'timeStamp']],
       inherited: true,
     },
+    // An import the compiler cannot find reads as `any`, so a prop typed with it cannot be compared.
+    'unresolved-import': {
+      before: `import type { Gone } from "@/nowhere";\n${widget('gone?: Gone;')}`,
+      after: `import type { Gone } from "@/nowhere";\n${widget('gone?: Gone;')}`,
+      level: 'none',
+      has: [],
+    },
     'nothing-changed': {
       before: widget('size?: "sm";'),
       after: widget('size?: "sm";'),
@@ -288,6 +295,12 @@ describe('one component changing between two releases', () => {
       assert.equal(result.changes.length, c.has.length, `unexpected extra changes: ${JSON.stringify(result.changes)}`)
     })
   }
+
+  test('an import the compiler cannot resolve is listed, and one declared by a stub or an asset is not', () => {
+    assert.deepEqual(results.get('unresolved-import').unresolved, ['@/nowhere'])
+    assert.equal(results.get('cva-value-added').unresolved, undefined)
+    assert.equal(results.get('nothing-changed').unresolved, undefined)
+  })
 
   test('a type widened by a new member names the member', () => {
     assert.equal(find(results.get('union-widened'), 'type widened', 'size').detail, '+ "md"')

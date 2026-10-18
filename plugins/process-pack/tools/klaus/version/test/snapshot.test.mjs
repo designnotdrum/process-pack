@@ -15,16 +15,18 @@ describe('unpacking a commit', () => {
     fs.symlinkSync(klausModules, path.join(repo, 'node_modules'))
     writeFiles(repo, {
       'package.json': '{ "name": "root" }\n',
-      'packages/ui/package.json': '{ "name": "ui" }\n',
+      // Over the size limit, so it is not unpacked. The folder still gets its node_modules.
+      'packages/ui/package.json': `{ "name": "ui", "padding": "${'x'.repeat(1_100_000)}" }\n`,
       'packages/ui/src/old.tsx': 'export const Old = 1\n',
       'packages/ui/logo.png': 'not really a png',
       'packages/ui/README.md': 'docs\n',
       'package-lock.json': '{ "lockfileVersion": 3 }\n',
     })
+    fs.mkdirSync(path.join(repo, 'packages/ui/node_modules'))
     const first = commitAll(repo, 'one', 'v1')
     writeFiles(repo, { 'packages/ui/src/old.tsx': 'export const Old = 2\n', 'packages/ui/src/new.tsx': 'export const New = 1\n' })
-    commitAll(repo, 'two', 'v2')
-    return { repo, first }
+    const second = commitAll(repo, 'two', 'v2')
+    return { repo, first, second }
   }
 
   test('holds the files as they were at that commit, source and config only', () => {
@@ -37,6 +39,8 @@ describe('unpacking a commit', () => {
       assert.equal(fs.existsSync(path.join(snapshot.dir, 'packages/ui/logo.png')), false)
       assert.equal(fs.existsSync(path.join(snapshot.dir, 'packages/ui/README.md')), false)
       assert.equal(fs.existsSync(path.join(snapshot.dir, 'package-lock.json')), false)
+      assert.equal(fs.existsSync(path.join(snapshot.dir, 'packages/ui/package.json')), false)
+      assert.equal(fs.realpathSync(path.join(snapshot.dir, 'packages/ui/node_modules')), fs.realpathSync(path.join(repo, 'packages/ui/node_modules')))
     } finally {
       snapshot.remove()
     }
@@ -52,9 +56,10 @@ describe('unpacking a commit', () => {
   })
 
   test('finds the commit a tag names, and says when a ref is not one', () => {
-    const { repo, first } = repoWithTwoCommits()
+    const { repo, first, second } = repoWithTwoCommits()
     assert.equal(resolveCommit(repo, 'v1'), first)
-    assert.equal(headCommit(repo), resolveCommit(repo, 'v2'))
+    assert.equal(resolveCommit(repo, 'v2'), second)
+    assert.equal(headCommit(repo), second)
     assert.throws(() => resolveCommit(repo, 'v9'), (e) => e instanceof UserError && /"v9" is not a commit/.test(e.message))
   })
 

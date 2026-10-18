@@ -4,7 +4,11 @@ export const LEVELS = ['none', 'patch', 'minor', 'major']
 /** What every entry starts at when a repo is onboarded. */
 export const BASELINE = '1.0.0'
 
-const rank = (level) => LEVELS.indexOf(level)
+function rank(level) {
+  const at = LEVELS.indexOf(level)
+  if (at < 0) throw new Error(`Unknown level ${JSON.stringify(level)}.`)
+  return at
+}
 
 /** The larger of two levels. One bump per component per release, and the highest kind wins. */
 export const higher = (a, b) => (rank(b) > rank(a) ? b : a)

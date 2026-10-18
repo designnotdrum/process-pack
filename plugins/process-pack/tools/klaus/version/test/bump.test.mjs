@@ -31,4 +31,9 @@ describe('the highest kind of change wins', () => {
     assert.equal(higher('major', 'patch'), 'major')
     assert.equal(higher('minor', 'minor'), 'minor')
   })
+
+  test('refuses a level that is not one, so a bad report cannot under-state a bump', () => {
+    assert.throws(() => higher('none', 'graver'), /Unknown level/)
+    assert.throws(() => higher('graver', 'none'), /Unknown level/)
+  })
 })

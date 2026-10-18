@@ -45,6 +45,7 @@ function readBlobs(root, ids) {
   const out = new Map()
   if (!ids.length) return out
   const run = spawnSync('git', ['-C', root, 'cat-file', '--batch'], { input: `${ids.join('\n')}\n`, maxBuffer: 1 << 30 })
+  if (run.error?.code === 'ENOBUFS') throw new UserError(`The source files of this commit in ${root} come to more than 1 GiB, which is more than Klaus reads at once.`)
   if (run.error) throw new UserError(`Could not run git cat-file in ${root}: ${run.error.message}`)
   if (run.status !== 0) throw new UserError(`git cat-file failed in ${root}.`)
   const data = run.stdout
@@ -75,10 +76,14 @@ function readBlobs(root, ids) {
 export function snapshotCommit(root, commit) {
   const listing = git(root, ['ls-tree', '-r', '-l', '-z', commit]).toString('utf8').split('\0').filter(Boolean)
   const wanted = []
+  // Every package folder in the commit, whether or not its package.json is small enough to unpack,
+  // because its node_modules is needed either way.
+  const packageDirs = new Set([''])
   for (const record of listing) {
     const tab = record.indexOf('\t')
     const [mode, type, id, size] = record.slice(0, tab).split(/\s+/)
     const file = record.slice(tab + 1)
+    if (type === 'blob' && path.posix.basename(file) === 'package.json' && !file.split('/').includes('node_modules')) packageDirs.add(path.posix.dirname(file) === '.' ? '' : path.posix.dirname(file))
     if (type !== 'blob' || mode === '120000' || !NEEDED.test(file) || LOCKFILE.test(file) || Number(size) > MAX_FILE_BYTES) continue
     if (file.split('/').includes('node_modules')) continue
     wanted.push({ id, file })
@@ -98,8 +103,6 @@ export function snapshotCommit(root, commit) {
       fs.mkdirSync(path.dirname(target), { recursive: true })
       fs.writeFileSync(target, blobs.get(id))
     }
-    const packageDirs = new Set([''])
-    for (const { file } of wanted) if (path.posix.basename(file) === 'package.json') packageDirs.add(path.posix.dirname(file) === '.' ? '' : path.posix.dirname(file))
     for (const rel of packageDirs) {
       const modules = path.join(root, rel, 'node_modules')
       if (!fs.existsSync(modules)) continue

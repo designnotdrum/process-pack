@@ -26,7 +26,9 @@ import { higher } from './bump.mjs'
  * @typedef {{ key: string, baseFile: string, headFile: string, primary: string, names: string[] }} Job
  *   One component family. `baseFile` and `headFile` are absolute paths to the file at each release,
  *   `primary` is the family's main component and `names` lists every component to compare.
- * @typedef {{ level: 'none'|'minor'|'major', changes: Change[], note?: string }} Comparison
+ * @typedef {{ level: 'none'|'minor'|'major', changes: Change[], note?: string, unresolved?: string[] }} Comparison
+ *   `unresolved` lists imports in the component's file that the compiler could not resolve. A prop
+ *   typed with one reads as `any` on both sides, so a change to it cannot be seen.
  */
 
 /** How far a comparison follows object types a prop is made of, such as the rows of a list prop. */
@@ -59,15 +61,32 @@ export function compareTrees({ ts, base, head, jobs }) {
   for (const [configPath, group] of groups) {
     // Ambient declarations come from the new release only. They are global, so they apply to both sides.
     const rootNames = [...new Set([...group.flatMap((j) => [j.baseFile, j.headFile]), ...headLoader.ambientFilesFor(configPath || null)])]
-    const program = createCombinedProgram(ts, trees, headLoader.optionsFor(group[0].headFile), rootNames)
+    const failed = []
+    const program = createCombinedProgram(ts, trees, headLoader.optionsFor(group[0].headFile), rootNames, failed)
     const checker = program.getTypeChecker()
     const differ = createDiffer(ts, checker)
-    for (const job of group) results.set(job.key, compareJob(ts, checker, differ, program, job))
+    const isAmbient = ambientMatcher(checker)
+    for (const job of group) {
+      const result = compareJob(ts, checker, differ, program, job)
+      const unresolved = [...new Set(failed.filter((f) => (f.file === job.baseFile || f.file === job.headFile) && !isAmbient(f.name)).map((f) => f.name))]
+      results.set(job.key, unresolved.length ? { ...result, unresolved } : result)
+    }
   }
   return results
 }
 
-function createCombinedProgram(ts, trees, options, rootNames) {
+/** Imports of files that are not code, such as a stylesheet or an image, have no types to lose. */
+const ASSET = /\.(?:css|scss|sass|less|svg|png|jpe?g|gif|webp|avif|ico|woff2?|ttf|otf|mp[34]|webm|mdx?|txt)$/i
+
+/** Whether a module name is declared in an ambient `declare module`, which the module resolver does not see. */
+function ambientMatcher(checker) {
+  const names = checker.getAmbientModules().map((m) => m.name.replace(/^["']|["']$/g, ''))
+  const exact = new Set(names.filter((n) => !n.includes('*')))
+  const patterns = names.filter((n) => n.includes('*')).map((n) => new RegExp(`^${n.split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`))
+  return (name) => exact.has(name) || patterns.some((pattern) => pattern.test(name))
+}
+
+function createCombinedProgram(ts, trees, options, rootNames, failed) {
   const host = ts.createCompilerHost(options)
   const memo = new Map()
   host.resolveModuleNames = (names, containingFile) => {
@@ -76,7 +95,9 @@ function createCombinedProgram(ts, trees, options, rootNames) {
     return names.map((name) => {
       const key = `${tree.root}\0${directory}\0${name}`
       if (!memo.has(key)) memo.set(key, ts.resolveModuleName(name, containingFile, tree.loader.optionsFor(containingFile), host).resolvedModule)
-      return memo.get(key)
+      const resolved = memo.get(key)
+      if (!resolved && !ASSET.test(name) && !containingFile.includes('/node_modules/')) failed.push({ file: containingFile, name })
+      return resolved
     })
   }
   return ts.createProgram({ rootNames, options, host })

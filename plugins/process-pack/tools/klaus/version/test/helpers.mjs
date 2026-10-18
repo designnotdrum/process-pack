@@ -74,7 +74,7 @@ function crc32(buffer) {
   return (c ^ 0xffffffff) >>> 0
 }
 
-function chunk(type, data) {
+export function pngChunk(type, data) {
   const length = Buffer.alloc(4)
   length.writeUInt32BE(data.length)
   const body = Buffer.concat([Buffer.from(type, 'latin1'), data])
@@ -124,11 +124,11 @@ export function encodeRawPng({ width, height, depth = 8, color = 6, rows, palett
   })
   return Buffer.concat([
     Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', header),
-    ...(palette ? [chunk('PLTE', Buffer.from(palette))] : []),
-    ...(transparency ? [chunk('tRNS', Buffer.from(transparency))] : []),
-    chunk('IDAT', zlib.deflateSync(Buffer.concat(scanlines))),
-    chunk('IEND', Buffer.alloc(0)),
+    pngChunk('IHDR', header),
+    ...(palette ? [pngChunk('PLTE', Buffer.from(palette))] : []),
+    ...(transparency ? [pngChunk('tRNS', Buffer.from(transparency))] : []),
+    pngChunk('IDAT', zlib.deflateSync(Buffer.concat(scanlines))),
+    pngChunk('IEND', Buffer.alloc(0)),
   ])
 }
 

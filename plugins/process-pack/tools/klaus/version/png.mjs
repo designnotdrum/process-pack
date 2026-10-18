@@ -60,6 +60,20 @@ function rowSamples(row, count, depth, scale) {
   return out
 }
 
+/** Reads and checks the 13 bytes of the IHDR chunk. */
+function parseHeader(body) {
+  if (body.length !== 13) throw new UserError('The PNG header is the wrong size.')
+  const width = body.readUInt32BE(0)
+  const height = body.readUInt32BE(4)
+  const [depth, color, compression, filter, interlace] = body.subarray(8, 13)
+  if (!(color in CHANNELS) || !DEPTHS[color].includes(depth) || compression !== 0 || filter !== 0) throw new UserError('The PNG uses a colour type or bit depth this reader does not support.')
+  if (interlace !== 0) throw new UserError('The PNG is interlaced, which the bundled diff does not read. Save it without interlacing.')
+  if (!width || !height || width * height > MAX_PIXELS) throw new UserError(`The PNG is ${width}x${height}, which is not a size this reader will decode.`)
+  const channels = CHANNELS[color]
+  const bitsPerPixel = channels * depth
+  return { width, height, depth, color, channels, bitsPerPixel, rowBytes: Math.ceil((width * bitsPerPixel) / 8) }
+}
+
 /**
  * Reads a PNG into 8-bit RGBA, the shape Dieter's diff reads from `pngjs`: `{ width, height, data }`.
  * It reads what browsers and screenshot tools write: every colour type and bit depth, one pass.
@@ -74,30 +88,29 @@ export function readPng(buffer) {
   let header
   let palette = null
   let alphaTable = null
+  let compressed = 0
   const parts = []
   for (let at = 8; at + 8 <= buffer.length; ) {
     const length = buffer.readUInt32BE(at)
     const type = buffer.toString('latin1', at + 4, at + 8)
     const body = buffer.subarray(at + 8, at + 8 + length)
     if (body.length !== length) throw new UserError('The PNG is cut short.')
-    if (type === 'IHDR' && length !== 13) throw new UserError('The PNG header is the wrong size.')
-    if (type === 'IHDR') header = { width: body.readUInt32BE(0), height: body.readUInt32BE(4), depth: body[8], color: body[9], compression: body[10], filter: body[11], interlace: body[12] }
+    if (type === 'IHDR') header = parseHeader(body)
     else if (type === 'PLTE') palette = body
     else if (type === 'tRNS') alphaTable = body
-    else if (type === 'IDAT') parts.push(body)
-    else if (type === 'IEND') break
+    else if (type === 'IDAT') {
+      if (!header) throw new UserError('The PNG has no header before its pixel data.')
+      // Deflate can grow data a little, never by much, so more than this is not the picture the header describes.
+      compressed += length
+      if (compressed > Math.ceil((header.rowBytes + 1) * header.height * 1.01) + 1024) throw new UserError('The PNG holds more pixel data than its header allows.')
+      parts.push(body)
+    } else if (type === 'IEND') break
     at += 12 + length
   }
   if (!header) throw new UserError('The PNG has no header.')
-  const { width, height, depth, color } = header
-  if (!(color in CHANNELS) || !DEPTHS[color].includes(depth) || header.compression !== 0 || header.filter !== 0) throw new UserError('The PNG uses a colour type or bit depth this reader does not support.')
-  if (header.interlace !== 0) throw new UserError('The PNG is interlaced, which the bundled diff does not read. Save it without interlacing.')
-  if (!width || !height || width * height > MAX_PIXELS) throw new UserError(`The PNG is ${width}x${height}, which is not a size this reader will decode.`)
-  if (color === 3 && !palette) throw new UserError('The PNG is missing its palette.')
+  if (header.color === 3 && !palette) throw new UserError('The PNG is missing its palette.')
 
-  const channels = CHANNELS[color]
-  const bitsPerPixel = channels * depth
-  const rowBytes = Math.ceil((width * bitsPerPixel) / 8)
+  const { width, height, depth, color, channels, bitsPerPixel, rowBytes } = header
   let raw
   try {
     raw = zlib.inflateSync(Buffer.concat(parts), { maxOutputLength: (rowBytes + 1) * height })
