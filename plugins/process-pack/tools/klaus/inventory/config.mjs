@@ -33,8 +33,10 @@ export function readFolders(root, cliFolders = []) {
 
   const folders = listed.map(parseFolder)
   for (const folder of folders) {
-    if (folder.path.startsWith('..') || path.isAbsolute(folder.path)) throw new Error(`Folder ${folder.path} is outside the repo.`)
-    const abs = path.join(root, folder.path)
+    const abs = path.resolve(root, folder.path)
+    const fromRoot = path.relative(root, abs)
+    // Checked on the resolved path, so `a/../../b` cannot step out of the repo either.
+    if (fromRoot.startsWith('..') || path.isAbsolute(fromRoot)) throw new Error(`Folder ${folder.path} is outside the repo.`)
     if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) throw new Error(`Folder ${folder.path} does not exist in ${root}.`)
   }
   return folders

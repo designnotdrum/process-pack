@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { isScreenFile, screenLabel, toPosix, walk } from './files.mjs'
 
-const EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs']
+const EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']
 
 const readJson = (file) => {
   try {
@@ -80,8 +80,9 @@ function readFacts(ts, file) {
     if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
       const spec = statement.moduleSpecifier.text
       const clause = statement.importClause
+      // `import './polyfills'` runs a module but renders nothing from it, so it takes no names.
       if (!clause) {
-        facts.imports.push({ spec, names: ['*'] })
+        facts.imports.push({ spec, names: [] })
         continue
       }
       if (clause.isTypeOnly) continue
@@ -163,8 +164,8 @@ export function readUsage({ ts, root, tsconfigs }) {
     return file.startsWith(`${toPosix(root)}/`) && !file.includes('/node_modules/') && !file.endsWith('.d.ts') ? file : null
   }
 
-  /** Follows barrel files and renames to the file that declares an export. */
-  function resolveExport(file, name, seen = new Set()) {
+  /** Follows barrel files and renames to the file that declares an export. `seen` stops re-export cycles. */
+  function followExport(file, name, seen) {
     const key = `${file}#${name}`
     const known = facts.get(file)
     if (seen.has(key) || !known) return null
@@ -173,18 +174,26 @@ export function readUsage({ ts, root, tsconfigs }) {
       for (const named of reExport.names) {
         if (named.exported !== name) continue
         const target = resolveImport(reExport.spec, file)
-        if (target) return resolveExport(target, named.imported, seen) ?? { file: target, name: named.imported }
+        if (target) return followExport(target, named.imported, seen) ?? { file: target, name: named.imported }
       }
     }
     if (known.localExports.has(name)) return { file, name }
     if (name !== 'default') {
       for (const reExport of known.reExports.filter((r) => r.star)) {
         const target = resolveImport(reExport.spec, file)
-        const found = target && resolveExport(target, name, seen)
+        const found = target && followExport(target, name, seen)
         if (found) return found
       }
     }
     return null
+  }
+
+  // Only whole lookups are kept: a result cut short by the cycle guard must not be reused.
+  const resolvedExports = new Map()
+  function resolveExport(file, name) {
+    const key = `${file}#${name}`
+    if (!resolvedExports.has(key)) resolvedExports.set(key, followExport(file, name, new Set()))
+    return resolvedExports.get(key)
   }
 
   // importers.get(file) maps each file importing it to the export names it takes ('*' for all of them).

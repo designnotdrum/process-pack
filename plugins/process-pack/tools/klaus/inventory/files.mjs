@@ -1,7 +1,11 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-/** Directories that never hold shipped components. Hidden directories are skipped too. */
+/**
+ * Directories that never hold shipped components. Hidden directories and Jest-style folders such
+ * as `__tests__` and `__mocks__` are skipped too, so what imports a component in a test does not
+ * count as using it.
+ */
 const SKIPPED_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', 'storybook-static', 'stories'])
 
 /** Declaration files, tests and stories are not part of what a repo ships. */
@@ -130,7 +134,7 @@ export function localRouteOf(file, root) {
 
 /** The nearest folder at or below `stop` that is named like an icon folder, or null. */
 export function iconDirOf(file, stop) {
-  for (let dir = path.dirname(file); dir.startsWith(stop); dir = path.dirname(dir)) {
+  for (let dir = path.dirname(file); dir === stop || dir.startsWith(stop + path.sep); dir = path.dirname(dir)) {
     if (ICON_DIR.test(path.basename(dir))) return dir
     if (dir === stop) break
   }

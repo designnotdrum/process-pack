@@ -17,6 +17,8 @@ export function loadTypeScript(root) {
 /**
  * A callable whose return type reads like a rendered element is a component, whatever wraps it.
  * One that only ever returns null is a component too: it runs an effect and renders nothing.
+ * A bare `Element` has to count: some libraries' types print as `Element` and not `JSX.Element`.
+ * It does not match `HTMLElement`.
  */
 const RENDERS = /\b(?:Element|ReactNode|ReactElement|ReactPortal)\b|^null$/
 
@@ -160,6 +162,7 @@ function readProps(ts, checker, symbol, declaration, root) {
 
   // A props type that is a union of object types lists the props every member shares, which would
   // hide most of them. Merge the members instead and call a prop required only if every member requires it.
+  // `undefined` comes from an optional parameter and is not a member; any other non-object member is not read.
   const members = (propsType.isUnion() ? propsType.types : [propsType]).filter((t) => t.flags & ts.TypeFlags.Object || t.isIntersection())
   const merged = new Map()
   for (const member of members) {

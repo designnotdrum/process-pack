@@ -11,25 +11,31 @@ import { buildInventory } from '../inventory.mjs'
 import { renderMarkdown } from '../markdown.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-const fixture = path.join(here, 'fixtures', 'repo')
+const source = path.join(here, 'fixtures', 'repo')
 const cli = path.join(here, '..', 'inventory.mjs')
 
 /**
- * A test file and a story that import Button. They are written here, not checked in, so a repo
- * that copies this folder does not run them as its own tests.
+ * The tests run on a copy of the fixture repo, so a killed run leaves nothing behind in the
+ * checkout. The copy gets a test file and a story that import Button; they are not checked in
+ * because a repo that copies this folder would run them as its own tests. It also gets a link to
+ * this package's node_modules, which is where the repo's own `typescript` is found from.
  */
-const strays = ['packages/ui/src/button.test.tsx', 'packages/ui/src/button.stories.tsx'].map((f) => path.join(fixture, f))
-
+let fixture
 let inventory
 const entry = (name, folder) => inventory.entries.find((e) => e.name === name && (!folder || e.folder === folder))
 
 before(() => {
-  for (const file of strays) fs.writeFileSync(file, "import { Button } from './button'\nexport const x = Button\n")
+  fixture = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'klaus-fixture-')), 'repo')
+  fs.cpSync(source, fixture, { recursive: true })
+  fs.symlinkSync(path.join(here, '..', '..', 'node_modules'), path.join(fixture, 'node_modules'))
+  for (const file of ['packages/ui/src/button.test.tsx', 'packages/ui/src/button.stories.tsx']) {
+    fs.writeFileSync(path.join(fixture, file), "import { Button } from './button'\nexport const x = Button\n")
+  }
   inventory = buildInventory({ root: fixture, folders: readFolders(fixture) })
 })
 
 after(() => {
-  for (const file of strays) fs.rmSync(file, { force: true })
+  fs.rmSync(path.dirname(fixture), { recursive: true, force: true })
 })
 
 describe('a family with parts', () => {
@@ -86,6 +92,7 @@ describe('a local component', () => {
     const header = entry('ProjectHeader')
     assert.equal(header.kind, 'local')
     assert.equal(header.route, '/projects')
+    assert.equal(header.purpose.notFor, 'any other screen, it is built for this one.')
     assert.deepEqual(header.usedIn, ['/projects'])
   })
 
