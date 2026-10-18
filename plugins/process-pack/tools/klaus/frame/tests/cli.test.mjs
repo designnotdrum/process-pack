@@ -98,6 +98,10 @@ test("running the same release again does nothing", () => {
 
   assert.equal(code, 0);
   assert.match(out, /storybook: skipped \(up-to-date\)/);
+  const reports = reportsIn(repo).sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+  assert.equal(reports.at(-1).outputs[0].status, "skipped");
+  assert.equal(stateIn(repo).outputs.storybook.lastRelease, "v1.2.0");
+  assert.deepEqual(stateIn(repo).outputs.storybook.unwritten, []);
 });
 
 test("a trigger the config does not enable exits 0 and writes nothing", () => {
@@ -145,10 +149,38 @@ test("an enabled output with no adapter folder is reported failed with exit 1", 
 
 test("a release run without --release, and an unknown trigger, exit 2", () => {
   const repo = makeRepo();
-  assert.equal(klaus(repo, "run", "--trigger", "release").code, 2);
-  assert.equal(klaus(repo, "run", "--trigger", "nightly").code, 2);
-  assert.equal(klaus(repo, "run").code, 2);
-  assert.equal(klaus(repo, "explode").code, 2);
+  const cases = [
+    [["run", "--trigger", "release"], /--trigger release needs --release/],
+    [["run", "--trigger", "release", "--release", "v9.9.9"], /Release v9\.9\.9 is not among the release tags/],
+    [["run", "--trigger", "nightly"], /--trigger must be one of/],
+    [["run"], /--trigger must be one of/],
+    [["run", "--trigger", "manual", "--nope"], /Unknown option '--nope'/],
+    [["explode"], /Usage: cli\.mjs/],
+  ];
+  for (const [args, message] of cases) {
+    const { code, err } = klaus(repo, ...args);
+    assert.equal(code, 2, args.join(" "));
+    assert.match(err, message, args.join(" "));
+  }
+});
+
+test("an adapter file that cannot be loaded is a bug, not a usage error: exit 3 with a stack", () => {
+  const repo = makeRepo({ adapterSource: "throw new Error('adapter exploded on load');\n" });
+  const { code, err } = klaus(repo, "run", "--trigger", "manual");
+
+  assert.equal(code, 3);
+  assert.match(err, /adapter exploded on load/);
+  assert.match(err, /at /);
+});
+
+test("a state file that is not a state file stops the run with exit 2", () => {
+  const repo = makeRepo();
+  mkdirSync(path.join(repo, ".klaus"));
+  writeFileSync(path.join(repo, ".klaus", "state.json"), "{ nope");
+  const { code, err } = klaus(repo, "run", "--trigger", "manual");
+
+  assert.equal(code, 2);
+  assert.match(err, /is not valid JSON\. Delete it/);
 });
 
 test("validate accepts a good config and rejects a secret value without printing it", () => {
@@ -169,6 +201,7 @@ test("a run with a secret in the config stops before any adapter runs", () => {
   const { code, err } = klaus(repo, "run", "--trigger", "manual");
 
   assert.equal(code, 2);
+  assert.match(err, /outputs\.storybook\.target: looks like a secret value/);
   assert.ok(!err.includes(token));
   assert.equal(existsSync(path.join(repo, ".klaus")), false);
 });

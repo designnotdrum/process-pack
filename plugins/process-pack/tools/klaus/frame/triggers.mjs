@@ -14,6 +14,8 @@
  * its tag history.
  */
 
+import { UserError } from "./errors.mjs";
+
 export const TRIGGERS = Object.freeze(["release", "schedule", "manual"]);
 
 /**
@@ -37,13 +39,16 @@ export function releasesToCover({ releases, trigger, release, lastRelease }) {
   let end;
   if (trigger === "release") {
     end = releases.indexOf(release);
-    if (end < 0) throw new Error(`Release ${release} is not among the release tags.`);
+    if (end < 0) throw new UserError(`Release ${release} is not among the release tags.`);
   } else {
     end = releases.length - 1;
   }
 
   let start = lastRelease === undefined ? -1 : releases.indexOf(lastRelease);
   if (lastRelease !== undefined && start < 0) {
+    // A deleted or renamed tag leaves no way to tell which releases came after it. Stopping would
+    // wedge every later run until someone edits the state file, so recover from the newest release
+    // and leave the note in the run report.
     notes.push(`The last recorded release ${lastRelease} is no longer a tag, so only the newest release is covered.`);
   }
 

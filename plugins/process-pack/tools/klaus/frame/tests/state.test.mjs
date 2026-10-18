@@ -30,4 +30,6 @@ test("refuses a file that is not a state file instead of starting over silently"
   assert.throws(() => readState(file), /wrong version/);
   writeFileSync(file, JSON.stringify({ version: 1, outputs: { storybook: { lastRelease: "v1" } } }));
   assert.throws(() => readState(file), /storybook\.unwritten/);
+  writeFileSync(file, JSON.stringify({ version: 1, outputs: { storybook: { unwritten: [], lastRunAt: 5 } } }));
+  assert.throws(() => readState(file), /storybook\.lastRunAt/);
 });

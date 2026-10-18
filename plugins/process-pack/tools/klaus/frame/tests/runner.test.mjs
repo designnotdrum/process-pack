@@ -155,6 +155,16 @@ test("overhead counts against the token cap before any item", async () => {
   assert.equal(report.outputs[0].estimated.usd, 0.51);
 });
 
+test("overhead that alone exceeds the token cap defers everything as larger than the cap", async () => {
+  const config = configOf({ spendingCap: { maxRelayTokens: 250 } });
+  const adapter = fakeAdapter({ log: [], ids: ["A", "B"], overhead: { calls: 1, tokens: 300, usd: 0 } });
+  const { report } = await run({ config, inventory: inventoryOf({ A: 2, B: 1 }), adapters: { storybook: adapter } });
+
+  assert.deepEqual(report.outputs[0].written, []);
+  assert.deepEqual(report.outputs[0].deferred.map((d) => [d.id, d.reason]), [["A", "larger-than-token-cap"], ["B", "larger-than-token-cap"]]);
+  assert.equal(adapter.seen.write.length, 0);
+});
+
 test("a write that fails is reported, retried next run, and marks the run failed", async () => {
   const adapter = fakeAdapter({ log: [], ids: ["A", "B"], failIds: ["B"] });
   const { report, state } = await run({ config: configOf(), inventory: inventoryOf({ A: 2, B: 1 }), adapters: { storybook: adapter } });
@@ -163,6 +173,16 @@ test("a write that fails is reported, retried next run, and marks the run failed
   assert.deepEqual(report.outputs[0].written, ["A"]);
   assert.deepEqual(report.outputs[0].failed, [{ id: "B", error: "relay refused it" }]);
   assert.deepEqual(state.outputs.storybook.unwritten, ["B"]);
+});
+
+test("a write that reports the same id twice fails the output instead of double counting", async () => {
+  const adapter = fakeAdapter({ log: [], ids: ["A"] });
+  adapter.write = () => ({ written: ["A", "A"], actual: { calls: 1 } });
+  const { report } = await run({ config: configOf(), inventory: inventoryOf({ A: 1 }), adapters: { storybook: adapter } });
+
+  assert.equal(report.outputs[0].status, "failed");
+  assert.equal(report.outputs[0].failedStep, "write");
+  assert.match(report.outputs[0].error, /same id more than once/);
 });
 
 test("an adapter that returns fewer ids than it was given leaves the rest unwritten", async () => {
@@ -220,6 +240,16 @@ test("a secret named in the config but absent from the environment fails the out
 
   assert.deepEqual(log, []);
   assert.match(report.outputs[0].error, /not set in the environment: FIGMA_TOKEN\./);
+});
+
+test("secret values are removed from what the adapter reports, including its details", async () => {
+  const config = configOf({ outputs: { storybook: { enabled: true, secrets: ["VERCEL_TOKEN"] } } });
+  const adapter = fakeAdapter({ log: [], ids: ["A"] });
+  adapter.report = () => ({ summary: "deployed with abc-123-xyz-789", details: { debug: ["token abc-123-xyz-789"] } });
+  const { report } = await run({ config, inventory: inventoryOf({ A: 1 }), adapters: { storybook: adapter }, env: { VERCEL_TOKEN: "abc-123-xyz-789" } });
+
+  assert.equal(report.outputs[0].adapter.summary, "deployed with [redacted]");
+  assert.deepEqual(report.outputs[0].adapter.details, { debug: ["token [redacted]"] });
 });
 
 test("an adapter can read only the secrets its output lists", async () => {

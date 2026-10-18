@@ -6,6 +6,8 @@
  * value, so a pasted token does not reach a CI log.
  */
 import { readFileSync } from "node:fs";
+import { UserError } from "./errors.mjs";
+import { readJsonFile } from "./json-file.mjs";
 import { validateAgainstSchema } from "./json-schema.mjs";
 
 export const SCHEMA = JSON.parse(readFileSync(new URL("../klaus.config.schema.json", import.meta.url), "utf8"));
@@ -41,7 +43,7 @@ export function validateConfig(config) {
  */
 export function resolveConfig(config) {
   const { ok, errors } = validateConfig(config);
-  if (!ok) throw new Error(`klaus.config.json is not valid:\n${errors.map((e) => `  ${e}`).join("\n")}`);
+  if (!ok) throw new UserError(`klaus.config.json is not valid:\n${errors.map((e) => `  ${e}`).join("\n")}`);
   const outputs = {};
   for (const [name, settings] of Object.entries(config.outputs)) {
     outputs[name] = { secrets: [], logins: [], ...settings };
@@ -60,25 +62,7 @@ export function resolveConfig(config) {
   };
 }
 
-/**
- * Reads and resolves a config file.
- * A JSON syntax error reports the line and column only, because the error text
- * Node produces can quote the start of the file.
- */
+/** Reads and resolves a config file. */
 export function loadConfig(file) {
-  let text;
-  try {
-    text = readFileSync(file, "utf8");
-  } catch (error) {
-    if (error.code === "ENOENT") throw new Error(`${file} does not exist.`);
-    throw error;
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch (error) {
-    const where = /\(line \d+ column \d+\)/.exec(error.message)?.[0];
-    throw new Error(`${file} is not valid JSON${where ? ` ${where}` : ""}.`);
-  }
-  return resolveConfig(parsed);
+  return resolveConfig(readJsonFile(file, "Config"));
 }

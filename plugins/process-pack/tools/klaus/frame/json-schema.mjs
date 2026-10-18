@@ -58,7 +58,9 @@ function check(schema, value, path, root, errors) {
   }
 
   if (typeof value === "string") {
-    if (schema.minLength !== undefined && value.length < schema.minLength) errors.push(`${path}: must not be empty.`);
+    if (schema.minLength !== undefined && value.length < schema.minLength) {
+      errors.push(`${path}: must be at least ${schema.minLength} character${schema.minLength === 1 ? "" : "s"}.`);
+    }
     if (schema.maxLength !== undefined && value.length > schema.maxLength) errors.push(`${path}: must be at most ${schema.maxLength} characters.`);
     if (schema.pattern !== undefined && !new RegExp(schema.pattern).test(value)) {
       errors.push(`${path}: must be ${schema.description ?? `a string matching ${schema.pattern}`}.`);

@@ -14,8 +14,9 @@
  * "unwritten" holds the ids a run planned and did not write, whether the cap
  * deferred them or the write failed. The next run hands them back to the plan.
  */
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { UserError } from "./errors.mjs";
 
 export const STATE_VERSION = 1;
 
@@ -24,12 +25,13 @@ export function emptyState() {
 }
 
 function assertShape(state, file) {
-  const bad = (why) => new Error(`${file} is not a Klaus state file (${why}). Delete it to start again from the newest release.`);
+  const bad = (why) => new UserError(`${file} is not a Klaus state file (${why}). Delete it to start again from the newest release.`);
   if (!state || typeof state !== "object" || state.version !== STATE_VERSION) throw bad("wrong version");
   if (!state.outputs || typeof state.outputs !== "object") throw bad("no outputs");
   for (const [name, entry] of Object.entries(state.outputs)) {
     if (typeof entry !== "object" || entry === null) throw bad(`${name} is not an object`);
     if (entry.lastRelease !== undefined && typeof entry.lastRelease !== "string") throw bad(`${name}.lastRelease`);
+    if (entry.lastRunAt !== undefined && typeof entry.lastRunAt !== "string") throw bad(`${name}.lastRunAt`);
     if (!Array.isArray(entry.unwritten) || entry.unwritten.some((id) => typeof id !== "string")) throw bad(`${name}.unwritten`);
   }
 }
@@ -47,7 +49,7 @@ export function readState(file) {
   try {
     state = JSON.parse(text);
   } catch {
-    throw new Error(`${file} is not valid JSON. Delete it to start again from the newest release.`);
+    throw new UserError(`${file} is not valid JSON. Delete it to start again from the newest release.`);
   }
   assertShape(state, file);
   return state;
@@ -58,5 +60,14 @@ export function writeState(file, state) {
   mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.tmp`;
   writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`);
-  renameSync(temp, file);
+  try {
+    renameSync(temp, file);
+  } catch (error) {
+    try {
+      unlinkSync(temp);
+    } catch {
+      // Keep the rename error, which is the one that matters.
+    }
+    throw error;
+  }
 }

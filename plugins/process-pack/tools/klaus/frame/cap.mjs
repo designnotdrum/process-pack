@@ -29,6 +29,12 @@ export function indexEstimate(plan, estimate, output) {
   return { byId, overhead: normalizeCost(estimate.overhead, `${output} estimate overhead`) };
 }
 
+/** Plain code-unit order, so the tie-break never depends on the machine's locale. */
+function compareIds(a, b) {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 /**
  * @param {object} args
  * @param {Array<{ id: string, kind: string }>} args.items
@@ -43,12 +49,13 @@ export function indexEstimate(plan, estimate, output) {
  * }}
  *   allowed is in write order. Reasons: write-cap means the component limit was reached,
  *   token-cap means the item did not fit in the tokens left, larger-than-token-cap means
- *   the item alone needs more than the whole token limit and will never be written.
+ *   the item, with the estimate's overhead, needs more than the whole token limit and will
+ *   never be written.
  */
 export function applyCap({ items, estimate, usageById, cap }) {
   const ranked = items
     .map((item) => ({ ...item, usage: usageById.get(item.id) ?? 0 }))
-    .sort((a, b) => b.usage - a.usage || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    .sort((a, b) => b.usage - a.usage || compareIds(a.id, b.id));
 
   const room = cap.maxRelayTokens - estimate.overhead.tokens;
   let tokens = 0;
@@ -61,8 +68,7 @@ export function applyCap({ items, estimate, usageById, cap }) {
     const isComponent = item.kind === "component";
     let reason = null;
     if (isComponent && componentWrites >= cap.maxComponentWrites) reason = "write-cap";
-    else if (room < 0) reason = "token-cap";
-    else if (itemTokens > room) reason = "larger-than-token-cap";
+    else if (room < 0 || itemTokens > room) reason = "larger-than-token-cap";
     else if (tokens + itemTokens > room) reason = "token-cap";
 
     if (reason) {

@@ -30,7 +30,10 @@ test("component groups match whole folders, not folders that share a prefix", ()
 });
 
 test("no component groups means every component", () => {
-  assert.equal(selectComponents(inventory, { componentGroups: [] }).length, 4);
+  assert.deepEqual(
+    selectComponents(inventory, { componentGroups: [] }).map((c) => c.name),
+    ["Button", "Banner", "Nav", "Orphan"],
+  );
 });
 
 test("the new-component rule applies only to components the output has never received", () => {

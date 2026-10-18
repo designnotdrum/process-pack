@@ -14,6 +14,7 @@ import { assertAdapter, normalizePlan } from "./adapter.mjs";
 import { applyCap, indexEstimate } from "./cap.mjs";
 import { listComponents, usageCount } from "./components.mjs";
 import { normalizeCost, zeroCost } from "./cost.mjs";
+import { UserError } from "./errors.mjs";
 import { buildReport } from "./report.mjs";
 import { emptyState } from "./state.mjs";
 import { releasesToCover, TRIGGERS, triggerEnabled } from "./triggers.mjs";
@@ -37,10 +38,24 @@ function outputRecord(output, fields) {
   };
 }
 
-/** Removes the values of an output's declared secrets from text headed for a report. */
+/**
+ * Removes the values of an output's declared secrets from text headed for a report.
+ * Values under 8 characters are left alone: they would also match ordinary words
+ * and garble the message.
+ */
 function redactor(settings, env) {
   const values = settings.secrets.map((name) => env[name]).filter((v) => typeof v === "string" && v.length >= 8);
   return (text) => values.reduce((out, value) => out.split(value).join("[redacted]"), String(text));
+}
+
+/** Applies the redactor to every string inside a value. */
+function redactDeep(value, redact) {
+  if (typeof value === "string") return redact(value);
+  if (Array.isArray(value)) return value.map((item) => redactDeep(item, redact));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactDeep(item, redact)]));
+  }
+  return value;
 }
 
 async function runOutput({ name, settings, adapter, run }) {
@@ -117,7 +132,7 @@ async function runOutput({ name, settings, adapter, run }) {
   }
 
   const failedIds = new Set(result.failed.map((f) => f.id));
-  const written = result.written.filter((id) => !failedIds.has(id));
+  const written = result.written;
   const notWritten = capped.allowed
     .filter((item) => !written.includes(item.id) && !failedIds.has(item.id))
     .map((item) => ({ id: item.id, kind: item.kind, usage: item.usage, reason: "not-written" }));
@@ -134,7 +149,7 @@ async function runOutput({ name, settings, adapter, run }) {
       { written, failed, deferred, estimated: capped.estimated, estimatedUncapped: capped.estimatedUncapped, actual: result.actual, dryRun },
       ctx,
     );
-    adapterReport = reported && typeof reported === "object" ? reported : null;
+    adapterReport = reported && typeof reported === "object" ? redactDeep(reported, redact) : null;
   } catch (error) {
     warnings.push(`The report step failed: ${redact(error.message)}`);
   }
@@ -170,8 +185,12 @@ function readWriteResult(raw, allowed, output) {
   if (!raw || !Array.isArray(raw.written)) throw new Error(`${output} write must return an object with a written array.`);
   const given = new Set(allowed.map((item) => item.id));
   const failed = raw.failed ?? [];
-  for (const id of [...raw.written, ...failed.map((f) => f?.id)]) {
+  const reported = [...raw.written, ...failed.map((f) => f?.id)];
+  for (const id of reported) {
     if (!given.has(id)) throw new Error(`${output} write reported "${id}", which was not in the items it was given.`);
+  }
+  if (new Set(reported).size !== reported.length) {
+    throw new Error(`${output} write reported the same id more than once.`);
   }
   return {
     written: raw.written,
@@ -202,9 +221,9 @@ export async function runKlaus(options) {
     config, inventory, adapters, releases = [], trigger, release, state = emptyState(),
     modelFree = false, dryRun = false, env = process.env, now = () => new Date(), log = () => {},
   } = options;
-  if (!TRIGGERS.includes(trigger)) throw new Error(`Unknown trigger "${trigger}".`);
+  if (!TRIGGERS.includes(trigger)) throw new UserError(`Unknown trigger "${trigger}".`);
   if (trigger === "release" && !releases.includes(release)) {
-    throw new Error(`Release ${release} is not among the release tags.`);
+    throw new UserError(`Release ${release} is not among the release tags.`);
   }
 
   const startedAt = now();
