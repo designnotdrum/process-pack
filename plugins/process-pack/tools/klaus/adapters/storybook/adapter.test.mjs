@@ -40,7 +40,7 @@ function fakeWorld({ buildBytes = 2_000_000, failOn } = {}) {
       writeFileSync(path.join(out, "index.html"), "x".repeat(buildBytes));
       return { stdout: "", stderr: "" };
     }
-    const sub = args[2]; // after "--yes vercel@latest"
+    const sub = args[2]; // after "--yes vercel@64.5.0"
     if (failOn === sub) throw new Error(`${sub} refused`);
     const meta = Object.fromEntries(args.flatMap((a, i) => (args[i - 1] === "--meta" ? [a.split(/=(.*)/s).slice(0, 2)] : [])));
     if (sub === "deploy") {
@@ -111,13 +111,14 @@ test("a dry run makes no Vercel call and reports the storage cost", async () => 
 
 test("in an empty project an empty index goes to production first, then the release, its address, and the full index", async () => {
   const world = fakeWorld({ buildBytes: 2_000_000 });
-  const { report } = await run({ world, root: repo() });
+  const root = repo();
+  const { report } = await run({ world, root });
 
   const out = report.outputs[0];
   assert.equal(out.status, "ok");
   assert.deepEqual(out.written, ["v1.0.0"]);
   assert.deepEqual(vercelCalls(world.calls), ["list", "deploy", "deploy", "alias", "list", "deploy"]);
-  assert.deepEqual(world.calls.map((c) => c.file), ["git", path.join(world.calls[1].options.cwd, "node_modules/.bin/storybook"), ...Array(6).fill("npx")]);
+  assert.deepEqual(world.calls.map((c) => c.file), ["git", path.join(root, "packages/ui/node_modules/.bin/storybook"), ...Array(6).fill("npx")]);
 
   const [empty, release, index] = world.deployments;
   assert.equal(empty.prod, true);
@@ -190,7 +191,7 @@ test("the design-tool selection does not change what Storybook shows", async () 
   });
   const a = await run({ world: fakeWorld(), root: repo(), config: selected });
   const b = await run({ world: fakeWorld(), root: repo(), config: narrow });
-  assert.deepEqual(a.report.outputs[0].written, b.report.outputs[0].written);
+  assert.deepEqual(a.report.outputs[0].written, ["v1.0.0"]);
   assert.deepEqual(b.report.outputs[0].written, ["v1.0.0"]);
 });
 
@@ -220,6 +221,7 @@ test("a failed Vercel call leaves the release unwritten with the reason, and kee
   assert.equal(report.status, "failed");
   assert.deepEqual(out.written, []);
   assert.deepEqual(out.failed, [{ id: "v1.0.0", error: "vercel alias set failed: alias refused" }]);
+  assert.equal(out.actual.usd, 0); // nothing was kept, so no storage cost
   assert.deepEqual(state.outputs.storybook.unwritten, ["v1.0.0"]);
   assert.match(out.adapter.summary, /^Storybook for v1\.0\.0 was not deployed: vercel alias set failed: alias refused/);
   assert.ok(!JSON.stringify(report).includes(TOKEN));

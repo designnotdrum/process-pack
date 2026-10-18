@@ -1,6 +1,6 @@
 /**
  * The Vercel calls the Storybook adapter makes, through the Vercel command line
- * (`npx vercel@latest`). Nothing is installed: npx fetches the command.
+ * (`npx vercel@64.5.0`). Nothing is installed: npx fetches the command.
  *
  * Each release is one deployment of the built Storybook. It carries metadata
  * (`vercel deploy --meta`) and one alias, and Vercel keeps a deployment that has
@@ -30,7 +30,10 @@ export const META = Object.freeze({
 /** Values of the `klausKind` metadata. */
 export const KINDS = Object.freeze({ release: "storybook-release", index: "storybook-index" });
 
-const CLI = ["--yes", "vercel@latest"];
+// Pinned, not "latest": the token is in the command's environment, and the parsers below read the
+// JSON that this version prints (see fixtures/). Change the version on purpose, with the fixtures.
+export const VERCEL_CLI_VERSION = "64.5.0";
+const CLI = ["--yes", `vercel@${VERCEL_CLI_VERSION}`];
 const PAGE_SIZE = 100;
 const MAX_PAGES = 50;
 const DNS_LABEL_MAX = 63;
@@ -147,6 +150,8 @@ export function createVercel({ exec, token, project, scope }) {
         next = body.pagination?.next;
         if (!next) return found;
       }
+      // Fail instead of returning the pages read so far: an index built from part of the list would
+      // quietly drop the older releases.
       throw new Error(`vercel list returned more than ${MAX_PAGES * PAGE_SIZE} release deployments.`);
     },
   };

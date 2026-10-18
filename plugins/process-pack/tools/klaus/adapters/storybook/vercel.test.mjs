@@ -50,7 +50,7 @@ test("deploy names the project, sends metadata with --meta and keeps the token o
     assert.deepEqual(deployed, { id: "dpl_1", url: "https://acme-abc.vercel.app", productionUrl: null });
     const [call] = calls;
     assert.equal(call.file, "npx");
-    assert.deepEqual(call.args.slice(0, 5), ["--yes", "vercel@latest", "deploy", "/tmp/build", "--project"]);
+    assert.deepEqual(call.args.slice(0, 5), ["--yes", "vercel@64.5.0", "deploy", "/tmp/build", "--project"]);
     assert.ok(call.args.includes("acme-storybook"));
     assert.ok(call.args.join(" ").includes("--meta klausKind=storybook-release --meta klausRelease=v1.4.0"));
     assert.ok(call.args.join(" ").includes("--scope team_abc"));

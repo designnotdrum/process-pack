@@ -22,7 +22,7 @@ Storybook shows every component that has a story. It ignores the design-tool sel
 
 The adapter finds `.storybook` in the repo root, then in each inventory folder and the folders above it, so a monorepo with Storybook in `packages/ui` is found from the inventory's `packages/ui/src`.
 
-The adapter starts `npx vercel@latest` for every Vercel call. The deploy step reads the JSON that `--json` prints, so a change in that output fails the run with the message "did not report a ready deployment" instead of passing quietly.
+The adapter starts `npx vercel@64.5.0` for every Vercel call. The version is pinned because the token is in the command's environment and the parsers read the JSON it prints. `fixtures/` holds the output of `vercel deploy --json` and `vercel list --json` captured from that version. To move to a newer version, change `VERCEL_CLI_VERSION` in `vercel.mjs` and capture the fixtures again. A deploy whose output does not match fails the run with "did not report a ready deployment" instead of passing quietly.
 
 ## What a run does
 

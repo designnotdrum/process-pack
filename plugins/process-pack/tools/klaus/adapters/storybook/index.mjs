@@ -128,7 +128,7 @@ export function createStorybookAdapter({ exec = defaultExec, cwd = () => process
 
       const written = [];
       const failed = [];
-      let bytes = 0;
+      let bytes = 0; // Storage that stays on Vercel: only items that were written count.
       for (const item of plan.items) {
         const work = mkdtempSync(path.join(tmpdir(), "klaus-storybook-"));
         const outcome = { release: item.release, alias: aliasFor(project, item.release), commit };
@@ -138,7 +138,6 @@ export function createStorybookAdapter({ exec = defaultExec, cwd = () => process
           const buildDir = path.join(work, "build");
           await buildStorybook({ exec, root, storybookDir: item.storybookDir, outDir: buildDir });
           outcome.buildBytes = directorySize(buildDir);
-          bytes += outcome.buildBytes;
 
           // Vercel makes the first deployment of a project its open production deployment, so an empty
           // project gets an empty index first and the release then lands as a protected preview.
@@ -160,10 +159,11 @@ export function createStorybookAdapter({ exec = defaultExec, cwd = () => process
           const releases = latestPerRelease([...listed, { release: item.release, alias: outcome.alias, commit: commit ?? null, createdAt: now().getTime() }]);
           const files = renderIndex({ project, releases });
           const indexDir = path.join(work, "index");
-          bytes += writeIndexFiles(indexDir, files);
+          const indexBytes = writeIndexFiles(indexDir, files);
           const index = await vercel.deploy(indexDir, { meta: { [META.kind]: KINDS.index }, prod: true });
           outcome.indexUrl = index.productionUrl ?? index.url;
           outcome.releaseCount = releases.length;
+          bytes += outcome.buildBytes + indexBytes;
           written.push(item.id);
         } catch (error) {
           failed.push({ id: item.id, error: error.message });
