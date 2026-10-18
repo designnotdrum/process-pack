@@ -21,6 +21,7 @@ export function indexEstimate(plan, estimate, output) {
   if (!estimate || !Array.isArray(estimate.items)) throw new Error(`${output} estimate must be an object with an items array.`);
   const byId = new Map();
   for (const entry of estimate.items) {
+    if (byId.has(entry.id)) throw new Error(`${output} estimate lists "${entry.id}" twice.`);
     byId.set(entry.id, normalizeCost(entry, `${output} estimate for ${entry.id}`));
   }
   for (const item of plan.items) {
@@ -84,6 +85,7 @@ export function applyCap({ items, estimate, usageById, cap }) {
   return {
     allowed,
     deferred,
+    // Overhead is the cost of a run that writes. A run that writes nothing does not incur it.
     estimated: allowed.length > 0 ? costOf(allowed) : zeroCost(),
     estimatedUncapped: costOf(ranked),
   };

@@ -44,14 +44,16 @@ export function releasesToCover({ releases, trigger, release, lastRelease }) {
     end = releases.length - 1;
   }
 
-  let start = lastRelease === undefined ? -1 : releases.indexOf(lastRelease);
-  if (lastRelease !== undefined && start < 0) {
-    // A deleted or renamed tag leaves no way to tell which releases came after it. Stopping would
-    // wedge every later run until someone edits the state file, so recover from the newest release
-    // and leave the note in the run report.
-    notes.push(`The last recorded release ${lastRelease} is no longer a tag, so only the newest release is covered.`);
+  const start = lastRelease === undefined ? -1 : releases.indexOf(lastRelease);
+  if (start < 0) {
+    const covered = end >= 0 ? [releases[end]] : [];
+    if (lastRelease !== undefined) {
+      // A deleted or renamed tag leaves no way to tell which releases came after it. Stopping would
+      // wedge every later run until someone edits the state file, so recover from one release
+      // and leave the note in the run report.
+      notes.push(`The last recorded release ${lastRelease} is no longer a tag, so only ${covered[0] ?? "no release"} is covered.`);
+    }
+    return { covered, notes };
   }
-
-  if (start < 0) return { covered: end >= 0 ? [releases[end]] : [], notes };
   return { covered: releases.slice(start + 1, end + 1), notes };
 }

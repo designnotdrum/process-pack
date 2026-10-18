@@ -6,7 +6,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { emptyState } from "../state.mjs";
 import { runKlaus } from "../runner.mjs";
 import { configOf, fakeAdapter, inventoryOf } from "./fake-adapter.mjs";
 
@@ -29,6 +28,7 @@ test("calls plan, estimate, write, report in that order", async () => {
 
   assert.deepEqual(log.map((e) => e.step), ["plan", "estimate", "write", "report"]);
   assert.equal(adapter.seen.plan[0].release, "v1.0.0");
+  assert.deepEqual(adapter.seen.estimate[0].items.map((i) => i.id), ["Button", "Card"]);
   assert.deepEqual(adapter.seen.write[0].items.map((i) => i.id), ["Button", "Card"]);
   assert.deepEqual(adapter.seen.report[0].written, ["Button", "Card"]);
   assert.equal(report.status, "ok");
@@ -145,6 +145,20 @@ test("what the cap deferred is handed back to the plan on the next run and writt
   assert.equal(second.state.outputs.storybook.lastRelease, "v1.1.0");
 });
 
+test("warns when a plan leaves out an item the last run left unwritten", async () => {
+  const adapter = fakeAdapter({ log: [], ids: ["A"] });
+  const plan = adapter.plan;
+  adapter.plan = (ctx) => ({ items: plan({ ...ctx, unwrittenFromLastRun: [] }).items });
+  const state = { version: 1, outputs: { storybook: { lastRelease: "v0.9.0", unwritten: ["B", "Gone"] } } };
+  const { report } = await run({
+    config: configOf(), inventory: inventoryOf({ A: 2, B: 1 }), adapters: { storybook: adapter }, state, releases: ["v0.9.0", "v1.0.0"],
+  });
+
+  // B is still in the inventory, so it is flagged. Gone is not, so it was removed on purpose.
+  assert.match(report.outputs[0].warnings.join("\n"), /plan leaves them out.*: B\./);
+  assert.ok(!report.outputs[0].warnings.join("\n").includes("Gone"));
+});
+
 test("overhead counts against the token cap before any item", async () => {
   const config = configOf({ spendingCap: { maxRelayTokens: 250 } });
   const adapter = fakeAdapter({ log: [], ids: ["A", "B"], overhead: { calls: 1, tokens: 100, usd: 0.5 } });
@@ -253,6 +267,7 @@ test("an adapter missing a step is reported failed", async () => {
   const adapter = fakeAdapter({ log: [], ids: ["A"] });
   delete adapter.estimate;
   const { report } = await run({ config: configOf(), inventory: inventoryOf({ A: 1 }), adapters: { storybook: adapter } });
+  assert.equal(report.outputs[0].status, "failed");
   assert.match(report.outputs[0].error, /missing the estimate step/);
 });
 
@@ -295,8 +310,12 @@ test("an adapter can read only the secrets its output lists", async () => {
 test("a dry run plans and estimates but never writes, and leaves the state alone", async () => {
   const log = [];
   const adapter = fakeAdapter({ log, ids: ["A", "B"] });
-  const before = emptyState();
-  const { report, state } = await run({ config: configOf(), inventory: inventoryOf({ A: 2, B: 1 }), adapters: { storybook: adapter }, dryRun: true, state: before });
+  const before = { version: 1, outputs: { storybook: { lastRelease: "v0.9.0", lastRunAt: "2026-10-17T06:00:00.000Z", unwritten: ["B"] } } };
+  const copy = structuredClone(before);
+  const { report, state } = await run({
+    config: configOf(), inventory: inventoryOf({ A: 2, B: 1 }), adapters: { storybook: adapter },
+    dryRun: true, state: before, releases: ["v0.9.0", "v1.0.0"],
+  });
 
   assert.deepEqual(log.map((e) => e.step), ["plan", "estimate", "report"]);
   assert.equal(report.dryRun, true);
@@ -305,7 +324,8 @@ test("a dry run plans and estimates but never writes, and leaves the state alone
   assert.deepEqual(report.outputs[0].warnings, []);
   assert.equal(report.outputs[0].estimated.calls, 2);
   assert.equal(report.status, "ok");
-  assert.deepEqual(state, emptyState());
+  assert.deepEqual(state, copy);
+  assert.deepEqual(before, copy);
 });
 
 test("a model-free run skips adapters that need a model", async () => {

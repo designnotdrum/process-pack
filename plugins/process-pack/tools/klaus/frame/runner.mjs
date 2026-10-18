@@ -112,11 +112,17 @@ async function runOutput({ name, settings, adapter, run }) {
   };
 
   let step = "plan";
+  let planWarning = null;
   let plan;
   let capped;
   let result = { written: [], failed: [], actual: zeroCost() };
   try {
     plan = normalizePlan(await adapter.plan(ctx), name);
+    const planned = new Set(plan.items.map((item) => item.id));
+    const dropped = unwritten.filter((id) => usageById.has(id) && !planned.has(id));
+    if (dropped.length > 0) {
+      planWarning = `These items were left unwritten by the last run and are still in the inventory, but the plan leaves them out, so they will not be retried: ${dropped.join(", ")}.`;
+    }
     step = "estimate";
     const estimate = indexEstimate(plan, await adapter.estimate(plan, ctx), name);
     step = "cap";
@@ -141,6 +147,7 @@ async function runOutput({ name, settings, adapter, run }) {
   const failed = result.failed.map((f) => ({ id: f.id, error: redact(f.error) }));
 
   const warnings = [...notes];
+  if (planWarning) warnings.push(planWarning);
   const short = settings.secrets.filter((secret) => env[secret] && env[secret].length < 8);
   if (short.length > 0) {
     warnings.push(`These secrets are shorter than 8 characters, so they are not removed from reports: ${short.join(", ")}.`);

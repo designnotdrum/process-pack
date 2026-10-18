@@ -5,6 +5,7 @@
  * "components" array. A component needs a "name". It may have "file" and a
  * usage count, given as "usageCount" or as a "usedBy" array.
  */
+import path from "node:path";
 
 /** @returns {Array<object>} */
 export function listComponents(inventory) {
@@ -26,8 +27,8 @@ export function usageCount(component) {
 }
 
 function inFolder(file, folder) {
-  const clean = folder.replace(/^\.\//, "").replace(/\/+$/, "");
-  const target = file.replace(/^\.\//, "");
+  const clean = path.posix.normalize(folder).replace(/^\.\//, "").replace(/\/+$/, "");
+  const target = path.posix.normalize(file).replace(/^\.\//, "");
   return target === clean || target.startsWith(`${clean}/`);
 }
 

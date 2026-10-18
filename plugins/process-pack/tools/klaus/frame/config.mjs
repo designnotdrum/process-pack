@@ -16,6 +16,7 @@ export const DEFAULT_SPENDING_CAP = Object.freeze({ maxComponentWrites: 50, maxR
 
 /** Rules the schema cannot express, because they depend on two fields together. */
 function crossFieldErrors(config) {
+  if (!config || typeof config !== "object") return [];
   const errors = [];
   if (config.trigger?.mode === "schedule" && !config.trigger.cron) {
     errors.push("trigger.cron: is required when trigger.mode is schedule.");
@@ -33,7 +34,7 @@ function crossFieldErrors(config) {
  */
 export function validateConfig(config) {
   const errors = validateAgainstSchema(SCHEMA, config);
-  if (errors.length === 0) errors.push(...crossFieldErrors(config));
+  errors.push(...crossFieldErrors(config));
   return { ok: errors.length === 0, errors };
 }
 
