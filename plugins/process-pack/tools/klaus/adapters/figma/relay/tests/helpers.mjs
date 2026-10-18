@@ -7,8 +7,8 @@ import { fileURLToPath } from "node:url";
 import { createAdapter } from "../../index.mjs";
 import { buttonCapture } from "../../tests/helpers.mjs";
 
-/** The Klaus prototype's Figma file key. A file key names a file; it is not a credential. */
-export const KEY = "zSRhsvwtutOIPvHyWF9Wf2";
+/** A made-up Figma file key, so no test can write to a real file. */
+export const KEY = "KlausRelayTestFileKey0000";
 export const RELAY = fileURLToPath(new URL("../relay.mjs", import.meta.url));
 export const STUBS = fileURLToPath(new URL("./stub", import.meta.url));
 

@@ -83,5 +83,5 @@ test("a component named like an object property does not reach the prototype", (
   assert.equal(componentSent(ledger, "constructor", "1.0.0"), false);
   recordComponent(ledger, "constructor", "1.0.0", SENT);
   assert.equal(componentSent(ledger, "constructor", "1.0.0"), true);
-  assert.equal(Object.prototype.constructor["1.0.0"], undefined);
+  assert.deepEqual(Object.getOwnPropertyDescriptor(ledger.components, "constructor").value, { "1.0.0": SENT }, "the entry is the ledger's own");
 });

@@ -193,6 +193,7 @@ function downloadArtifact({ gh, run, repo, artifact }) {
   try {
     execFileSync(gh, args, { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
   } catch (error) {
+    rmSync(dir, { recursive: true, force: true });
     const said = String(error.stderr ?? error.message).trim().slice(0, 300);
     throw new UserError(`gh could not download the ${artifact} artifact of run ${run}: ${said}`);
   }
@@ -220,8 +221,10 @@ function checkCodex(codex) {
   if (figma.auth_status === "not_logged_in") {
     throw new UserError(`Codex is not signed in to Figma. Run: codex mcp login ${FIGMA_SERVER} (add --no-browser on a machine without a browser).`);
   }
-  const url = figma.transport?.url ?? DEFAULT_FIGMA_URL;
-  if (!/^https:\/\/[^\s"\\]+$/.test(url)) throw new UserError(`The ${FIGMA_SERVER} MCP server's URL is not one the relay can pass on: ${url}`);
+  const url = figma.transport?.url;
+  if (typeof url !== "string" || !/^https:\/\/[^\s"\\]+$/.test(url)) {
+    throw new UserError(`The ${FIGMA_SERVER} MCP server in Codex has no https URL the relay can pass on. Add it with: codex mcp add ${FIGMA_SERVER} --url ${DEFAULT_FIGMA_URL}`);
+  }
   return { url };
 }
 
@@ -320,6 +323,8 @@ async function sendFile({ codex, args, code, workdir, timeoutMs, fileKey, events
       const said = summary.message ? ` It replied: ${summary.message.replace(/\s+/g, " ").slice(0, 200)}` : "";
       errors.push(`Codex did not call ${FIGMA_TOOL}.${said}`);
     }
+  } else if (run.error) {
+    warnings.push(`Codex reported an error after the call: ${run.error.message}`);
   } else if (run.exitCode !== 0 && !run.timedOut) {
     warnings.push(`Codex exited with ${run.exitCode ?? run.signal} after the call: ${lastLine(run.stderr) || "no message"}`);
   }

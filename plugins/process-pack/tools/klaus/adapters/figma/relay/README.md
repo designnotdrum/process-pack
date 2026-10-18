@@ -88,6 +88,8 @@ Exit code 1 means a unit failed. Exit code 2 means something to fix before a run
 
 - Screenshot uploads go through another tool, which the relay does not call yet. They are reported as deferred with the reason `upload-not-supported`, and so is the retention file.
 - `templates/klaus.yml` does not upload `.klaus/figma/` as an artifact yet. `--run` expects an artifact, named `klaus-figma` unless `--artifact` says otherwise, that holds a release folder.
+- Run one relay at a time for a ledger. The relay re-reads the ledger just before each write and keeps marks written since, but it takes no lock.
+- The report's `usd` is always 0, because the relay spends the ChatGPT plan's Codex quota, not money per call.
 - The ledger must be where both the generator and the relay read it. When the generator runs in CI and the relay runs elsewhere, the relay updates its own repo's ledger, not CI's.
 
 ## Tests
