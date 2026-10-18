@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "klaus.config.schema.json",
+  "title": "klaus.config.json",
+  "description": "Klaus settings for one repo. Holds the names of secrets and logins, never their values.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["outputs"],
+  "properties": {
+    "$schema": { "type": "string", "maxLength": 200 },
+    "outputs": {
+      "description": "One entry per design output. An output that is absent or has enabled false is never run.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "storybook": { "$ref": "#/$defs/output" },
+        "figma": { "$ref": "#/$defs/output" },
+        "penpot": { "$ref": "#/$defs/output" },
+        "pencil": { "$ref": "#/$defs/output" }
+      }
+    },
+    "inventory": {
+      "description": "Where the inventory script looks for components.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "folders": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/path" } }
+      }
+    },
+    "selection": {
+      "description": "Which components and screens the outputs receive. Every output uses the same selection.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "componentGroups": {
+          "description": "Folders whose components are written. Empty or absent means every scanned folder.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/path" }
+        },
+        "screens": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "enum": ["none", "all", "listed"] },
+            "routes": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/route" } }
+          }
+        },
+        "newComponents": {
+          "description": "The rule for a component an output has not received before. all writes it, none leaves it for a person to add to componentGroups, min-usage writes it once it is used in at least minUsage places.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rule": { "enum": ["all", "none", "min-usage"] },
+            "minUsage": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "spendingCap": {
+      "description": "The most one run may spend on each output. Over the cap, the most-used components are written and the rest wait for the next run.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxComponentWrites": { "type": "integer", "minimum": 0, "default": 50 },
+        "maxRelayTokens": { "type": "integer", "minimum": 0, "default": 100000 }
+      }
+    },
+    "trigger": {
+      "description": "What starts a run. A one-off command always works besides this.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": { "enum": ["release", "schedule"], "default": "release" },
+        "tagPattern": {
+          "description": "Git tag glob that marks a release.",
+          "title": "a git tag glob that does not start with a dash",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._*?/][A-Za-z0-9._*?/-]{0,63}$",
+          "default": "v*"
+        },
+        "cron": {
+          "description": "Five-field cron expression, required when mode is schedule.",
+          "type": "string",
+          "pattern": "^([0-9*/,A-Za-z?-]+ ){4}[0-9*/,A-Za-z?-]+$"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "noSecret": {
+      "not": {
+        "type": "string",
+        "title": "looks like a secret value. Give the name of an environment variable or a login instead",
+        "pattern": "(?:^|[^A-Za-z0-9])(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|figd_[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35}|eyJ[A-Za-z0-9_-]{10,}[.][A-Za-z0-9_-]{10,})|-----BEGIN [A-Z ]*PRIVATE KEY-----|://[^/ :@]+:[^/ @]+@|[Bb]earer [A-Za-z0-9._~+/=-]{16,}|[Bb]asic [A-Za-z0-9+/=]{16,}|^(?=[A-Za-z0-9_+=-]*[0-9])(?=[A-Za-z0-9_+=-]*[A-Za-z])[A-Za-z0-9_+=-]{40,}$"
+      }
+    },
+    "targetText": {
+      "description": "Where the output writes: a Vercel project, a design file key or URL, or a file path.",
+      "allOf": [
+        { "type": "string", "minLength": 1, "maxLength": 300 },
+        { "$ref": "#/$defs/noSecret" }
+      ]
+    },
+    "path": {
+      "description": "a repository path without spaces",
+      "allOf": [
+        { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[A-Za-z0-9_@.*/+-]+$", "title": "a repository path without spaces" },
+        { "$ref": "#/$defs/noSecret" }
+      ]
+    },
+    "route": {
+      "description": "a route that starts with a slash and has no spaces",
+      "allOf": [
+        { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^/[^ ]*$", "title": "a route that starts with a slash and has no spaces" },
+        { "$ref": "#/$defs/noSecret" }
+      ]
+    },
+    "envName": {
+      "allOf": [
+        { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,38}$", "title": "the name of an environment variable, upper case with underscores" },
+        { "$ref": "#/$defs/noSecret" }
+      ]
+    },
+    "loginName": {
+      "allOf": [
+        { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$", "title": "the name of a login, lower case with dashes" },
+        { "$ref": "#/$defs/noSecret" }
+      ]
+    },
+    "routeName": {
+      "allOf": [
+        { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$", "title": "a route name, lower case with dashes" },
+        { "$ref": "#/$defs/noSecret" }
+      ]
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "target": { "$ref": "#/$defs/targetText" },
+        "route": {
+          "description": "How the output is reached, for example codex-relay. The adapter defines the names it accepts.",
+          "$ref": "#/$defs/routeName"
+        },
+        "secrets": {
+          "description": "Names of environment variables the output reads. Values come from the environment at run time.",
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/envName" }
+        },
+        "logins": {
+          "description": "Names of signed-in sessions the output relies on. The adapter checks them.",
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 20,
+          "items": { "$ref": "#/$defs/loginName" }
+        }
+      }
+    }
+  }
+}

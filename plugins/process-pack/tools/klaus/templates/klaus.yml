@@ -1,0 +1,101 @@
+# Klaus writes this repo's components into its design outputs after each release.
+# design-onboard copies this file to .github/workflows/klaus.yml.
+#
+# Which trigger runs follows klaus.config.json (trigger.mode). Keep the block
+# for that mode and delete the other one. The manual trigger always stays.
+# A run that does not match trigger.mode exits without doing anything, so a
+# block left in by mistake is harmless.
+#
+# This workflow runs the model-free steps only. An output that needs a model or
+# a signed-in tool (the Figma relay) is skipped here. Run it from a laptop:
+#   node scripts/klaus/frame/cli.mjs run --trigger manual
+#
+# Two releases tagged close together queue as one run, because GitHub keeps one
+# pending run per concurrency group. That is safe: every run covers each release
+# since the last recorded run, so the later run covers the earlier release too.
+
+name: Klaus
+
+on:
+  push:
+    tags:
+      - "v*" # trigger.mode release: match trigger.tagPattern
+  schedule:
+    - cron: "0 6 * * 1" # trigger.mode schedule: match trigger.cron, in UTC
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Plan and estimate only. Writes nothing.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: klaus
+  cancel-in-progress: false
+
+jobs:
+  klaus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      # The state file records the last release each output covered. The cache
+      # keeps it between runs. If GitHub drops it, the next run covers only the
+      # newest release.
+      - name: Restore Klaus state
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .klaus/state.json
+          key: klaus-state-${{ github.run_id }}
+          restore-keys: klaus-state-
+
+      # Writes inventory.json for this commit. CI does not commit it.
+      - name: Refresh the inventory
+        run: node scripts/klaus/inventory.mjs
+
+      - name: Run Klaus
+        env:
+          EVENT: ${{ github.event_name }}
+          TAG: ${{ github.ref_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          # design-onboard adds one line for each name under "secrets" in
+          # klaus.config.json, in this form:
+          # VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          args=(run --model-free)
+          case "$EVENT" in
+            push) args+=(--trigger release --release "$TAG") ;;
+            schedule) args+=(--trigger schedule) ;;
+            *) args+=(--trigger manual) ;;
+          esac
+          if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          node scripts/klaus/frame/cli.mjs "${args[@]}"
+
+      - name: Save Klaus state
+        if: always() && hashFiles('.klaus/state.json') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .klaus/state.json
+          key: klaus-state-${{ github.run_id }}
+
+      # One JSON report per run, for the weekly scorecard.
+      - name: Keep the run report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: klaus-report
+          path: .klaus/reports/
+          if-no-files-found: ignore
+          retention-days: 90
