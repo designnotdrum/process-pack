@@ -158,6 +158,11 @@
           "uniqueItems": true,
           "maxItems": 20,
           "items": { "$ref": "#/$defs/loginName" }
+        },
+        "options": {
+          "description": "Settings only this output's adapter understands. The adapter checks the names and the values. A text value that looks like a secret is rejected.",
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/noSecret" }
         }
       }
     }
