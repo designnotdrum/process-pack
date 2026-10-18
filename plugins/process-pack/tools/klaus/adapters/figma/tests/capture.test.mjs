@@ -64,6 +64,18 @@ test("the local server answers a bad request with an error and keeps running", a
   }
 });
 
+test("when every story fails to render, the error says that and not that the args do nothing", async () => {
+  const storybook = {
+    entries: [story("ui-button--primary", "UI/Button", "Primary")],
+    page: {},
+    async show() {
+      throw new Error("The story ui-button--primary failed to render: boom");
+    },
+  };
+  const request = { name: "Button", axes: [{ prop: "variant", name: "Variant", values: ["a", "b"] }], states: [], label: "Button", icons: false };
+  await assert.rejects(captureComponent(storybook, request), /could not be rendered\. The last error: The story ui-button--primary failed to render: boom/);
+});
+
 test("Playwright is looked for in the repo the design files are for", () => {
   const root = mkdtempSync(path.join(tmpdir(), "klaus-pw-"));
   writeFileSync(path.join(root, "package.json"), "{}");

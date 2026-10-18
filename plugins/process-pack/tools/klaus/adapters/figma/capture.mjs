@@ -213,6 +213,8 @@ export async function captureComponent(storybook, request) {
   // The args tried are the first axis with two values, which may be the State axis for a component with no variant props.
   const checked = allAxes.findIndex((axis) => axis.values.length > 1);
   let story = null;
+  let failures = 0;
+  let lastError = "";
   for (const id of candidates) {
     if (checked < 0) {
       story = id;
@@ -234,10 +236,15 @@ export async function captureComponent(storybook, request) {
         break;
       }
     } catch (error) {
+      failures += 1;
+      lastError = error.message;
       warnings.push(`Story ${id} was skipped: ${error.message}`);
     }
   }
   if (!story) {
+    if (failures === candidates.length) {
+      throw new Error(`None of the stories for ${name} (${candidates.join(", ")}) could not be rendered. The last error: ${lastError}`);
+    }
     const prop = allAxes[checked].prop ?? allAxes[checked].values[1];
     throw new Error(`None of the stories for ${name} (${candidates.join(", ")}) change when ${prop} is set from the URL. Add a story that renders from its args, or name one in outputs.figma.options.stories.`);
   }
