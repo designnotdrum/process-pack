@@ -36,6 +36,7 @@ const warnings = [];
 const loadedFonts = {};
 let fontStyles = null;
 let VARIABLES = [];
+const PENDING = [];
 
 function note(text) {
   if (warnings.indexOf(text) < 0) warnings.push(text);
@@ -94,11 +95,13 @@ async function ensureTokens() {
       made.push(t.name);
       return variable;
     }
-    // Variables hold the app's current tokens, so a changed colour is written through.
+    // Variables hold the app's current tokens, so a changed colour is written through. It waits until
+    // every unit has run, because a version that moves to Older versions is frozen at the colours it
+    // shipped with, and those are the variable's colours until this write.
     const old = variable.valuesByMode[mode];
     const moved = !old || Math.abs(old.r - value.r) > 0.002 || Math.abs(old.g - value.g) > 0.002 || Math.abs(old.b - value.b) > 0.002 || Math.abs((old.a === undefined ? 1 : old.a) - value.a) > 0.002;
     if (moved) {
-      variable.setValueForMode(mode, value);
+      PENDING.push({ variable: variable, mode: mode, value: value });
       updated.push(t.name);
     }
     const scopes = variable.scopes.filter(function (s) { return s !== "ALL_SCOPES"; });
@@ -107,6 +110,32 @@ async function ensureTokens() {
     return variable;
   });
   return { made: made, updated: updated };
+}
+
+/** A paint without its variable binding, in the colour the variable has now. */
+function plainPaint(paint) {
+  if (!paint.boundVariables || !paint.boundVariables.color) return paint;
+  const copy = Object.assign({}, paint);
+  delete copy.boundVariables;
+  return copy;
+}
+
+/**
+ * Freezes a set that is moving to Older versions: every bound fill and stroke, on the set and
+ * on everything inside it, becomes the plain colour it has at this moment. The set keeps looking
+ * the way it shipped when a token changes later. The note says so on its description.
+ */
+function freeze(root, shipped) {
+  const nodes = [root].concat(root.findAll(function () { return true; }));
+  nodes.forEach(function (node) {
+    ["fills", "strokes"].forEach(function (key) {
+      const paints = node[key];
+      if (!Array.isArray(paints)) return;
+      if (paints.some(function (p) { return p.boundVariables && p.boundVariables.color; })) node[key] = paints.map(plainPaint);
+    });
+  });
+  const note = "Frozen when " + shipped + " shipped; colours are the values at that time.";
+  root.description = root.description ? root.description + "\n" + note : note;
 }
 
 function paintOf(U, c) {
@@ -357,6 +386,7 @@ async function writeComponent(U) {
       for (const old of siblings) {
         archive = archive || (await pageNamed(U.older));
         const at = freeX(archive.children);
+        freeze(old, U.version);
         archive.appendChild(old);
         old.x = at;
         old.y = 0;
@@ -368,6 +398,7 @@ async function writeComponent(U) {
     } else {
       archive = archive || (await pageNamed(U.older));
       const at = freeX(archive.children);
+      freeze(node, parseVersion(newest, U.name));
       archive.appendChild(node);
       node.x = at;
       node.y = 0;
@@ -454,5 +485,10 @@ for (const U of UNITS) {
   if (U.kind === "component") result.units.push(await writeComponent(U));
   else if (U.kind === "screen") result.units.push(await writeScreen(U));
   else if (U.kind === "retain") result.units.push(await retainScreens(U));
+}
+try {
+  PENDING.forEach(function (p) { p.variable.setValueForMode(p.mode, p.value); });
+} catch (e) {
+  note("A changed token colour could not be written to its variable: " + message(e));
 }
 return result;

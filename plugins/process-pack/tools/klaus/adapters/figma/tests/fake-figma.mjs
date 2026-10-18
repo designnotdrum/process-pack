@@ -6,6 +6,12 @@
  */
 
 let counter = 0;
+
+/**
+ * Turns a paint bound to a variable into the paint Figma shows: the same paint with the variable's
+ * colour now. createFigma sets it. The fake serves one Figma at a time.
+ */
+let resolvePaint = (paint) => paint;
 const nextId = () => `${Math.floor(counter / 100)}:${counter++ % 100}`;
 
 class Node {
@@ -20,8 +26,11 @@ class Node {
     this.width = 100;
     this.height = 100;
     this.visible = true;
-    this.fills = [];
-    this.strokes = [];
+    // Fills and strokes are stored as written and read back with bound colours resolved, as Figma does.
+    for (const key of ["fills", "strokes"]) {
+      let stored = [];
+      Object.defineProperty(this, key, { enumerable: true, get: () => stored.map(resolvePaint), set: (paints) => (stored = paints) });
+    }
     Object.assign(this, extra);
   }
 
@@ -172,6 +181,13 @@ export function createFigma({ pages = ["Button"], fonts = { "DM Sans": ["Regular
         return { ...paint, boundVariables: { [field]: { type: "VARIABLE_ALIAS", id: variable.id } } };
       },
     },
+  };
+  resolvePaint = (paint) => {
+    const id = paint.boundVariables?.color?.id;
+    const variable = id && variables.find((v) => v.id === id);
+    if (!variable) return paint;
+    const { r, g, b } = Object.values(variable.valuesByMode)[0];
+    return { ...paint, color: { r, g, b } };
   };
   figma.collections = collections;
   figma.variableList = variables;
