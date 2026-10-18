@@ -43,33 +43,58 @@ export function loadPlaywright(root) {
   throw new Error(`Playwright is not installed in ${root}. Klaus reads computed styles with it, so add @playwright/test to the repo and install a browser.`);
 }
 
-/** Serves a folder on a free local port. Only paths inside the folder are served. */
+/**
+ * Serves a folder on a free local port, on 127.0.0.1 only.
+ *
+ * A file is served only when its real path, with every symlink followed, is inside the folder's real
+ * path. A symlink in the build that points outside it, such as one to /proc/self/environ, is a 404.
+ * So is a path that cannot be resolved. The story code in the page can fetch from this server, and the
+ * process environment holds tokens in CI.
+ */
 export async function serve(directory) {
-  const base = path.resolve(directory);
-  const server = http.createServer((request, response) => {
+  const base = fs.realpathSync(path.resolve(directory));
+  const inside = (real) => real === base || real.startsWith(`${base}${path.sep}`);
+
+  /** The real path of the file to send for a URL path, or null. */
+  async function resolveFile(pathname) {
+    let real = await fs.promises.realpath(path.resolve(base, `.${pathname}`));
+    if (!inside(real)) return null;
+    if ((await fs.promises.stat(real)).isDirectory()) {
+      real = await fs.promises.realpath(path.join(real, "index.html"));
+      if (!inside(real)) return null;
+    }
+    return (await fs.promises.stat(real)).isFile() ? real : null;
+  }
+
+  const server = http.createServer(async (request, response) => {
     if (request.method !== "GET" && request.method !== "HEAD") {
       response.writeHead(405).end();
       return;
     }
-    let requested;
+    let pathname;
     try {
-      requested = path.resolve(base, `.${decodeURIComponent(request.url.split("?")[0])}`);
+      pathname = decodeURIComponent(request.url.split("?")[0]);
     } catch {
       // A malformed percent sequence is a bad request, not a reason to stop the run.
       response.writeHead(400).end();
       return;
     }
-    if (requested !== base && !requested.startsWith(`${base}${path.sep}`)) {
-      response.writeHead(403).end();
+    let file = null;
+    try {
+      file = await resolveFile(pathname);
+    } catch {
+      // A path that does not exist, or cannot be resolved, is not served.
+    }
+    if (!file) {
+      response.writeHead(404).end();
       return;
     }
-    const file = fs.existsSync(requested) && fs.statSync(requested).isDirectory() ? path.join(requested, "index.html") : requested;
     fs.readFile(file, (error, bytes) => {
       if (error) {
         response.writeHead(404).end();
         return;
       }
-      response.writeHead(200, { "content-type": TYPES[path.extname(file)] ?? "application/octet-stream" }).end(bytes);
+      response.writeHead(200, { "content-type": TYPES[path.extname(file)] ?? "application/octet-stream" }).end(request.method === "HEAD" ? undefined : bytes);
     });
   });
   server.listen(0, "127.0.0.1");
