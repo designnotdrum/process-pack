@@ -1,0 +1,13 @@
+{
+  "name": "@process-pack/klaus",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Keeps a list of every UI component a repo ships, so agents reuse components instead of making duplicates.",
+  "scripts": {
+    "test": "node --test \"**/*.test.mjs\""
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

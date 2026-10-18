@@ -1,0 +1,5 @@
+{
+  "inventory": {
+    "folders": ["packages/ui/src", { "path": "apps/web/app", "role": "app" }]
+  }
+}
