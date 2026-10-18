@@ -4,13 +4,23 @@
  */
 import { resolveConfig } from "../config.mjs";
 
-/** An inventory where each component has the given number of usages. */
+/** An inventory, in the shape the inventory script writes, where each entry is used in the given number of files. */
 export function inventoryOf(usage) {
   return {
-    components: Object.entries(usage).map(([name, count]) => ({
+    schemaVersion: 1,
+    folders: ["packages/ui"],
+    entries: Object.entries(usage).map(([name, count]) => ({
       name,
       file: `packages/ui/${name}.tsx`,
-      usedBy: Array.from({ length: count }, (_, i) => `app/screens/screen-${i}.tsx`),
+      folder: "packages/ui",
+      kind: "shared",
+      parts: [],
+      props: [],
+      variants: [],
+      purpose: { useWhen: "", notFor: "" },
+      version: "1.0.0",
+      screenshot: null,
+      usedIn: Array.from({ length: count }, (_, i) => `apps/web/app/screens/screen-${i}.tsx`),
     })),
   };
 }

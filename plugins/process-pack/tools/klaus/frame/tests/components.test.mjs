@@ -4,25 +4,30 @@ import assert from "node:assert/strict";
 
 import { listComponents, selectComponents, usageCount } from "../components.mjs";
 
-test("usage is usageCount when present, else the length of usedBy, else 0", () => {
-  assert.equal(usageCount({ name: "A", usageCount: 7, usedBy: ["x"] }), 7);
-  assert.equal(usageCount({ name: "A", usedBy: ["x", "y"] }), 2);
+test("usage is the number of files in usedIn, and 0 when there are none", () => {
+  assert.equal(usageCount({ name: "A", usedIn: ["a.tsx", "b.tsx"] }), 2);
+  assert.equal(usageCount({ name: "A", usedIn: [] }), 0);
   assert.equal(usageCount({ name: "A" }), 0);
 });
 
-test("the inventory may be an array or an object with components, and every component needs a name", () => {
-  assert.equal(listComponents([{ name: "A" }]).length, 1);
-  assert.equal(listComponents({ components: [{ name: "A" }] }).length, 1);
-  assert.throws(() => listComponents({ components: [{ file: "x" }] }), /without a name/);
-  assert.throws(() => listComponents({}), /must be an array/);
+test("components are the inventory's entries, and every entry needs a name", () => {
+  assert.equal(listComponents({ schemaVersion: 1, folders: [], entries: [{ name: "A" }] }).length, 1);
+  assert.throws(() => listComponents({ entries: [{ file: "x" }] }), /without a name/);
+  assert.throws(() => listComponents({}), /with an entries array/);
+  assert.throws(() => listComponents([{ name: "A" }]), /with an entries array/);
 });
 
-const inventory = [
-  { name: "Button", file: "packages/ui/Button.tsx", usageCount: 30 },
-  { name: "Banner", file: "packages/ui-extra/Banner.tsx", usageCount: 1 },
-  { name: "Nav", file: "apps/web/app/components/Nav.tsx", usageCount: 4 },
-  { name: "Orphan", usageCount: 9 },
-];
+const used = (count) => Array.from({ length: count }, (_, i) => `apps/web/app/screens/screen-${i}.tsx`);
+const inventory = {
+  schemaVersion: 1,
+  folders: [],
+  entries: [
+    { name: "Button", file: "packages/ui/Button.tsx", usedIn: used(30) },
+    { name: "Banner", file: "packages/ui-extra/Banner.tsx", usedIn: used(1) },
+    { name: "Nav", file: "apps/web/app/components/Nav.tsx", usedIn: used(4) },
+    { name: "Orphan", usedIn: used(9) },
+  ],
+};
 
 test("component groups match whole folders, not folders that share a prefix", () => {
   const picked = selectComponents(inventory, { componentGroups: ["packages/ui"] });

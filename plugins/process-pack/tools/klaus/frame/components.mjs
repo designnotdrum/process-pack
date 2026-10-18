@@ -1,16 +1,20 @@
 /**
  * Reads components out of inventory.json and applies the config's selection.
  *
- * The inventory is either an array of components or an object with a
- * "components" array. A component needs a "name". It may have "file" and a
- * usage count, given as "usageCount" or as a "usedBy" array.
+ * The inventory is the file the inventory script writes:
+ *
+ *   { schemaVersion, folders, entries: [ { name, file, folder, kind, parts, props,
+ *     variants, purpose, version, screenshot, usedIn } ] }
+ *
+ * The frame reads "entries". Each needs a "name". It uses "file" for component
+ * groups and "usedIn", the repo-relative files that use the entry, for usage.
  */
 import path from "node:path";
 
 /** @returns {Array<object>} */
 export function listComponents(inventory) {
-  const list = Array.isArray(inventory) ? inventory : inventory?.components;
-  if (!Array.isArray(list)) throw new Error("inventory.json must be an array of components or an object with a components array.");
+  const list = inventory?.entries;
+  if (!Array.isArray(list)) throw new Error("inventory.json must be an object with an entries array.");
   for (const component of list) {
     if (!component || typeof component.name !== "string" || component.name === "") {
       throw new Error("inventory.json has a component without a name.");
@@ -19,11 +23,9 @@ export function listComponents(inventory) {
   return list;
 }
 
-/** How many places use a component. This is the order the spending cap writes in. */
+/** How many files use an entry. This is the order the spending cap writes in. */
 export function usageCount(component) {
-  if (Number.isFinite(component.usageCount)) return component.usageCount;
-  if (Array.isArray(component.usedBy)) return component.usedBy.length;
-  return 0;
+  return Array.isArray(component.usedIn) ? component.usedIn.length : 0;
 }
 
 function inFolder(file, folder) {

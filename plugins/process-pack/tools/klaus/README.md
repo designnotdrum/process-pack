@@ -30,6 +30,8 @@ A run goes through every enabled output, one at a time. For each output the runn
 
 The spending cap runs between `estimate` and `write`. The adapter never decides what to defer. The full contract, with types, is in `frame/adapter.mjs`. An adapter lives at `adapters/<output>/index.mjs` and default-exports an object with those four functions. Set `usesModel: true` on an adapter that needs a model or a signed-in tool, so a CI run skips it.
 
+The frame reads `entries` from `inventory.json`, as the inventory script writes it. It uses each entry's `name`, its `file` (to match component groups) and the length of its `usedIn` list (as the usage count).
+
 ### Settings: `klaus.config.json`
 
 The file sits at the repo root and is checked against `klaus.config.schema.json`.
@@ -58,7 +60,7 @@ Check a config with `node scripts/klaus/frame/cli.mjs validate`.
 
 ### Spending cap
 
-Defaults are 50 component writes and 100,000 relay tokens. They apply to each output in each run. Over the cap, the most-used components are written first, using the inventory's usage count (`usageCount`, or the length of `usedBy`), and the rest are deferred. A deferred component is handed back to the plan on the next run. Going over the cap never fails a run.
+Defaults are 50 component writes and 100,000 relay tokens. They apply to each output in each run. Over the cap, the most-used components are written first, using the inventory's usage count (the length of an entry's `usedIn` list), and the rest are deferred. A deferred component is handed back to the plan on the next run. Going over the cap never fails a run.
 
 - Screens do not count toward the component limit. Every item counts toward the token limit, and so does any `overhead` the estimate reports.
 - An item that alone needs more tokens than the whole limit is deferred with the reason `larger-than-token-cap` and does not block the items behind it.
