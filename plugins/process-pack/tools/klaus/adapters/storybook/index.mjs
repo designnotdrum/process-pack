@@ -69,7 +69,7 @@ function megabytes(bytes) {
  * @returns {import("../../frame/adapter.mjs").Adapter}
  */
 export function createStorybookAdapter({ exec = defaultExec, cwd = () => process.cwd(), now = () => new Date() } = {}) {
-  /** What write learned, read back by report. One entry per run, keyed by that run's context. */
+  /** What write learned about each item, read back by report. Keyed by the run's context, then by item id. */
   const outcomes = new WeakMap();
 
   function projectOf(ctx) {
@@ -81,13 +81,9 @@ export function createStorybookAdapter({ exec = defaultExec, cwd = () => process
   }
 
   function secret(ctx, name) {
-    try {
-      const value = ctx.secret(name);
-      if (value) return value;
-    } catch {
-      // Falls through to the message below.
-    }
-    throw new Error(`Set ${name} in the environment and list it under secrets for the storybook output in klaus.config.json.`);
+    const value = ctx.secret(name); // Throws, naming the secret, when it is not listed under secrets.
+    if (!value) throw new Error(`${name} is not set in the environment.`);
+    return value;
   }
 
   return {
@@ -136,7 +132,8 @@ export function createStorybookAdapter({ exec = defaultExec, cwd = () => process
       for (const item of plan.items) {
         const work = mkdtempSync(path.join(tmpdir(), "klaus-storybook-"));
         const outcome = { release: item.release, alias: aliasFor(project, item.release), commit };
-        outcomes.set(ctx, outcome);
+        if (!outcomes.has(ctx)) outcomes.set(ctx, new Map());
+        outcomes.get(ctx).set(item.id, outcome);
         try {
           const buildDir = path.join(work, "build");
           await buildStorybook({ exec, root, storybookDir: item.storybookDir, outDir: buildDir });
@@ -179,8 +176,8 @@ export function createStorybookAdapter({ exec = defaultExec, cwd = () => process
 
     report(outcome, ctx) {
       const project = projectOf(ctx);
-      const found = outcomes.get(ctx);
       const release = ctx.release;
+      const found = outcomes.get(ctx)?.get(release);
       const notDeployed = [...new Set([...ctx.releases, ...ctx.unwrittenFromLastRun])].filter((r) => r !== release);
       const details = {
         project,
@@ -203,9 +200,9 @@ export function createStorybookAdapter({ exec = defaultExec, cwd = () => process
       if (!release) {
         summary = "There was no release to deploy.";
       } else if (outcome.dryRun) {
-        summary = `Would deploy Storybook for ${release} to the Vercel project ${project}. Storage would cost about ${money(outcome.estimated.usd)} a month, for an assumed ${megabytes(ASSUMED_BUILD_BYTES)} at ${rate}.`;
+        summary = `Would deploy Storybook for ${release} to the Vercel project ${project}. The release would add about ${money(outcome.estimated.usd)} a month in deployment storage, for an assumed ${megabytes(ASSUMED_BUILD_BYTES)} at ${rate}.`;
       } else if (outcome.written.length > 0) {
-        summary = `Deployed Storybook for ${release} to the Vercel project ${project}. Storage costs about ${money(outcome.actual?.usd ?? 0)} a month, for ${megabytes(found?.buildBytes ?? 0)} at ${rate}.`;
+        summary = `Deployed Storybook for ${release} to the Vercel project ${project}. The release adds about ${money(outcome.actual?.usd ?? 0)} a month in deployment storage, for ${megabytes(found?.buildBytes ?? 0)} at ${rate}.`;
       } else if (outcome.failed.length > 0) {
         summary = `Storybook for ${release} was not deployed: ${outcome.failed[0].error}`;
       } else {

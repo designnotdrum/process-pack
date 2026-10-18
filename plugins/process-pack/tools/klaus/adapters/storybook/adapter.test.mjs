@@ -30,7 +30,10 @@ function fakeWorld({ buildBytes = 2_000_000, failOn } = {}) {
   const deployments = [];
   const exec = async (file, args, options = {}) => {
     calls.push({ file, args, options });
-    if (file === "git") return { stdout: "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432\n", stderr: "" };
+    if (file === "git") {
+      assert.deepEqual(args, ["rev-parse", "HEAD"]);
+      return { stdout: "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432\n", stderr: "" };
+    }
     if (args[0] === "build") {
       const out = args[args.indexOf("--output-dir") + 1];
       mkdirSync(out, { recursive: true });
@@ -102,7 +105,7 @@ test("a dry run makes no Vercel call and reports the storage cost", async () => 
   assert.equal(out.estimated.usd, perRelease);
   assert.equal(out.estimated.tokens, 0);
   assert.equal(out.estimated.calls, 5);
-  assert.match(out.adapter.summary, /Would deploy Storybook for v1\.0\.0 to the Vercel project acme-storybook\. Storage would cost about \$0\.0015 a month, for an assumed 15\.0 MB at \$0\.10 per GB-month\./);
+  assert.match(out.adapter.summary, /Would deploy Storybook for v1\.0\.0 to the Vercel project acme-storybook\. The release would add about \$0\.0015 a month in deployment storage, for an assumed 15\.0 MB at \$0\.10 per GB-month\./);
   assert.equal(out.adapter.details.storageUsdPerGbMonth, 0.1);
 });
 
@@ -143,7 +146,7 @@ test("in an empty project an empty index goes to production first, then the rele
     { label: "Version index", url: "https://acme-storybook.vercel.app" },
     { label: "Storybook v1.0.0", url: "https://acme-storybook-v1-0-0.vercel.app/" },
   ]);
-  assert.match(out.adapter.summary, /^Deployed Storybook for v1\.0\.0 to the Vercel project acme-storybook\. Storage costs about \$0\.000\d a month, for 2\.0 MB at \$0\.10 per GB-month\.$/);
+  assert.match(out.adapter.summary, /^Deployed Storybook for v1\.0\.0 to the Vercel project acme-storybook\. The release adds about \$0\.000\d a month in deployment storage, for 2\.0 MB at \$0\.10 per GB-month\.$/);
 });
 
 test("a second release is added to the index next to the first, and both addresses are linked", async () => {
@@ -198,6 +201,7 @@ test("the component write limit does not stop a release from being deployed", as
   });
   const { report } = await run({ world: fakeWorld(), root: repo(), config });
   assert.deepEqual(report.outputs[0].written, ["v1.0.0"]);
+  assert.deepEqual(report.outputs[0].deferred, []); // a component item would be deferred as "write-cap" at this limit
 });
 
 test("a team id listed under secrets becomes the scope of every Vercel call", async () => {
@@ -238,7 +242,7 @@ test("fails before any call when the project, the token or the Storybook folder 
   const world = fakeWorld();
   const noSecretListed = await run({ world, root: repo(), config: configWith({ secrets: [] }), env: {} });
   assert.equal(noSecretListed.report.outputs[0].failedStep, "write");
-  assert.match(noSecretListed.report.outputs[0].error, /Set VERCEL_TOKEN in the environment and list it under secrets/);
+  assert.match(noSecretListed.report.outputs[0].error, /"VERCEL_TOKEN" is not listed under secrets/);
   assert.deepEqual(vercelCalls(world.calls), []);
 
   const emptyRoot = mkdtempSync(path.join(tmpdir(), "klaus-sb-empty-"));
@@ -260,4 +264,5 @@ test("the adapter satisfies the frame's interface and needs no model", async () 
   const { assertAdapter } = await import("../../frame/adapter.mjs");
   assert.doesNotThrow(() => assertAdapter("storybook", adapter));
   assert.equal(adapter.usesModel, false);
+  for (const step of ["plan", "estimate", "write", "report"]) assert.equal(typeof adapter[step], "function", `missing ${step}`);
 });

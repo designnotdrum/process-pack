@@ -30,7 +30,9 @@ export function exec(file, args, { cwd, env, timeoutMs = TEN_MINUTES } = {}) {
       (error, stdout, stderr) => {
         if (!error) return resolve({ stdout, stderr });
         const output = tail(stderr) || tail(stdout) || error.message;
-        reject(new Error(error.killed ? `timed out after ${Math.round(timeoutMs / 1000)} s: ${output}` : output));
+        if (error.killed) return reject(new Error(`timed out after ${Math.round(timeoutMs / 1000)} s: ${output}`));
+        if (error.code === "ENOBUFS") return reject(new Error(`the command wrote more output than Klaus keeps: ${output}`));
+        reject(new Error(output));
       },
     );
     // Nothing is ever typed into these commands. Closing stdin stops one that waits for an answer.

@@ -17,7 +17,7 @@ export function latestPerRelease(entries) {
 }
 
 const escapeHtml = (text) =>
-  String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
 const dateOf = (createdAt) => new Date(createdAt).toISOString().slice(0, 10);
 

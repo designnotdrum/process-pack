@@ -41,7 +41,7 @@ One checkout builds one Storybook. A run that covers several releases deploys th
 
 ## Estimate
 
-Vercel charges $0.10 per GB-month of deployment storage. The estimate runs before anything is built, so it assumes 15 MB for each release, which is $0.0015 a month. The run report shows the real size and cost after the write. The price comes from the Klaus Storybook hosting research (NJM-1770) and has not been re-checked against Vercel's billing.
+Vercel charges $0.10 per GB-month of deployment storage. The estimate runs before anything is built, so it assumes 15 MB for each release, which is $0.0015 a month. The run report shows the real size and cost after the write. Vercel keeps every release, so the project's monthly bill grows by that amount with each release. The price comes from the Klaus Storybook hosting research (NJM-1770) and has not been re-checked against Vercel's billing.
 
 A Meridian `packages/ui` build measured 12.7 MB (12,665,190 bytes) on 2026-10-18.
 

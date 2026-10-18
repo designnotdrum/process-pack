@@ -4,6 +4,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { aliasFor, createVercel, KINDS, META, slug } from "./vercel.mjs";
 
@@ -91,6 +92,30 @@ test("alias set uses the host of the deployment, not its URL", async () => {
   await createVercel({ exec, token: "tok", project: "p" }).alias("https://acme-abc.vercel.app/", "acme-storybook-v1-4-0.vercel.app");
   assert.deepEqual(calls[0].args.slice(2, 5), ["alias", "set", "acme-abc.vercel.app"]);
   assert.equal(calls[0].args[5], "acme-storybook-v1-4-0.vercel.app");
+});
+
+// These two files are the stdout of `vercel deploy --json` and `vercel list --json`, captured from
+// Vercel CLI 64.5.0 on 2026-10-18. Only the team name and a user name were replaced. They check the
+// parsers against what the CLI prints, not against the fake in this file.
+const captured = (name) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8");
+
+test("reads a deploy printed by the real CLI", async () => {
+  const vercel = createVercel({ exec: fakeExec([captured("vercel-deploy.json")]).exec, token: "tok", project: "klaus-storybook-test" });
+  assert.deepEqual(await vercel.deploy("/tmp/x", { meta: {} }), {
+    id: "dpl_7dNjNUepMBxwrB4rGFFmfgtDB6sa",
+    url: "https://klaus-storybook-test-jf40s10gf-acme-team.vercel.app",
+    productionUrl: "https://klaus-storybook-test.vercel.app",
+  });
+});
+
+test("reads a list printed by the real CLI, and skips a deployment that is not a Klaus release", async () => {
+  const vercel = createVercel({ exec: fakeExec([captured("vercel-list.json")]).exec, token: "tok", project: "klaus-storybook-test" });
+  assert.deepEqual(await vercel.listReleases(), [
+    { release: "v0.0.2", alias: null, commit: null, createdAt: 1792358128194 },
+    { release: "v0.0.1", alias: null, commit: null, createdAt: 1792358110133 },
+  ]);
+  const empty = createVercel({ exec: fakeExec([captured("vercel-list.json")]).exec, token: "tok", project: "klaus-storybook-test" });
+  assert.equal(await empty.hasDeployments(), true);
 });
 
 test("hasDeployments asks for one deployment of any kind", async () => {
