@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"0199f0c1-0000-7000-8000-000000000001"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"item_0","type":"mcp_tool_call","server":"figma","tool":"use_figma","arguments":{"fileKey":"__FILE_KEY__","description":"Klaus relay","code":"__CODE__"},"result":null,"error":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_0","type":"mcp_tool_call","server":"figma","tool":"use_figma","arguments":{"fileKey":"__FILE_KEY__","description":"Klaus relay","code":"__CODE__"},"result":{"content":[{"type":"text","text":"__RESULT_TEXT__"}],"structured_content":null},"error":null,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Done."}}
+{"type":"turn.completed","usage":{"input_tokens":18000,"cached_input_tokens":9000,"output_tokens":5200,"reasoning_output_tokens":64}}

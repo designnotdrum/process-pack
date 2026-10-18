@@ -1,0 +1,23 @@
+#!/usr/bin/env node
+/**
+ * A stand-in for the GitHub CLI in the relay's tests.
+ *
+ *   gh run download <id> --name <artifact> --dir <dir> [--repo <owner/name>]
+ *
+ * copies STUB_GH_SOURCE into <dir>, as gh unpacks an artifact, and keeps its
+ * arguments in STUB_GH_LOG.
+ */
+import { cpSync, writeFileSync } from "node:fs";
+
+const args = process.argv.slice(2);
+if (process.env.STUB_GH_LOG) writeFileSync(process.env.STUB_GH_LOG, JSON.stringify(args));
+if (args[0] !== "run" || args[1] !== "download") {
+  process.stderr.write(`stub gh: unexpected arguments ${JSON.stringify(args)}\n`);
+  process.exit(2);
+}
+if (!process.env.STUB_GH_SOURCE) {
+  process.stderr.write("no valid artifacts found to download\n");
+  process.exit(1);
+}
+const dir = args[args.indexOf("--dir") + 1];
+cpSync(process.env.STUB_GH_SOURCE, dir, { recursive: true });

@@ -1,0 +1,83 @@
+#!/usr/bin/env node
+/**
+ * A stand-in for the Codex CLI in the relay's tests. It replays recorded
+ * `codex exec --json` output from ../fixtures.
+ *
+ *   codex mcp list --json   prints STUB_CODEX_MCP, or a signed-in figma server
+ *   codex exec ...          reads stdin, keeps it and the arguments in STUB_CODEX_LOG
+ *                           as call-<n>.stdin and call-<n>.json, and prints the fixture
+ *
+ * STUB_CODEX_SCENARIOS is a comma list with one scenario a call. The last one repeats.
+ *   success       use_figma ran and the code reported every unit written
+ *   unit-failed   use_figma ran and the code reported its last unit failed
+ *   tool-error    use_figma returned an error
+ *   changed-code  Codex sent different code to use_figma
+ *   no-call       Codex replied without calling use_figma
+ *   crash         Codex died before the call, with exit code 1
+ *
+ * The fixtures hold the event stream with three placeholders: "__CODE__" (the code
+ * use_figma received), "__FILE_KEY__" and "__RESULT_TEXT__" (what the code returned,
+ * as Figma's server wraps it).
+ */
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const args = process.argv.slice(2);
+
+if (args[0] === "mcp" && args[1] === "list") {
+  const fallback = [{ name: "figma", enabled: true, transport: { type: "streamable_http", url: "https://mcp.figma.com/mcp" }, auth_status: "o_auth" }];
+  process.stdout.write(process.env.STUB_CODEX_MCP ?? JSON.stringify(fallback));
+  process.exit(0);
+}
+if (args[0] !== "exec") {
+  process.stderr.write(`stub codex: unexpected arguments ${JSON.stringify(args)}\n`);
+  process.exit(2);
+}
+
+const chunks = [];
+for await (const chunk of process.stdin) chunks.push(chunk);
+const stdin = Buffer.concat(chunks);
+
+const log = process.env.STUB_CODEX_LOG;
+let n = 1;
+if (log) {
+  mkdirSync(log, { recursive: true });
+  n = readdirSync(log).filter((name) => name.endsWith(".json")).length + 1;
+  writeFileSync(path.join(log, `call-${n}.stdin`), stdin);
+  writeFileSync(path.join(log, `call-${n}.json`), JSON.stringify({ args }));
+}
+const scenarios = (process.env.STUB_CODEX_SCENARIOS ?? "success").split(",");
+const scenario = scenarios[Math.min(n, scenarios.length) - 1];
+
+const code = stdin.toString("utf8");
+const prompt = args.at(-1);
+const fileKey = /fileKey: (\S+)/.exec(prompt)?.[1] ?? "";
+
+// What the generated code returns: one entry a unit, read from its UNITS line.
+const line = code.split("\n").find((l) => l.startsWith("const UNITS = "));
+const units = line ? JSON.parse(line.slice("const UNITS = ".length, -1)) : [];
+const results = units.map((unit) => ({ id: unit.id, status: "written", name: `${unit.name} ${unit.version}` }));
+if (scenario === "unit-failed" && results.length > 0) {
+  results[results.length - 1] = { id: results.at(-1).id, status: "failed", error: "The font DM Sans Medium could not be loaded." };
+}
+const returned = { tokens: { made: [], updated: [] }, units: results, warnings: [] };
+
+const fixture = { success: "success", "unit-failed": "success", "changed-code": "success", "tool-error": "tool-error", "no-call": "no-call", crash: "crash" }[scenario];
+if (!fixture) {
+  process.stderr.write(`stub codex: unknown scenario ${scenario}\n`);
+  process.exit(2);
+}
+const sent = scenario === "changed-code" ? code.replace("const CONFIG", "const  CONFIG") : code;
+const template = readFileSync(path.join(here, "..", "fixtures", `${fixture}.jsonl`), "utf8");
+process.stdout.write(
+  template
+    .replaceAll('"__CODE__"', () => JSON.stringify(sent))
+    .replaceAll('"__FILE_KEY__"', () => JSON.stringify(fileKey))
+    .replaceAll('"__RESULT_TEXT__"', () => JSON.stringify(JSON.stringify(returned))),
+);
+if (scenario === "crash") {
+  process.stderr.write("Error: stream disconnected before completion: error sending request\n");
+  process.exit(1);
+}
