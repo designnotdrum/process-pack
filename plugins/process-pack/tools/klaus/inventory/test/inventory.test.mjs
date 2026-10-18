@@ -3,10 +3,11 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { after, before, describe, test } from 'node:test'
+import { after, before, describe, mock, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { groupFamilies, parsePurpose } from '../components.mjs'
+import { groupFamilies, ownProp, parsePurpose } from '../components.mjs'
 import { readFolders } from '../config.mjs'
+import { isInside, isRepoFile, toPosix } from '../files.mjs'
 import { buildInventory } from '../inventory.mjs'
 import { renderMarkdown } from '../markdown.mjs'
 
@@ -209,6 +210,63 @@ describe('families', () => {
   })
 })
 
+describe('paths', () => {
+  const winRoot = 'C:\\repo'
+
+  test('are put in POSIX form, including ones built for Windows', () => {
+    assert.equal(toPosix(path.win32.join(winRoot, 'packages', 'ui', 'src', 'button.tsx')), 'C:/repo/packages/ui/src/button.tsx')
+    assert.equal(toPosix('packages/ui/src'), 'packages/ui/src')
+  })
+
+  test('are inside a folder only when the folder is a whole path segment', () => {
+    assert.ok(isInside(path.win32.join(winRoot, 'src', 'a.tsx'), winRoot))
+    assert.ok(isInside('C:/repo/src/a.tsx', winRoot))
+    assert.ok(!isInside(path.win32.join('C:\\repo-two', 'a.tsx'), winRoot))
+  })
+
+  test('tell the repo from its dependencies when the resolver answers with a Windows path', () => {
+    assert.ok(isRepoFile(path.win32.join(winRoot, 'packages', 'ui', 'src', 'button.tsx'), winRoot))
+    assert.ok(!isRepoFile(path.win32.join(winRoot, 'node_modules', 'react', 'index.d.ts'), winRoot))
+    assert.ok(!isRepoFile(path.win32.join('D:\\other', 'a.tsx'), winRoot))
+  })
+
+  test('decide whether a prop is the repo\'s own from a Windows declaration path', () => {
+    const declaredIn = (fileName) => ({ declarations: [{ getSourceFile: () => ({ fileName }) }] })
+    assert.equal(ownProp(declaredIn(path.win32.join(winRoot, 'src', 'button.tsx')), winRoot), true)
+    assert.equal(ownProp(declaredIn(path.win32.join(winRoot, 'node_modules', '@types', 'react', 'index.d.ts')), winRoot), false)
+  })
+
+  test('are repo-relative and POSIX in the inventory', () => {
+    for (const e of inventory.entries) {
+      assert.ok(!e.file.includes('\\') && !path.isAbsolute(e.file), e.file)
+      // Shared entries list importing files; the rest list routes, which start with a slash by design.
+      if (e.kind === 'shared') assert.ok(e.usedIn.every((u) => !u.includes('\\') && !path.isAbsolute(u)), e.name)
+    }
+  })
+})
+
+describe('a file that cannot be read', () => {
+  // Permissions mean nothing to the superuser or on Windows, so the test cannot make a file unreadable there.
+  const canLock = process.platform !== 'win32' && process.getuid?.() !== 0
+
+  test('is skipped with a one-line warning, and the rest of the scan carries on', { skip: !canLock }, () => {
+    const locked = path.join(fixture, 'apps/web/lib/locked.ts')
+    fs.mkdirSync(path.dirname(locked), { recursive: true })
+    fs.writeFileSync(locked, "import { Button } from '@fixture/ui'\nexport const x = Button\n")
+    fs.chmodSync(locked, 0o000)
+    const warn = mock.method(console, 'warn', () => {})
+    try {
+      const again = buildInventory({ root: fixture, folders: readFolders(fixture) })
+      assert.equal(warn.mock.calls.length, 1)
+      assert.equal(warn.mock.calls[0].arguments[0], 'Skipped apps/web/lib/locked.ts: EACCES')
+      assert.deepEqual(again, inventory)
+    } finally {
+      warn.mock.restore()
+      fs.rmSync(locked, { force: true })
+    }
+  })
+})
+
 describe('the folders', () => {
   test('come from klaus.config.json, and a folder under packages is shared', () => {
     assert.deepEqual(readFolders(fixture), [
@@ -232,6 +290,10 @@ describe('the folders', () => {
   test('must be inside the repo', () => {
     assert.throws(() => readFolders(fixture, ['packages/../../elsewhere']), /does not exist|outside the repo/)
     assert.throws(() => readFolders(fixture, ['..']), /outside the repo/)
+  })
+
+  test('need a repo that exists', () => {
+    assert.throws(() => readFolders(path.join(os.tmpdir(), 'klaus-no-such-repo'), ['src']), /does not exist/)
   })
 
   test('are required', () => {

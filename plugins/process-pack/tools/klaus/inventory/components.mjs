@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import { pascalCase, toPosix } from './files.mjs'
+import { isRepoFile, pascalCase } from './files.mjs'
 
 /**
  * TypeScript is the target repo's own copy, not one Klaus ships: the compiler has to read the
@@ -18,7 +18,8 @@ export function loadTypeScript(root) {
  * A callable whose return type reads like a rendered element is a component, whatever wraps it.
  * One that only ever returns null is a component too: it runs an effect and renders nothing.
  * A bare `Element` has to count: some libraries' types print as `Element` and not `JSX.Element`.
- * It does not match `HTMLElement`.
+ * It does not match `HTMLElement`. The check is a heuristic: a capitalized function typed
+ * `() => ReactNode` that is not a component is matched too.
  */
 const RENDERS = /\b(?:Element|ReactNode|ReactElement|ReactPortal)\b|^null$/
 
@@ -134,14 +135,10 @@ export function parsePurpose(raw) {
 }
 
 /** Props the repo declares itself. Everything inherited from React, the DOM or a library is left out. */
-function ownProp(prop, root) {
+export function ownProp(prop, root) {
   const declarations = prop.declarations ?? []
   if (!declarations.length) return true
-  return declarations.some((d) => {
-    const file = d.getSourceFile().fileName
-    // The compiler reports paths with forward slashes on every platform.
-    return file.startsWith(`${toPosix(root)}/`) && !file.includes('/node_modules/')
-  })
+  return declarations.some((d) => isRepoFile(d.getSourceFile().fileName, root))
 }
 
 function propsTypeOf(ts, checker, symbol, declaration) {

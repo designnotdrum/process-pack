@@ -23,6 +23,7 @@ function parseFolder(value) {
  * for Klaus's other steps.
  */
 export function readFolders(root, cliFolders = []) {
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) throw new Error(`The repo ${root} does not exist.`)
   let listed = cliFolders
   if (!listed.length) {
     const configPath = path.join(root, 'klaus.config.json')

@@ -83,7 +83,7 @@ function iconSetEntry({ root, folder, dir, files, components, usage }) {
  * @returns {{ schemaVersion: 1, folders: object[], entries: Entry[] }}
  */
 export function buildInventory({ root: given, folders }) {
-  const root = fs.realpathSync(given)
+  const root = toPosix(fs.realpathSync(given))
   resetCaches()
   const ts = loadTypeScript(root)
   const tsconfigs = createTsconfigLoader(ts, root)
@@ -91,7 +91,7 @@ export function buildInventory({ root: given, folders }) {
   // A file belongs to the first configured folder that holds it, so overlapping folders do not list it twice.
   const claimed = new Set()
   const scanned = folders.map((folder) => {
-    const abs = path.join(root, folder.path)
+    const abs = toPosix(path.join(root, folder.path))
     const files = walk(abs).filter((f) => isJsxFile(f) && !isScreenFile(f, root) && !claimed.has(f))
     for (const f of files) claimed.add(f)
     return { folder, abs, files }
@@ -166,7 +166,12 @@ function main(args) {
   } catch (error) {
     return usage(error.message)
   }
-  const inventory = buildInventory({ root, folders })
+  let inventory
+  try {
+    inventory = buildInventory({ root, folders })
+  } catch (error) {
+    return usage(error.message)
+  }
   fs.mkdirSync(out, { recursive: true })
   fs.writeFileSync(path.join(out, 'inventory.json'), `${JSON.stringify(inventory, null, 2)}\n`)
   fs.writeFileSync(path.join(out, 'INVENTORY.md'), renderMarkdown(inventory))

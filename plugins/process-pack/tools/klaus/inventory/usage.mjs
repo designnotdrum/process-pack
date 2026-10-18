@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { isScreenFile, screenLabel, toPosix, walk } from './files.mjs'
+import { isRepoFile, isScreenFile, screenLabel, toPosix, walk } from './files.mjs'
 
 const EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']
 
@@ -48,10 +48,11 @@ function workspaceSource(dir, subpath) {
     const candidates = [stripped.replace(built, './src/'), stripped].filter((c) => !built.test(c))
     for (const candidate of candidates) {
       const found = withExtension(path.join(dir, candidate))
-      if (found) return found
+      if (found) return toPosix(found)
     }
   }
-  return withExtension(path.join(dir, 'src', subpath === '.' ? 'index' : subpath)) ?? withExtension(path.join(dir, subpath === '.' ? 'index' : subpath))
+  const fallback = withExtension(path.join(dir, 'src', subpath === '.' ? 'index' : subpath)) ?? withExtension(path.join(dir, subpath === '.' ? 'index' : subpath))
+  return fallback && toPosix(fallback)
 }
 
 /** Workspace packages by name, so `@repo/ui` resolves to its source instead of its build output. */
@@ -152,17 +153,33 @@ export function readUsage({ ts, root, tsconfigs }) {
   const packages = findPackages(root)
   const packageNames = [...packages.keys()].sort((a, b) => b.length - a.length)
   const resolutionCaches = new Map()
-  const facts = new Map(walk(root).map((file) => [file, readFacts(ts, file)]))
+  const facts = new Map()
+  for (const file of walk(root)) {
+    try {
+      facts.set(file, readFacts(ts, file))
+    } catch (error) {
+      // A file that cannot be read cannot be traced as an importer. One such file must not stop the run.
+      console.warn(`Skipped ${toPosix(path.relative(root, file))}: ${error.code ?? error.message}`)
+    }
+  }
 
-  function resolveImport(spec, from) {
+  function resolveImportUncached(spec, from) {
     const name = packageNames.find((n) => spec === n || spec.startsWith(`${n}/`))
     if (name) return workspaceSource(packages.get(name), spec === name ? '.' : `./${spec.slice(name.length + 1)}`)
     const options = tsconfigs.optionsFor(from)
     if (!resolutionCaches.has(options)) resolutionCaches.set(options, ts.createModuleResolutionCache(root, (f) => f, options))
     const resolved = ts.resolveModuleName(spec, from, options, ts.sys, resolutionCaches.get(options)).resolvedModule
     if (!resolved || resolved.isExternalLibraryImport) return null
-    const file = resolved.resolvedFileName
-    return file.startsWith(`${toPosix(root)}/`) && !file.includes('/node_modules/') && !file.endsWith('.d.ts') ? file : null
+    // Files are keyed by their POSIX path everywhere, so the resolver's answer is put in that form before it is compared or used.
+    const file = toPosix(resolved.resolvedFileName)
+    return isRepoFile(file, root) && !file.endsWith('.d.ts') ? file : null
+  }
+
+  const resolvedImports = new Map()
+  function resolveImport(spec, from) {
+    const key = `${from}#${spec}`
+    if (!resolvedImports.has(key)) resolvedImports.set(key, resolveImportUncached(spec, from))
+    return resolvedImports.get(key)
   }
 
   /** Follows barrel files and renames to the file that declares an export. `seen` stops re-export cycles. */

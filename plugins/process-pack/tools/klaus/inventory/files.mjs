@@ -20,7 +20,24 @@ const SCREEN_FILE = /^(page|layout|template|loading|error|global-error|not-found
 /** Folder names that hold one icon set, whatever the repo calls the icons inside. */
 const ICON_DIR = /^icons?$/i
 
-export const toPosix = (p) => p.split(path.sep).join('/')
+/**
+ * Every path the inventory compares or stores is a POSIX path, because the compiler reports
+ * forward slashes whatever it was given. Backslashes are turned into slashes whichever platform
+ * runs this, so a path built for Windows is handled the same way.
+ */
+export const toPosix = (p) => p.replace(/\\/g, '/')
+
+/** True when `file` is `dir` or lies under it. The check includes the separator, so `/repo-two` is not inside `/repo`. */
+export function isInside(file, dir) {
+  const base = toPosix(dir).replace(/\/$/, '')
+  const target = toPosix(file)
+  return target === base || target.startsWith(`${base}/`)
+}
+
+/** True when `file` belongs to the repo itself: under `root` and not in a dependency. */
+export function isRepoFile(file, root) {
+  return isInside(file, root) && !toPosix(file).includes('/node_modules/')
+}
 
 const isDir = (p) => {
   try {
@@ -37,7 +54,7 @@ function skippedDir(name) {
 /** Shipped source files, the default for `walk`. */
 const isShippedSource = (name) => SOURCE.test(name) && !NOT_SHIPPED.test(name)
 
-/** Every file under `dir` that `accept` takes, in a stable order so the output does not churn. */
+/** Every file under `dir` that `accept` takes, as POSIX paths, in a stable order so the output does not churn. */
 export function walk(dir, accept = isShippedSource) {
   const found = []
   const visit = (current) => {
@@ -47,7 +64,7 @@ export function walk(dir, accept = isShippedSource) {
       if (entry.isDirectory()) {
         if (!skippedDir(entry.name)) visit(full)
       } else if (entry.isFile() && accept(entry.name)) {
-        found.push(full)
+        found.push(toPosix(full))
       }
     }
   }
@@ -60,7 +77,11 @@ export const isJsxFile = (file) => JSX_FILE.test(file)
 const packageRoots = new Map()
 const dirHasScreen = new Map()
 
-/** Forgets what was learned about the file system. A run starts with this, so a second run in one process sees the current files. */
+/**
+ * Forgets what was learned about the file system. `buildInventory` calls it first, so a second
+ * run in one process sees the current files. Code that calls `appDirOf`, `isScreenFile`,
+ * `screenLabel`, `localRouteOf` or `packageRootOf` on its own must call it before it starts.
+ */
 export function resetCaches() {
   packageRoots.clear()
   dirHasScreen.clear()
@@ -88,9 +109,9 @@ export function packageRootOf(file, root) {
 /** The app router directory this file sits in, or null. Only `app` and `src/app` at a package root count. */
 export function appDirOf(file, root) {
   const pkg = packageRootOf(file, root)
-  for (const candidate of ['app', path.join('src', 'app')]) {
-    const dir = path.join(pkg, candidate)
-    if (file.startsWith(dir + path.sep) && isDir(dir)) return dir
+  for (const candidate of ['app', 'src/app']) {
+    const dir = `${toPosix(pkg)}/${candidate}`
+    if (isInside(file, dir) && isDir(dir)) return dir
   }
   return null
 }
@@ -131,7 +152,7 @@ function hasScreenFile(dir) {
 export function localRouteOf(file, root) {
   const appDir = appDirOf(file, root)
   if (!appDir) return null
-  for (let dir = path.dirname(file); dir !== appDir && dir.startsWith(appDir + path.sep); dir = path.dirname(dir)) {
+  for (let dir = path.dirname(file); dir !== appDir && isInside(dir, appDir); dir = path.dirname(dir)) {
     if (hasScreenFile(dir)) return routeOf(appDir, dir)
   }
   return null
@@ -139,7 +160,7 @@ export function localRouteOf(file, root) {
 
 /** The nearest folder at or below `stop` that is named like an icon folder, or null. */
 export function iconDirOf(file, stop) {
-  for (let dir = path.dirname(file); dir === stop || dir.startsWith(stop + path.sep); dir = path.dirname(dir)) {
+  for (let dir = path.dirname(file); isInside(dir, stop); dir = path.dirname(dir)) {
     if (ICON_DIR.test(path.basename(dir))) return dir
     if (dir === stop) break
   }
