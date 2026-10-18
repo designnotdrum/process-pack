@@ -156,20 +156,26 @@ describe('errors the person can fix', () => {
   })
 
   test('a vocabulary file that is missing, not JSON or not the right shape', () => {
-    assert.match(run(['--vocabulary', path.join(root, 'none.json'), 'tooltip']).err, /does not exist/)
-    const file = path.join(root, 'vocab.json')
-    fs.writeFileSync(file, 'nope')
-    assert.match(run(['--vocabulary', file, 'tooltip']).err, /not valid JSON/)
-    for (const [bad, message] of [
-      [{ productNouns: 'loop' }, /"productNouns" .* must be a list of words/],
-      [{ synonyms: [['alone']] }, /"synonyms" .* two or more words/],
-      [{ synonym: [] }, /unknown setting "synonym"/],
-      [[], /must hold an object/],
-    ]) {
-      fs.writeFileSync(file, JSON.stringify(bad))
-      const { code, err } = run(['--vocabulary', file, 'tooltip'])
-      assert.equal(code, 2)
-      assert.match(err, message)
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'klaus-find-vocab-errors-'))
+    try {
+      fs.writeFileSync(path.join(repo, 'inventory.json'), JSON.stringify(inventory))
+      const file = path.join(repo, 'vocab.json')
+      assert.match(run(['--vocabulary', file, 'tooltip'], { cwd: repo }).err, /does not exist/)
+      fs.writeFileSync(file, 'nope')
+      assert.match(run(['--vocabulary', file, 'tooltip'], { cwd: repo }).err, /not valid JSON/)
+      for (const [bad, message] of [
+        [{ productNouns: 'loop' }, /"productNouns" .* must be a list of words/],
+        [{ synonyms: [['alone']] }, /"synonyms" .* two or more words/],
+        [{ synonym: [] }, /unknown setting "synonym"/],
+        [[], /must hold an object/],
+      ]) {
+        fs.writeFileSync(file, JSON.stringify(bad))
+        const { code, err } = run(['--vocabulary', file, 'tooltip'], { cwd: repo })
+        assert.equal(code, 2)
+        assert.match(err, message)
+      }
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true })
     }
   })
 })
@@ -183,6 +189,28 @@ describe('readInventory', () => {
     assert.equal(read.skipped, 2)
     assert.equal(read.entries.length, 1)
     assert.deepEqual(read.entries[0], { kind: 'app', file: '', purpose: null, name: 'Bare', props: [], variants: {}, parts: [], usedIn: [] })
+  })
+
+  test('copes with fields of the wrong type instead of crashing', () => {
+    const file = path.join(root, 'wrong-types.json')
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        schemaVersion: 1,
+        folders: 'nope',
+        entries: [
+          { name: 'Odd', kind: 7, file: 3, purpose: 'text', props: 'a, b', parts: [{ name: 'Part' }, 'Bad', null], variants: { size: 'big', tone: ['a'] }, usedIn: 'x', icons: ['A', 4] },
+          { name: 'Plain', purpose: { useWhen: 5, notFor: null, text: 9 } },
+        ],
+      }),
+    )
+    const read = readInventory(file)
+    assert.deepEqual(read.folders, [])
+    assert.deepEqual(read.entries[0], { name: 'Odd', kind: 'app', file: '', purpose: null, props: [], parts: [{ name: 'Part' }], variants: { size: [], tone: ['a'] }, usedIn: [], icons: ['A'] })
+    assert.deepEqual(read.entries[1].purpose, { useWhen: null, notFor: null, text: '' })
+    const { code, err } = run(['--inventory', file, 'odd plain part'])
+    assert.equal(code, 0)
+    assert.equal(err, '')
   })
 
   test('the command warns on stderr about entries it skipped and still answers', () => {
@@ -209,7 +237,7 @@ describe('as a process', () => {
     assert.match(bad.stderr, /Say what the new component is for/)
   })
 
-  test('runs through a link to the script', () => {
+  test('runs through a link to the script', { skip: process.platform === 'win32' && 'links need privileges on Windows' }, () => {
     const link = path.join(root, 'link.mjs')
     fs.symlinkSync(script, link)
     const result = spawnSync(process.execPath, [link, '--root', root, 'tooltip'], { encoding: 'utf8' })

@@ -45,7 +45,6 @@ describe('rank', () => {
 
   test('returns at most five components, best first, with scores from 0 to 1', () => {
     const ranking = rank(inventory, 'a button that switches a view or loads a panel in a dialog with a count badge')
-    assert.ok(ranking.candidates.length <= LIMIT)
     assert.equal(ranking.candidates.length, LIMIT)
     const scores = ranking.candidates.map((c) => c.score)
     assert.deepEqual([...scores].sort((a, b) => b - a), scores)

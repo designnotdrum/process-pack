@@ -6,7 +6,10 @@ const SHOWN_TEXT = 240
 export const NEW_COMPONENT_LINE = 'Klaus: new component, see case'
 
 const oneLine = (text) => String(text).replace(/\s+/g, ' ').trim()
-const clip = (text) => (oneLine(text).length > SHOWN_TEXT ? `${oneLine(text).slice(0, SHOWN_TEXT).trimEnd()}...` : oneLine(text))
+function clip(text) {
+  const line = oneLine(text)
+  return line.length > SHOWN_TEXT ? `${line.slice(0, SHOWN_TEXT).trimEnd()}...` : line
+}
 const code = (text) => `\`${text}\``
 const score = (candidate) => candidate.score.toFixed(2)
 

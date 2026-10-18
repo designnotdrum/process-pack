@@ -13,10 +13,14 @@
  *   --root <dir>         The repo. Defaults to the current directory.
  *   --inventory <file>   Default <root>/inventory.json, written by inventory/inventory.mjs.
  *   --vocabulary <file>  Default <root>/klaus.find.json, which is optional: product nouns and synonyms for this repo.
+ *
+ * A path given with --inventory or --vocabulary is relative to the current directory, as in
+ * the other Klaus commands. Only the defaults are under --root.
  *   --case               Print the "New component case" section for the PR body.
  *
- * Exit 0 when it printed an answer, "nothing fits" included. Exit 2 when the person running it has
- * something to fix (no inventory, a wrong option).
+ * Exit 0 when it printed an answer, "nothing fits" included. Exit 2 when it could not answer and the
+ * message says why: no inventory, a file it cannot read, a wrong option. Anything else is a bug and
+ * exits 1 with a stack trace.
  *
  * No dependencies. Copied into a consuming repo by the design-onboard skill.
  */
@@ -41,7 +45,29 @@ const USAGE = 'Usage: find.mjs [--case] [--root <dir>] [--inventory <file>] [--v
 /** The command that writes inventory.json, as it can be typed from where the person is. */
 function inventoryCommand(cwd) {
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'inventory', 'inventory.mjs')
-  return `node ${path.relative(cwd, script) || script}`
+  return `node ${path.relative(cwd, script).split(path.sep).join('/')}`
+}
+
+const isText = (value) => typeof value === 'string'
+const isObject = (value) => value && typeof value === 'object' && !Array.isArray(value)
+
+/** One entry with every field the matcher reads in the shape it expects, so an older or hand-edited file cannot crash it. */
+function normalizeEntry(entry) {
+  const purpose = isObject(entry.purpose)
+    ? { useWhen: isText(entry.purpose.useWhen) ? entry.purpose.useWhen : null, notFor: isText(entry.purpose.notFor) ? entry.purpose.notFor : null, text: isText(entry.purpose.text) ? entry.purpose.text : '' }
+    : null
+  const named = (list) => (Array.isArray(list) ? list.filter((item) => isObject(item) && isText(item.name)) : [])
+  return {
+    ...entry,
+    kind: isText(entry.kind) ? entry.kind : 'app',
+    file: isText(entry.file) ? entry.file : '',
+    purpose,
+    props: named(entry.props),
+    parts: named(entry.parts),
+    variants: isObject(entry.variants) ? Object.fromEntries(Object.entries(entry.variants).map(([key, options]) => [key, Array.isArray(options) ? options : []])) : {},
+    usedIn: Array.isArray(entry.usedIn) ? entry.usedIn : [],
+    ...(Array.isArray(entry.icons) && { icons: entry.icons.filter(isText) }),
+  }
 }
 
 /**
@@ -68,11 +94,11 @@ export function readInventory(file, cwd = process.cwd()) {
   if (raw?.schemaVersion !== 1 || !Array.isArray(raw.entries)) {
     throw new UserError(`${file} is not an inventory this version of Klaus can read (schemaVersion 1 with a list of entries). Write a new one with: ${inventoryCommand(cwd)}`)
   }
-  const named = raw.entries.filter((entry) => entry && typeof entry.name === 'string')
+  const named = raw.entries.filter((entry) => isObject(entry) && isText(entry.name))
   return {
     folders: Array.isArray(raw.folders) ? raw.folders : [],
     skipped: raw.entries.length - named.length,
-    entries: named.map((entry) => ({ kind: 'app', file: '', purpose: null, ...entry, props: entry.props ?? [], variants: entry.variants ?? {}, parts: entry.parts ?? [], usedIn: entry.usedIn ?? [] })),
+    entries: named.map(normalizeEntry),
   }
 }
 
@@ -115,4 +141,13 @@ export function main(argv, { out = (text) => process.stdout.write(text), err = (
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) process.exitCode = main(process.argv.slice(2))
+/** True when this file is the script being run, also when it is run through a link. */
+function isMain() {
+  try {
+    return Boolean(process.argv[1]) && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href
+  } catch {
+    return false
+  }
+}
+
+if (isMain()) process.exitCode = main(process.argv.slice(2))

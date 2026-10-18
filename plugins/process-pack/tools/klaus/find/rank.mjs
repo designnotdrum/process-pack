@@ -152,7 +152,7 @@ function synonymIndex(rows) {
 const groupKey = (entry) => (entry.kind === 'icon-set' ? entry.file || entry.name : entry.name)
 
 /** Shared components first, then the most used, so the copy a person should reach for leads. */
-const byPreference = (a, b) => (a.entry.kind === 'shared' ? 0 : 1) - (b.entry.kind === 'shared' ? 0 : 1) || b.entry.usedIn.length - a.entry.usedIn.length
+const byPreference = (a, b) => (a.entry.kind === 'shared' ? 0 : 1) - (b.entry.kind === 'shared' ? 0 : 1) || (b.entry.usedIn?.length ?? 0) - (a.entry.usedIn?.length ?? 0)
 
 /**
  * @param {{ entries: Entry[] }} inventory The parsed inventory.json.
