@@ -33,8 +33,9 @@ Each code file returns, for every unit, `written`, `exists` or `failed` with an 
 
 - One variable collection, `Tokens` by default, with one mode and one colour variable per token the components use. Each variable has the CSS variable as its WEB code syntax, for example `hsl(var(--primary))`. Which token a colour comes from is found by changing each token on the page and seeing which colours move, so two tokens with the same colour stay two variables.
 - One component set per component version, named `Button 1.1.0`, with variants named `Variant=primary, Size=md`. Fills, strokes and text fills are bound to the variables. Layout is auto layout, as the prototype's.
-- When a new version is written, the previous set moves to the `Older versions` page. A set is never overwritten and never deleted. A version lower than the latest goes straight to `Older versions`.
-- A changed token colour is written through to its variable, because the variables hold the app's current tokens.
+- When a new version is written, the previous set moves to the `Older versions` page. A set is never overwritten and never deleted. A version lower than the latest goes straight to `Older versions`. A pre-release such as `1.1.0-rc.1` is lower than `1.1.0`.
+- A set that moves to `Older versions` is frozen first. Every fill and stroke bound to a variable, on the set and on everything inside it, becomes the plain colour it has at that moment, so a later token change does not touch it. The set's description gets a line: `Frozen when 1.1.0 shipped; colours are the values at that time.` Klaus never changes an earlier version.
+- A changed token colour is written through to its variable, because the variables hold the app's current tokens. The current version on the component's page stays bound and follows it. The write happens after every set in the file has been moved and frozen, so a frozen set keeps the colour it shipped with.
 - Screens are screenshot images by default. Dieter leaves one PNG per screen in `.klaus/screens/`, named after the route (`/settings` is `settings.png`, `/` is `home.png`), and the relay uploads them. Each screen keeps its last 20 versions.
 - Editable screens are the opt-in alternative. They are read from the running app and written as frames, text and icons placed by position.
 
