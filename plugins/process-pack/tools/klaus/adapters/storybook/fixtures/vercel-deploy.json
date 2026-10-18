@@ -1,0 +1,30 @@
+{
+  "status": "ok",
+  "deployment": {
+    "id": "dpl_7dNjNUepMBxwrB4rGFFmfgtDB6sa",
+    "url": "https://klaus-storybook-test-jf40s10gf-acme-team.vercel.app",
+    "productionUrl": "https://klaus-storybook-test.vercel.app",
+    "inspectorUrl": "https://vercel.com/acme-team/klaus-storybook-test/7dNjNUepMBxwrB4rGFFmfgtDB6sa",
+    "readyState": "READY",
+    "target": "production",
+    "deploymentApiUrl": "https://api.vercel.com/v13/deployments/dpl_7dNjNUepMBxwrB4rGFFmfgtDB6sa",
+    "buildMachine": {
+      "cores": 4,
+      "memory": 8192,
+      "machine": "standard",
+      "selectionType": "elastic",
+      "selectionSource": "elastic-algorithm"
+    },
+    "deploymentProtection": [
+      "vercel_authentication"
+    ]
+  },
+  "message": "Deployment klaus-storybook-test-jf40s10gf-acme-team.vercel.app ready. Production URL: https://klaus-storybook-test.vercel.app",
+  "hint": "This is the project’s first deployment, so it was assigned to production. Future deployments will be preview deployments unless you use --prod.",
+  "next": [
+    {
+      "command": "vercel curl https://klaus-storybook-test.vercel.app",
+      "when": "Verify deployment, including when Deployment Protection is enabled"
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "contextName": "acme-team",
+  "deployments": [
+    {
+      "url": "klaus-storybook-test-qv5zig9nn-acme-team.vercel.app",
+      "name": "klaus-storybook-test",
+      "state": "READY",
+      "target": null,
+      "createdAt": 1792358128194,
+      "ready": 1792358128194,
+      "creator": {
+        "uid": "I7u7hKeCZe9CgYrpv6kQctwT",
+        "username": "someone"
+      },
+      "meta": {
+        "klausKind": "storybook-release",
+        "klausRelease": "v0.0.2",
+        "actor": "claude-code_2-1-302_agent"
+      }
+    },
+    {
+      "url": "klaus-storybook-test-jf40s10gf-acme-team.vercel.app",
+      "name": "klaus-storybook-test",
+      "state": "READY",
+      "target": "production",
+      "createdAt": 1792358110133,
+      "ready": 1792358110133,
+      "creator": {
+        "uid": "I7u7hKeCZe9CgYrpv6kQctwT",
+        "username": "someone"
+      },
+      "meta": {
+        "klausKind": "storybook-release",
+        "klausRelease": "v0.0.1",
+        "actor": "claude-code_2-1-302_agent"
+      }
+    },
+    {
+      "url": "other-app-abc123-acme-team.vercel.app",
+      "name": "other-app",
+      "state": "READY",
+      "target": "production",
+      "createdAt": 1792358000000,
+      "ready": 1792358000000,
+      "creator": {
+        "uid": "I7u7hKeCZe9CgYrpv6kQctwT",
+        "username": "someone"
+      },
+      "meta": {}
+    }
+  ],
+  "pagination": {
+    "count": 3,
+    "next": null,
+    "prev": 1792358128194
+  }
+}
