@@ -213,6 +213,12 @@ describe('readInventory', () => {
     assert.equal(err, '')
   })
 
+  test('keeps only the folders that have a path and a role', () => {
+    const file = path.join(root, 'folders.json')
+    fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, folders: ['packages/ui', { path: 'a', role: 'shared' }, { path: 'b' }, { role: 'app' }, null, { path: 'c', role: 'app' }], entries: [] }))
+    assert.deepEqual(readInventory(file).folders, [{ path: 'a', role: 'shared' }, { path: 'c', role: 'app' }])
+  })
+
   test('the command warns on stderr about entries it skipped and still answers', () => {
     const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'klaus-find-skip-'))
     try {

@@ -25,7 +25,7 @@ function where(candidate) {
 export function purposeLines(candidate) {
   const { purpose } = candidate
   if (!purpose) return candidate.kind === 'icon-set' ? [] : ['Purpose: none written yet.']
-  if (!purpose.useWhen && !purpose.notFor) return [`Purpose, not yet in the Use when / Not for form: ${clip(purpose.text)}`]
+  if (!purpose.useWhen && !purpose.notFor) return purpose.text ? [`Purpose, not yet in the Use when / Not for form: ${clip(purpose.text)}`] : ['Purpose: none written yet.']
   return [purpose.useWhen && `Use when: ${clip(purpose.useWhen)}`, purpose.notFor && `Not for: ${clip(purpose.notFor)}`].filter(Boolean)
 }
 
@@ -45,7 +45,7 @@ function candidateLines(candidate, index) {
  * @param {import('./rank.mjs').Ranking} ranking
  */
 export function renderFind(purpose, ranking) {
-  const lines = [`Purpose: ${oneLine(purpose)}`, '']
+  const lines = [`Purpose: ${clip(purpose)}`, '']
   if (!ranking.candidates.length) {
     lines.push('Nothing fits. No component in the inventory shares a word with this purpose.', '', `Writing a new component needs a case. Run this again with --case and put its output in the PR body.`)
     return `${lines.join('\n')}\n`

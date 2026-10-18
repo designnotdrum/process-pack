@@ -45,6 +45,11 @@ describe('renderFind', () => {
     assert.match(renderFind('divider', rank(pool, 'divider')), /Purpose: none written yet\./)
   })
 
+  test('treats a purpose with no text as none written', () => {
+    const pool = { entries: [entry('Divider', { purpose: { useWhen: null, notFor: null, text: '' } })] }
+    assert.match(renderFind('divider', rank(pool, 'divider')), /Purpose: none written yet\./)
+  })
+
   test('cuts a long comment short on one line', () => {
     const pool = { entries: [entry('Avatar', { purpose: unlabelled(`An avatar.\n${'word '.repeat(100)}`) })] }
     const line = renderFind('avatar', rank(pool, 'avatar')).split('\n').find((l) => l.includes('not yet in the Use when'))

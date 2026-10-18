@@ -45,7 +45,8 @@ const USAGE = 'Usage: find.mjs [--case] [--root <dir>] [--inventory <file>] [--v
 /** The command that writes inventory.json, as it can be typed from where the person is. */
 function inventoryCommand(cwd) {
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'inventory', 'inventory.mjs')
-  return `node ${path.relative(cwd, script).split(path.sep).join('/')}`
+  const relative = path.relative(cwd, script).split(path.sep).join('/')
+  return `node ${relative.includes(' ') ? `"${relative}"` : relative}`
 }
 
 const isText = (value) => typeof value === 'string'
@@ -96,7 +97,7 @@ export function readInventory(file, cwd = process.cwd()) {
   }
   const named = raw.entries.filter((entry) => isObject(entry) && isText(entry.name))
   return {
-    folders: Array.isArray(raw.folders) ? raw.folders : [],
+    folders: Array.isArray(raw.folders) ? raw.folders.filter((folder) => isObject(folder) && isText(folder.path) && (folder.role === 'shared' || folder.role === 'app')) : [],
     skipped: raw.entries.length - named.length,
     entries: named.map(normalizeEntry),
   }

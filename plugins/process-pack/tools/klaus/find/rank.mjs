@@ -143,7 +143,7 @@ function synonymIndex(rows) {
   const index = new Map()
   for (const row of rows) {
     const stems = [...new Set(row.flatMap((word) => words(word)))]
-    for (const word of stems) index.set(word, [...(index.get(word) ?? []), ...stems])
+    for (const word of stems) index.set(word, [...new Set([...(index.get(word) ?? []), ...stems])])
   }
   return index
 }
@@ -207,7 +207,7 @@ export function rank(inventory, purpose, { vocabulary = {} } = {}) {
       return { item: best, alsoAt: others.map((other) => other.entry.file) }
     })
     .filter(({ item }) => item.score > 0)
-    .sort((a, b) => b.item.score - a.item.score || byPreference(a.item, b.item) || (a.item.entry.name < b.item.entry.name ? -1 : 1))
+    .sort((a, b) => b.item.score - a.item.score || byPreference(a.item, b.item) || (a.item.entry.name < b.item.entry.name ? -1 : a.item.entry.name > b.item.entry.name ? 1 : 0))
     .slice(0, LIMIT)
     .map(({ item: { entry, score, matched, against }, alsoAt }) => ({
       name: entry.name,
