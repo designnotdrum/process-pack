@@ -111,7 +111,9 @@ function jsonIn(text) {
     const end = text.lastIndexOf("}");
     if (start < 0 || end <= start) return [];
     try {
-      return [JSON.parse(text.slice(start, end + 1))];
+      // Only one object around the whole span counts. Prose that holds two objects does not parse.
+      const value = JSON.parse(text.slice(start, end + 1));
+      return value && typeof value === "object" && !Array.isArray(value) ? [value] : [];
     } catch {
       return [];
     }

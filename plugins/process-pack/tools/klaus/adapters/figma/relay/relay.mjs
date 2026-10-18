@@ -149,7 +149,7 @@ function readManifest(folder) {
     if (!Array.isArray(entry.units) || entry.units.length === 0) throw new UserError(`${file} lists ${entry.name} without its units.`);
     if (!Number.isInteger(entry.chars) || entry.chars < 0) throw new UserError(`${file} lists ${entry.name} without its character count.`);
     for (const id of entry.units) {
-      if (!Object.hasOwn(entries, id)) throw new UserError(`${file} has no ledger entry for ${id}.`);
+      if (!Object.hasOwn(entries, id) || !entries[id] || typeof entries[id] !== "object") throw new UserError(`${file} has no ledger entry for ${id}.`);
       const { kind, name, version, route, release } = entries[id];
       const whole = kind === "component" ? typeof name === "string" && typeof version === "string" : kind === "screen" && typeof route === "string" && typeof release === "string";
       if (!whole) throw new UserError(`${file} has a ledger entry for ${id} without its kind and version.`);
@@ -162,9 +162,14 @@ function readManifest(folder) {
 function manifestFolders(dir, depth = 0) {
   if (depth > 5) return [];
   const found = existsSync(path.join(dir, "manifest.json")) ? [dir] : [];
-  for (const name of readdirSync(dir)) {
-    const child = path.join(dir, name);
-    if (lstatSync(child).isDirectory()) found.push(...manifestFolders(child, depth + 1));
+  try {
+    for (const name of readdirSync(dir)) {
+      const child = path.join(dir, name);
+      if (lstatSync(child).isDirectory()) found.push(...manifestFolders(child, depth + 1));
+    }
+  } catch (error) {
+    if (error instanceof UserError) throw error;
+    throw new UserError(`Could not read the artifact at ${dir}: ${error.message}`);
   }
   return found;
 }
@@ -493,7 +498,13 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
         failed.push({ id: entry.id, error });
         unitRecords.push({ ...base, status: "failed", error });
       }
-      if (sentHere > 0) writeJsonFile(ledgerPath, ledger);
+      if (sentHere > 0) {
+        // Apply this file's marks to the ledger as it is now, so a mark another run wrote
+        // since this run read it is kept.
+        const fresh = readLedger(ledgerPath);
+        for (const entry of pending) if (entrySent(ledger, entry)) recordEntry(fresh, entry, SENT);
+        writeJsonFile(ledgerPath, fresh);
+      }
 
       const status = sentHere === pending.length ? "sent" : sentHere === 0 ? "failed" : "partly sent";
       fileRecords.push({

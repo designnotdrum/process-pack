@@ -48,6 +48,13 @@ if (log) {
   writeFileSync(path.join(log, `call-${n}.stdin`), stdin);
   writeFileSync(path.join(log, `call-${n}.json`), JSON.stringify({ args }));
 }
+// Another relay run writing to the ledger while this call runs.
+if (process.env.STUB_CODEX_OTHER_RUN_LEDGER) {
+  const file = process.env.STUB_CODEX_OTHER_RUN_LEDGER;
+  const ledger = JSON.parse(readFileSync(file, "utf8"));
+  ledger.components.Other = { "1.0.0": "sent" };
+  writeFileSync(file, JSON.stringify(ledger));
+}
 const scenarios = (process.env.STUB_CODEX_SCENARIOS ?? "success").split(",");
 const scenario = scenarios[Math.min(n, scenarios.length) - 1];
 

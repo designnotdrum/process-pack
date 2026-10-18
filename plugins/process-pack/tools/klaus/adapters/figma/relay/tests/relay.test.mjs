@@ -40,6 +40,13 @@ test("a successful call marks its units sent, and the generator stops planning t
   assert.match(reports[0], /^report-.*\.json$/);
 });
 
+test("a sent mark another run writes during a call is kept", async () => {
+  const { root, folder } = await generatedRepo({ perFile: 10 });
+  const run = await relay(root, [folder], { otherRunLedger: path.join(root, ".klaus/figma/ledger.json") });
+  assert.equal(run.code, 0, run.stderr);
+  assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "sent" }, Card: { "1.0.0": "sent" }, Other: { "1.0.0": "sent" } });
+});
+
 test("the code reaches Codex unchanged on stdin, and the prompt carries no code", async () => {
   const { root, folder, manifest } = await generatedRepo({ perFile: 10 });
   const run = await relay(root, [folder]);
