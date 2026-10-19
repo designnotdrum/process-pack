@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module'
 import path from 'node:path'
+import { UserError } from '../frame/errors.mjs'
 import { isRepoFile, pascalCase } from './files.mjs'
 
 /**
@@ -10,7 +11,7 @@ export function loadTypeScript(root) {
   try {
     return createRequire(path.join(root, 'package.json'))('typescript')
   } catch {
-    throw new Error(`Cannot find the "typescript" package from ${root}. Install it in the repo, Klaus reads components with the repo's own copy.`)
+    throw new UserError(`Cannot find the "typescript" package from ${root}. Install it in the repo, Klaus reads components with the repo's own copy.`)
   }
 }
 

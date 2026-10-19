@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -45,10 +45,17 @@ export default adapter;
   return repo;
 }
 
-function klaus(repo, ...args) {
-  const result = spawnSync(process.execPath, [CLI, ...args, "--adapters", path.join(repo, "adapters")], { cwd: repo, encoding: "utf8" });
+/** Runs the command line in the repo, with extra environment variables when given. */
+function klausWithEnv(repo, env, ...args) {
+  const result = spawnSync(process.execPath, [CLI, ...args, "--adapters", path.join(repo, "adapters")], {
+    cwd: repo,
+    encoding: "utf8",
+    env: { ...process.env, ...env },
+  });
   return { code: result.status, out: result.stdout, err: result.stderr };
 }
+
+const klaus = (repo, ...args) => klausWithEnv(repo, {}, ...args);
 
 const reportsIn = (repo) => {
   const dir = path.join(repo, ".klaus", "reports");
@@ -86,8 +93,9 @@ test("a later scheduled run covers every release since the last run, in tag orde
   const { code } = klaus(repo, "run", "--trigger", "schedule");
 
   assert.equal(code, 0);
-  const reports = reportsIn(repo).sort((a, b) => a.startedAt.localeCompare(b.startedAt));
-  assert.deepEqual(reports.at(-1).outputs[0].adapter.details.releases, ["v1.3.0", "v1.9.0", "v1.10.0"]);
+  const scheduled = reportsIn(repo).filter((report) => report.trigger === "schedule");
+  assert.equal(scheduled.length, 1);
+  assert.deepEqual(scheduled[0].outputs[0].adapter.details.releases, ["v1.3.0", "v1.9.0", "v1.10.0"]);
   assert.equal(stateIn(repo).outputs.storybook.lastRelease, "v1.10.0");
 });
 
@@ -98,8 +106,9 @@ test("running the same release again does nothing", () => {
 
   assert.equal(code, 0);
   assert.match(out, /storybook: skipped \(up-to-date\)/);
-  const reports = reportsIn(repo).sort((a, b) => a.startedAt.localeCompare(b.startedAt));
-  assert.equal(reports.at(-1).outputs[0].status, "skipped");
+  const skipped = reportsIn(repo).filter((report) => report.outputs[0].status === "skipped");
+  assert.equal(skipped.length, 1);
+  assert.equal(skipped[0].release, "v1.2.0");
   assert.equal(stateIn(repo).outputs.storybook.lastRelease, "v1.2.0");
   assert.deepEqual(stateIn(repo).outputs.storybook.unwritten, []);
 });
@@ -172,6 +181,48 @@ test("an adapter file that cannot be loaded is a bug, not a usage error: exit 3 
   assert.match(err, /adapter exploded on load/);
   // A real stack has a frame that points back into the adapter file.
   assert.ok(err.includes(path.join(repo, "adapters", "storybook", "index.mjs")), err);
+});
+
+test("an adapter file that throws an error with a numeric code still exits 3 with that error", () => {
+  const repo = makeRepo({ adapterSource: "throw Object.assign(new Error('adapter exploded with a code'), { code: 42 });\n" });
+  const { code, err } = klaus(repo, "run", "--trigger", "manual");
+
+  assert.equal(code, 3);
+  assert.match(err, /adapter exploded with a code/);
+  assert.doesNotMatch(err, /startsWith is not a function/);
+});
+
+test("git missing from the PATH exits 2 and says git could not be run", () => {
+  const repo = makeRepo();
+  const { code, err } = klausWithEnv(repo, { PATH: path.join(repo, "no-such-bin") }, "run", "--trigger", "manual");
+
+  assert.equal(code, 2);
+  assert.match(err, /Could not run git to list release tags/);
+  assert.doesNotMatch(err, /inside the repo's git checkout/);
+});
+
+test("a folder that is not a git checkout exits 2 and repeats what git said", () => {
+  const repo = makeRepo();
+  rmSync(path.join(repo, ".git"), { recursive: true });
+  // Stops git looking for a repo above the temporary folder.
+  const { code, err } = klausWithEnv(repo, { GIT_CEILING_DIRECTORIES: path.dirname(repo) }, "run", "--trigger", "manual");
+
+  assert.equal(code, 2);
+  assert.match(err, /Could not list release tags \(git said: fatal: not a git repository/);
+  assert.match(err, /inside the repo's git checkout/);
+});
+
+test("a report folder that cannot be written still prints the summary, keeps the saved state and exits 2", () => {
+  const repo = makeRepo();
+  // A file where the folder should be, so the folder cannot be made.
+  writeFileSync(path.join(repo, "blocked"), "");
+  const { code, out, err } = klaus(repo, "run", "--trigger", "manual", "--report-dir", path.join("blocked", "reports"));
+
+  assert.equal(code, 2);
+  assert.match(out, /Klaus run: ok/);
+  assert.match(err, /state\.json was updated, but the report could not be written to blocked/);
+  assert.doesNotMatch(err, /at .*\.mjs:\d+/);
+  assert.equal(stateIn(repo).outputs.storybook.lastRelease, "v1.2.0");
 });
 
 test("a state file that is not a state file stops the run with exit 2", () => {

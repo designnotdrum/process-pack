@@ -54,11 +54,32 @@ function skippedDir(name) {
 /** Shipped source files, the default for `walk`. */
 const isShippedSource = (name) => SOURCE.test(name) && !NOT_SHIPPED.test(name)
 
-/** Every file under `dir` that `accept` takes, as POSIX paths, in a stable order so the output does not churn. */
+const warned = new Set()
+
+/** One warning per folder per run, because the same folder is walked more than once. */
+function warnOnce(dir, error, consequence) {
+  if (warned.has(dir)) return
+  warned.add(dir)
+  console.warn(`Skipped ${toPosix(dir)}: ${error.code ?? error.message}${consequence}`)
+}
+
+/**
+ * Every file under `dir` that `accept` takes, as POSIX paths, in a stable order so the output does not churn.
+ * A folder below `dir` that cannot be listed (a root-owned data folder, for example) is skipped with a warning.
+ * A `dir` that cannot be listed throws, because nothing can be scanned.
+ */
 export function walk(dir, accept = isShippedSource) {
   const found = []
   const visit = (current) => {
-    const entries = fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))
+    let entries
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true })
+    } catch (error) {
+      if (current === dir) throw error
+      warnOnce(current, error, '')
+      return
+    }
+    entries.sort((a, b) => (a.name < b.name ? -1 : 1))
     for (const entry of entries) {
       const full = path.join(current, entry.name)
       if (entry.isDirectory()) {
@@ -85,6 +106,7 @@ const dirHasScreen = new Map()
 export function resetCaches() {
   packageRoots.clear()
   dirHasScreen.clear()
+  warned.clear()
 }
 
 /** The nearest directory at or above `file` that holds a package.json, else the repo root. */
@@ -138,7 +160,14 @@ export function screenLabel(file, root) {
 
 function hasScreenFile(dir) {
   if (!dirHasScreen.has(dir)) {
-    dirHasScreen.set(dir, fs.readdirSync(dir).some((name) => SCREEN_FILE.test(name)))
+    let found = false
+    try {
+      found = fs.readdirSync(dir).some((name) => SCREEN_FILE.test(name))
+    } catch (error) {
+      // A folder that cannot be listed cannot be shown to hold a screen, so the component is not called local to it.
+      warnOnce(dir, error, ', so a component below it is not marked local to a screen here')
+    }
+    dirHasScreen.set(dir, found)
   }
   return dirHasScreen.get(dir)
 }

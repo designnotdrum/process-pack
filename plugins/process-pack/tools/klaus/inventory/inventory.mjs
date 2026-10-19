@@ -2,6 +2,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { UserError } from '../frame/errors.mjs'
 import { loadTypeScript, groupFamilies, readAllComponents } from './components.mjs'
 import { readFolders } from './config.mjs'
 import { iconDirOf, isJsxFile, isScreenFile, localRouteOf, pascalCase, resetCaches, toPosix, walk } from './files.mjs'
@@ -170,7 +171,10 @@ function main(args) {
   try {
     inventory = buildInventory({ root, folders })
   } catch (error) {
-    return usage(error.message)
+    if (error instanceof UserError) return usage(error.message)
+    // Anything else is a failure while reading the repo, and the usage text would hide it.
+    console.error(error?.stack ?? error)
+    process.exit(3)
   }
   fs.mkdirSync(out, { recursive: true })
   fs.writeFileSync(path.join(out, 'inventory.json'), `${JSON.stringify(inventory, null, 2)}\n`)

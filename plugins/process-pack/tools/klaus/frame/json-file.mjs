@@ -15,6 +15,8 @@ export function readJsonFile(file, what = "File") {
     text = readFileSync(file, "utf8");
   } catch (error) {
     if (error.code === "ENOENT") throw new UserError(`${what} ${file} does not exist.`);
+    // A failed system call (no permission, a folder instead of a file) is something the reader can fix.
+    if (error.syscall && error.code) throw new UserError(`${what} ${file} could not be read (${error.code}).`);
     throw error;
   }
   try {
