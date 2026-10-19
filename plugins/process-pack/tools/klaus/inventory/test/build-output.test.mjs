@@ -5,6 +5,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { after, before, describe, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { BUILD_OUTPUT_DIRS } from '../files.mjs'
 import { buildInventory } from '../inventory.mjs'
 import { relativeTypeText } from '../type-text.mjs'
 
@@ -21,7 +22,7 @@ describe('a type declared in a package\'s build output', () => {
   })
 
   test('is named the same way for every build folder the inventory skips', () => {
-    for (const folder of ['dist', 'build', 'out', '.next', 'coverage', 'storybook-static']) {
+    for (const folder of BUILD_OUTPUT_DIRS) {
       assert.equal(print(`/home/me/repo/apps/web/${folder}/types/chunk-1a2b3c`), 'import("apps/web").Thing', folder)
     }
   })
@@ -34,6 +35,11 @@ describe('a type declared in a package\'s build output', () => {
     assert.equal(print('/home/me/repo/dist/index-1a2b3c'), 'import(".").Thing')
   })
 
+  test('is named by the folder above a folder of hand-written code that is called like a build folder', () => {
+    // The folder walk skips such a folder too, so the inventory treats it as build output either way.
+    assert.equal(print('/home/me/repo/packages/ui/build/types/chunk'), 'import("packages/ui").Thing')
+  })
+
   test('is named by the package specifier when a dependency ships it, scoped or not', () => {
     assert.equal(print('/home/me/repo/node_modules/.pnpm/foo@1.0.0/node_modules/foo/dist/chunk-1a2b3c'), 'import("foo").Thing')
     assert.equal(print('/home/me/repo/node_modules/.pnpm/@s+foo@1.0.0/node_modules/@s/foo/dist/esm/chunk-1a2b3c'), 'import("@s/foo").Thing')
@@ -42,6 +48,8 @@ describe('a type declared in a package\'s build output', () => {
 
   test('is named by the folder above the build folder when the file is outside every root', () => {
     assert.equal(print('/home/me/other/ui/dist/alignment-utils-N1JdL0Og'), 'import("ui").Thing')
+    assert.equal(print('/tmp/dist/chunk-1a2b3c'), 'import("tmp").Thing')
+    assert.equal(print('/dist/chunk-1a2b3c'), 'import(".").Thing')
   })
 
   test('is named the same way from a Windows path, in any of several roots', () => {

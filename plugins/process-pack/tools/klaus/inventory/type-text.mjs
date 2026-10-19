@@ -22,7 +22,9 @@ import { BUILD_OUTPUT_DIRS, isInside, toPosix } from './files.mjs'
  *   on every rebuild with no change in the source. This rule is applied after the ones above, so
  *   a dependency's `foo/dist/index` becomes `foo`, and a file outside every root and outside
  *   `node_modules` is named by the folder above its nearest build folder. It reads no file, so two
- *   checkouts and a rebuild give the same text.
+ *   checkouts and a rebuild give the same text. A folder of hand-written code that is called
+ *   `build` or `out` is cut too, the same as the folder walk skips it, so its types print as the
+ *   folder above it.
  *
  * A specifier that is not an absolute path, such as `import("react")` for a module declared with
  * `declare module`, is left as it is. Everything else in the text is left as it is too.
@@ -63,9 +65,10 @@ function portableSpecifier(file, bases) {
     return folderAboveBuildOutput(relative, 0) ?? relative
   }
   // Without a root there is no telling the checkout's own folders from build folders, so the nearest build folder wins.
+  // A build folder directly under the file system root has no folder above it, so it is named ".".
   const folders = file.split('/').slice(0, -1)
   const nearest = folders.findLastIndex((name) => BUILD_OUTPUT_DIRS.has(name))
-  return (nearest > 0 && folders[nearest - 1]) || path.posix.basename(file)
+  return nearest < 0 ? path.posix.basename(file) : folders[nearest - 1] || '.'
 }
 
 /**

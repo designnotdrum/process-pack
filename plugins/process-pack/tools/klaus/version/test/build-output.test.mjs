@@ -50,12 +50,15 @@ describe('a prop typed from a package\'s build output', () => {
     const head = builtTree('AvFrEbNh', '  edges: typeof alignment | null')
     const result = compare(base, head)
     assert.equal(result.changes.find((c) => c.kind === 'type widened' && c.where === 'edges').detail, '+ typeof import("packages/ui")')
+    assert.equal(result.level, 'minor')
     assert.doesNotMatch(JSON.stringify(result), /N1JdL0Og|AvFrEbNh|\/dist\//)
   })
 
   test('reads the same text when the build is the other way round', () => {
     const base = builtTree('AvFrEbNh', '  edges: null')
     const head = builtTree('N1JdL0Og', '  edges: typeof alignment | null')
-    assert.equal(compare(base, head).changes.find((c) => c.where === 'edges').detail, '+ typeof import("packages/ui")')
+    const result = compare(base, head)
+    assert.deepEqual(result.changes.map((c) => [c.kind, c.where, c.detail]), [['type widened', 'edges', '+ typeof import("packages/ui")']])
+    assert.doesNotMatch(JSON.stringify(result), /N1JdL0Og|AvFrEbNh|\/dist\//)
   })
 })
