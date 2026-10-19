@@ -15,6 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { UserError } from "../frame/errors.mjs";
+import { assertPlainPath, linksBelow, removePlainFile, writePlainFile } from "./safe-write.mjs";
 
 /** The tools/klaus folder this script sits in. */
 export const SOURCE_ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -84,6 +85,10 @@ export function versionLine(source = SOURCE_ROOT) {
  * holds a copy that was edited since, unless force is set. Files from an older
  * copy that the new one no longer has are removed.
  *
+ * Refuses, with or without force, when the folder or any folder on the way to it, or any
+ * file in it, is a symbolic link: a write through a link would change a file outside the repo.
+ * Every file is written to a temporary name in its own folder and then renamed into place.
+ *
  * @param {object} options
  * @param {string} options.repo
  * @param {string} [options.to]  Folder in the repo. Default scripts/klaus.
@@ -97,6 +102,12 @@ export function copyKlaus({ repo, to = "scripts/klaus", force = false, source = 
   const inside = path.relative(path.resolve(repo), destination);
   if (inside === "" || inside === ".." || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) {
     throw new UserError(`The folder ${to} is not inside the repo.`);
+  }
+
+  assertPlainPath(repo, destination);
+  const links = linksBelow(destination);
+  if (links.length > 0) {
+    throw new UserError(`${to} holds symbolic links (${links.slice(0, 3).join(", ")}${links.length > 3 ? ", ..." : ""}). Klaus will not write through them. Remove the links and run again.`);
   }
 
   const files = listFiles(source);
@@ -131,20 +142,18 @@ export function copyKlaus({ repo, to = "scripts/klaus", force = false, source = 
   }
   const removed = existing.filter((file) => file !== VERSION_FILE && !files.includes(file));
 
-  for (const file of removed) fs.rmSync(path.join(destination, file));
+  for (const file of removed) removePlainFile(repo, path.join(destination, file));
   // Folders the removal emptied go too, deepest first, so an old layout leaves nothing behind.
   const emptied = new Set(removed.map((file) => path.dirname(file)).filter((directory) => directory !== "."));
   for (const directory of [...emptied].sort((a, b) => b.length - a.length)) {
     let current = path.join(destination, directory);
     while (current !== destination && fs.existsSync(current) && fs.readdirSync(current).length === 0) {
+      assertPlainPath(repo, current);
       fs.rmdirSync(current);
       current = path.dirname(current);
     }
   }
-  for (const file of [...added, ...changed]) {
-    fs.mkdirSync(path.dirname(path.join(destination, file)), { recursive: true });
-    fs.copyFileSync(path.join(source, file), path.join(destination, file));
-  }
-  fs.writeFileSync(path.join(destination, VERSION_FILE), `${line}\n`);
+  for (const file of [...added, ...changed]) writePlainFile(repo, path.join(destination, file), fs.readFileSync(path.join(source, file)));
+  writePlainFile(repo, path.join(destination, VERSION_FILE), `${line}\n`);
   return { destination, line, previousLine, added, changed, removed, unchanged };
 }
