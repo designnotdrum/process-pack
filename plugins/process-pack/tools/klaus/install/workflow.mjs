@@ -161,7 +161,7 @@ export function requireTagRuleset({ repo, config, checkTags = checkRuleset }) {
   const found = checkTags({ repo, tagPattern });
   if (found.status === "protected") return found.ruleset;
   const why = found.status === "unknown" ? `The repo's rulesets could not be read (${found.reason}).` : `No active ruleset limits who can create or update tags matching ${tagPattern}.`;
-  throw new UserError(`${why} Release mode runs on a pushed tag, and a pushed tag runs the workflow file from the tagged commit, so only a tag ruleset protects the repo's secrets from a hostile tag. Create one with \`install.mjs ruleset --create\` after the person agrees, or set trigger.mode to "schedule" in klaus.config.json.`);
+  throw new UserError(`${why} Release mode runs on a pushed tag, and a pushed tag runs the workflow file from the tagged commit, so only a tag ruleset protects the repo's secrets from a hostile tag. Create one with \`install.mjs ruleset --repo <repo> --tag-pattern ${tagPattern} --create\` after the person agrees, or set trigger.mode to "schedule" in klaus.config.json.`);
 }
 
 /** Reads the config and the template, renders, writes, and lints. */
