@@ -37,6 +37,8 @@ test("a Button with icons comes out with no backslash, its SVG markup in templat
     walk(variant, (n) => n.name === "Icon" && icons.push(n));
     assert.equal(icons.length, 1, `${variant.name} has one Icon layer`);
     assert.equal(icons[0].visible, false, `${variant.name}'s Icon is hidden`);
+    // Figma gives the frame around an SVG a white fill. Left in, it shows as a white square behind the icon.
+    assert.deepEqual(icons[0].fills, [], `${variant.name}'s Icon frame has no fill`);
     assert.ok(variant.properties?.["Show icon"], `${variant.name} has the Show icon property`);
   }
 });

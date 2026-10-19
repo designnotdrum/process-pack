@@ -122,7 +122,8 @@ export function createFigma({ pages = ["Button"], fonts = { "DM Sans": ["Regular
     },
     createNodeFromSvg(svg) {
       if (typeof svg !== "string" || !svg.startsWith("<svg")) throw new Error("Not an SVG.");
-      const frame = onPage(new Node("FRAME", { name: "svg", width: 24, height: 24 }));
+      // Figma wraps the drawing in a frame with a white fill, whatever the markup says.
+      const frame = onPage(new Node("FRAME", { name: "svg", width: 24, height: 24, fills: [{ type: "SOLID", color: { r: 1, g: 1, b: 1 } }] }));
       frame.appendChild(new Node("VECTOR", { fills: [], strokes: [{ type: "SOLID", color: { r: 0, g: 0, b: 0 } }] }));
       return frame;
     },

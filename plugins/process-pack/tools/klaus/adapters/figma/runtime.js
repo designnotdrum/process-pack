@@ -179,6 +179,8 @@ function makeIcon(U, n, parent) {
   const svg = typeof U.svgs[n.s] === "number" ? SVGS[U.svgs[n.s]] : U.svgs[n.s];
   const icon = figma.createNodeFromSvg(svg);
   parent.appendChild(icon);
+  // Figma gives the frame around the drawing a white fill, which shows as a square behind the icon.
+  icon.fills = [];
   icon.name = n.n || "Icon";
   if (Math.abs(icon.width - n.w) > 0.5 || Math.abs(icon.height - n.h) > 0.5) icon.resize(Math.max(n.w, 1), Math.max(n.h, 1));
   if (n.c) {
