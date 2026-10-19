@@ -153,7 +153,7 @@ The left side of each picture is the one a "yes" would replace, the right side t
 
 `onboard/write-decisions.mjs --repo <dir> [--storybook <dir>] [--out <dir>] [--ask-all]` writes the decisions list, the tickets, the pictures and `duplicates.md`, with the run's own functions and no model. With `--out` the repo is only read. With `--ask-all` the pairs that are set aside are asked about too.
 
-The run's first pull request is meant to take its decisions, tickets and pictures from `decisionFiles` after `attachDecisionPictures` (both in `decisions-pictures.mjs`). Until the run calls them, `decisions.md` says "No picture: Klaus did not draw these two in this run."
+The run draws the pictures after it has the plan and before it makes the first pull request, and commits them in it, with the decisions list and the tickets (`onboard.mjs run --storybook <dir>` names the build). With no build, or no browser, the first pull request is still made, and each decision says why it has no picture. A later run that continues past a merged first pull request only needs `decisions.md` and the pictures to be there: they depend on a browser and a build, so they are not compared.
 
 The cut-offs (50% and 75%) are choices, not measurements, and every percentage is printed so a person can overrule them. Pixel comparison of real screenshots is a later improvement once the repo's visual check captures components.
 

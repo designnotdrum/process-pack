@@ -45,6 +45,12 @@ function replaces(state, step) {
   return [`It replaces ${which}, which an earlier run of this plan opened. The run closed ${old.length === 1 ? 'it' : 'them'} and made this branch again from the plan.`, '']
 }
 
+/** How many of the decisions have a picture, for the summary. */
+const pictureWords = (plan) => {
+  const drawn = [...(plan.decisionPictures?.values() ?? [])].filter((p) => p.file).length
+  return drawn > 0 ? `, and ${drawn} with a picture` : ''
+}
+
 /** What the list says when no pair is left: none were found, or every one found was set aside. */
 const noPairs = (duplicates, docsDir) => (duplicates.dismissed?.length > 0 ? `No pair needs a ticket or a question. ${duplicates.dismissed.length} ${duplicates.dismissed.length === 1 ? 'was' : 'were'} set aside as different components, and ${code(`${docsDir}/duplicates.md`)} lists ${duplicates.dismissed.length === 1 ? 'it' : 'them'} with the reason.` : 'None were found.')
 
@@ -61,7 +67,7 @@ export function listBody(state) {
     '- `inventory.json` and `INVENTORY.md` at the repo root.',
     `- ${code(`${state.docsDir}/duplicates.md`)} and ${code(`${state.docsDir}/duplicates.json`)}: the likely duplicate pairs and what was compared.`,
     `- ${code(`${state.docsDir}/tickets/`)}: ${estimate.duplicates.tickets} ticket${estimate.duplicates.tickets === 1 ? '' : 's'}, as files: ${estimate.duplicates.tickets - (estimate.duplicates.removals ?? 0)} to merge one copy into another and ${estimate.duplicates.removals ?? 0} to delete a copy that nothing uses. Nothing was filed in a tracker.`,
-    `- ${code(`${state.docsDir}/decisions.md`)}: ${estimate.duplicates.decisions} question${estimate.duplicates.decisions === 1 ? '' : 's'} for the owner, each with the default stated.`,
+    `- ${code(`${state.docsDir}/decisions.md`)}: ${estimate.duplicates.decisions} question${estimate.duplicates.decisions === 1 ? '' : 's'} for the owner, each with the default stated${pictureWords(plan)}.`,
     '',
     '## The list',
     '',

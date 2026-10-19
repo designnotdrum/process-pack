@@ -316,14 +316,15 @@ export async function attachDecisionPictures({ plan, storybookDir, open = openSt
  * the PNG as a Buffer, which the run writes as it writes any file.
  *
  * @param {{ pairs: object[], pictures?: Map<string, object>, docs: string }} options
- * @returns {{ rel: string, text: string | Buffer }[]}
+ * @returns {{ rel: string, text: string | Buffer, volatile?: boolean }[]}
  */
 export function decisionFiles({ pairs, pictures = new Map(), docs }) {
-  const files = [{ rel: `${docs}/decisions.md`, text: renderDecisions(pairs, pictures) }]
+  // The list and the pictures depend on a browser and a Storybook build, so a later run comparing with a merged copy only needs them to be there.
+  const files = [{ rel: `${docs}/decisions.md`, text: renderDecisions(pairs, pictures), volatile: true }]
   pairs.filter((p) => p.verdict === 'merge').forEach((pair, index) => files.push({ rel: `${docs}/tickets/${ticketFileName(pair, index + 1)}`, text: renderTicket(pair) }))
   for (const pair of decisionPairs(pairs)) {
     const picture = pictures.get(pair.id)
-    if (picture?.file && picture.bytes) files.push({ rel: `${docs}/${picture.file}`, text: picture.bytes })
+    if (picture?.file && picture.bytes) files.push({ rel: `${docs}/${picture.file}`, text: picture.bytes, volatile: true })
   }
   return files
 }

@@ -89,7 +89,8 @@ export function contentDifference({ repo, rel, expected, actual }) {
  * @param {string} options.repo The repo, on the default branch, with a clean tree.
  * @param {string} options.base The default branch's name, for the messages.
  * @param {string} options.docs The docs folder of the run's records.
- * @param {{ rel: string, text: string }[]} options.listFiles The first pull request's files, as the plan writes them.
+ * @param {{ rel: string, text: string, volatile?: boolean }[]} options.listFiles The first pull request's files, as the plan writes them.
+ *   A `volatile` file depends on a browser and a Storybook build, not on the plan, so it has only to be there.
  * @returns {{ start: number, merged: number[], refusal: string | null, note: string | null }}
  *   `start` is the first pull request to make: 1, 2 or 3, or 4 when all three are merged.
  */
@@ -109,7 +110,7 @@ export function findMerged({ repo, base, docs, listFiles }) {
   const problems = []
   for (const file of listFiles) {
     if (!has(file.rel)) problems.push(`${file.rel} is not there`)
-    else {
+    else if (!file.volatile) {
       const why = contentDifference({ repo, rel: file.rel, expected: file.text, actual: fs.readFileSync(path.join(repo, file.rel), 'utf8') })
       if (why) problems.push(`${file.rel}: ${why}`)
     }
