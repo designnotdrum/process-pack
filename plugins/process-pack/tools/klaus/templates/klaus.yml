@@ -92,7 +92,9 @@ jobs:
             exit 0
           fi
           mkdir -p .klaus
-          gh run download "$run_id" --name klaus-state --dir .klaus
+          if ! gh run download "$run_id" --name klaus-state --dir .klaus; then
+            echo "::warning::Could not download the klaus-state artifact of run $run_id. This run starts from the newest release."
+          fi
 
       # Klaus runs from a copy outside the working tree, because the next step
       # checks out older release tags, and a tag from before Klaus was installed
@@ -128,7 +130,8 @@ jobs:
             cp inventory.json "$prev"
           fi
 
-          # Releases in the order Klaus counts them: creation date, then version.
+          # Releases in the order Klaus counts them: creation date, then version for tags made
+          # together. Git makes the last --sort the main key.
           # Keep this in step with listReleases in install/costs.mjs and frame/cli.mjs.
           releases=$(git tag --list "$TAG_PATTERN" --sort=version:refname --sort=creatordate)
           if [ "$EVENT" = push ]; then target="$TAG"; else target=$(printf '%s\n' "$releases" | tail -n 1); fi

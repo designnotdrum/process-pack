@@ -20,7 +20,10 @@ import { UserError } from "../frame/errors.mjs";
 export const SOURCE_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 const SKIP_DIRECTORIES = new Set(["test", "tests", "fixtures", "node_modules", "install", "templates"]);
-const SKIP_FILES = new Set(["package.json", "pnpm-lock.yaml", ".gitignore", ".DS_Store"]);
+const SKIP_FILES = new Set(["package.json", "pnpm-lock.yaml", ".gitignore"]);
+
+/** A macOS folder note. It is never copied and never counts as an edit, in the source or the copy. */
+const IGNORED = ".DS_Store";
 
 /** Not VERSION: on a case-insensitive disk (macOS) that name is also the version/ folder. */
 export const VERSION_FILE = "VERSION.txt";
@@ -37,7 +40,7 @@ export function listFiles(root, { filter = true } = {}) {
       const relative = directory === "" ? entry.name : `${directory}/${entry.name}`;
       if (entry.isDirectory()) {
         if (!filter || !SKIP_DIRECTORIES.has(entry.name)) walk(relative);
-      } else if (entry.isFile()) {
+      } else if (entry.isFile() && entry.name !== IGNORED) {
         if (!filter || !(SKIP_FILES.has(entry.name) || entry.name.endsWith(".test.mjs"))) found.push(relative);
       }
     }
@@ -54,11 +57,16 @@ export function hashFiles(root, files) {
 }
 
 function jsonField(file, field) {
+  let value;
   try {
-    return JSON.parse(fs.readFileSync(file, "utf8"))[field] ?? "unknown";
+    value = JSON.parse(fs.readFileSync(file, "utf8"))[field];
   } catch {
-    return "unknown";
+    value = undefined;
   }
+  if (typeof value !== "string" || value === "") {
+    throw new UserError(`Could not read "${field}" from ${file}. The version line records where a copy came from, so run this from process-pack's plugin folder.`);
+  }
+  return value;
 }
 
 /** The version line for a source folder. */

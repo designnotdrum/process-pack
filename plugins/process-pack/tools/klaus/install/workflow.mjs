@@ -115,7 +115,7 @@ export function renderWorkflow({ template, config, install, installSteps, corepa
     const value = VALUE.exec(line);
     if (value) {
       const [, before, after, name] = value;
-      if (!(name in values)) throw new Error(`The template asks for the value "${name}", which this renderer does not know.`);
+      if (!Object.hasOwn(values, name)) throw new Error(`The template asks for the value "${name}", which this renderer does not know.`);
       out.push(`${before}${JSON.stringify(values[name])}${after}`.trimEnd());
       continue;
     }

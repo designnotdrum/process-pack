@@ -18,8 +18,11 @@ import { normalizePlan } from "../frame/adapter.mjs";
 import { applyCap, indexEstimate } from "../frame/cap.mjs";
 import { listComponents, usageCount } from "../frame/components.mjs";
 import { resolveConfig } from "../frame/config.mjs";
+import { UserError } from "../frame/errors.mjs";
 import { readJsonFile } from "../frame/json-file.mjs";
 import { SOURCE_ROOT } from "./copy.mjs";
+
+let running = false;
 
 /** The outputs the settings file knows, in the order onboarding walks them. */
 export const OUTPUTS = Object.freeze(["storybook", "figma", "penpot", "pencil"]);
@@ -65,7 +68,9 @@ export async function estimateOutputs({ repo, config: configFile, inventory: inv
   const results = [];
 
   // The adapters read the repo from the working directory, as they do in a run. That makes this
-  // function unsafe to call twice at once in one process. The command line calls it once.
+  // function unsafe to call twice at once in one process, so a second call is refused.
+  if (running) throw new UserError("The cost estimate is already running in this process.");
+  running = true;
   const here = process.cwd();
   process.chdir(repo);
   try {
@@ -114,6 +119,7 @@ export async function estimateOutputs({ repo, config: configFile, inventory: inv
     }
   } finally {
     process.chdir(here);
+    running = false;
   }
   return results;
 }

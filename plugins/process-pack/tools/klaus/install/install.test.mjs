@@ -81,6 +81,15 @@ test("copy a second time changes nothing, and refuses to overwrite an edited cop
   assert.deepEqual(forced.changed, ["frame/cli.mjs"]);
 });
 
+test("a .DS_Store in the copy is not an edit, and is never copied", () => {
+  const repo = tempDir();
+  copyKlaus({ repo });
+  write(path.join(repo, "scripts/klaus/frame/.DS_Store"), "finder");
+  const again = copyKlaus({ repo });
+  assert.deepEqual([again.added, again.changed, again.removed], [[], [], []]);
+  assert.equal(listFiles(SOURCE_ROOT).some((file) => file.endsWith(".DS_Store")), false);
+});
+
 test("copy removes a file the new copy no longer has, and refuses a folder it did not make", () => {
   const repo = tempDir();
   copyKlaus({ repo });
@@ -104,7 +113,11 @@ test("copy removes a file the new copy no longer has, and refuses a folder it di
 test("the installed copy runs: the config check passes on a valid file and fails on a secret", () => {
   const repo = sampleRepo();
   copyKlaus({ repo });
-  const run = () => spawnSync(process.execPath, ["scripts/klaus/frame/cli.mjs", "validate"], { cwd: repo, encoding: "utf8" });
+  const run = () => {
+    const result = spawnSync(process.execPath, ["scripts/klaus/frame/cli.mjs", "validate"], { cwd: repo, encoding: "utf8" });
+    assert.equal(result.error, undefined, `could not start the installed copy: ${result.error}`);
+    return result;
+  };
   assert.equal(run().status, 0);
   write(path.join(repo, "klaus.config.json"), JSON.stringify({ outputs: { storybook: { enabled: true, target: ["gh", "p_", "a1B2c3D4".repeat(5)].join("") } } }));
   assert.equal(run().status, 2);
@@ -232,6 +245,7 @@ test("a written workflow passes actionlint when it is installed", (t) => {
   const repo = sampleRepo();
   const result = writeWorkflow({ repo, install: "pnpm install --frozen-lockfile", storybookBuild: "pnpm build-storybook -o storybook-static" });
   assert.equal(result.destination, path.join(repo, ".github/workflows/klaus.yml"));
+  assert.ok(readFileSync(result.destination, "utf8").length > 0, "the workflow was written");
   if (result.lint.tool !== "actionlint") t.skip(`actionlint is not installed (${result.lint.tool} ran instead)`);
   assert.equal(result.lint.ok, true, result.lint.message);
   assert.equal(lintWorkflow(result.destination).ok, true);
