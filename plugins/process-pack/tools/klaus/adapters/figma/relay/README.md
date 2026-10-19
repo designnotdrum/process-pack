@@ -1,6 +1,6 @@
 # Klaus Figma relay
 
-The Figma generator (`../`) writes Plugin API code and makes no Figma call. Figma's MCP server refuses a plain script, so the relay sends each code file through a signed-in Codex CLI. Codex calls `use_figma` once per file with the file's code unchanged. It makes no design decisions.
+The Figma generator (`../`) writes data for Plugin API code and makes no Figma call. Figma's MCP server refuses a plain script, so the relay builds each call's code from that data and sends it through a signed-in Codex CLI. Codex calls `use_figma` once per data file with the code unchanged. It makes no design decisions.
 
 The relay carries the small updates after each release: one component version per call, by default. The first, large load of a repo's components goes through a Klaus Figma plugin instead (a separate ticket), because a relay call costs about 70,000 to 100,000 relay tokens.
 
@@ -37,7 +37,9 @@ For Meridian, the Fedora box runs it, because it is always on and keeps one Figm
    codex mcp list
    ```
 
-The sign-in lives in that machine's Codex home (`~/.codex`). Nothing goes into `klaus.config.json`.
+The sign-in lives in that machine's Codex home (`~/.codex`). Nothing about it goes into `klaus.config.json`.
+
+The relay also needs the repo's `klaus.config.json`, because the Figma file it writes comes from `outputs.figma.target` there and nowhere else.
 
 ## Running it
 
@@ -47,7 +49,13 @@ From the repo root, after the generator has written a release folder:
 node scripts/klaus/adapters/figma/relay/relay.mjs .klaus/figma/v1.4.0
 ```
 
-Or straight from a CI run's artifact. `gh` downloads it into a new temporary folder, which is removed after the run:
+Or straight from a CI run's artifact. `gh` downloads it into a new temporary folder, which is removed after the run. The relay first checks the run with `gh api`, and downloads nothing unless all of these hold:
+
+- The run is of the Klaus workflow, `.github/workflows/klaus.yml`.
+- It succeeded.
+- Its commit is on the default branch. Either its head branch is the default branch, or, for a run a release tag started, the commit is in the default branch's history.
+
+A local folder is trusted as the operator's own.
 
 ```sh
 node scripts/klaus/adapters/figma/relay/relay.mjs --run 1234567890 --repo acme/app --artifact klaus-figma
@@ -57,17 +65,22 @@ node scripts/klaus/adapters/figma/relay/relay.mjs --run 1234567890 --repo acme/a
 
 ## What a run does
 
-1. Checks that Codex has a `figma` server that is signed in. If not, it stops before any call.
-2. Reads `manifest.json` and the ledger, `.klaus/figma/ledger.json` (or `outputs.figma.options.outputDir`).
-3. For each code file in order, skips it when every unit in it is already sent. Otherwise it checks the spending cap, then runs `codex exec` once:
+1. Reads `manifest.json`. If it names another Figma file than `klaus.config.json`, the run stops.
+2. Reads every data file with `../data-file.mjs`, before any call. A file that is not JSON, is not the generator's shape, writes to a variable collection or page the settings do not name, or does not match the manifest stops the run, and nothing is sent.
+3. Builds each call's code from its data file and the runtime in this checkout (`../codegen.mjs` `codeFor`). Code in the artifact is never read.
+4. Checks that Codex has a `figma` server that is signed in. If not, it stops before any call.
+5. Reads the ledger, `.klaus/figma/ledger.json` (or `outputs.figma.options.outputDir`).
+6. For each data file in order, skips it when every unit in it is already sent. Otherwise it checks the spending cap, then runs `codex exec` once:
    - The code goes to Codex on stdin, byte for byte. The prompt holds no code. It tells Codex to call `use_figma` exactly once with that code, report the result, and do nothing else.
    - Codex runs with a clean config: only the `figma` server, only its `use_figma` tool, no plugins, no hooks, a read-only sandbox, in an empty folder. `--keep-codex-config` uses `~/.codex/config.toml` instead.
    - The default model is `gpt-5.6-terra` at low effort. It copied the code exactly where `gpt-6-luna` did not (see "What the real runs measured" below). `--model` and `--effort` change it.
-4. Reads Codex's JSON events. A unit is marked `sent` in the ledger only when all of these hold:
-   - `use_figma` finished without an error.
-   - The code it received, by Codex's own events, is the file's code. Whitespace at either end is ignored.
+7. Reads Codex's JSON events. A unit is marked `sent` in the ledger only when all of these hold:
+   - `use_figma` finished without an error, on the settings' Figma file.
+   - The code it received, by Codex's own events, is the code the relay built. Whitespace at either end is ignored.
    - The code's own result lists the unit as `written` or `exists`.
-5. Writes a run report to `.klaus/reports/` in the frame's format, with the output name `figma-relay`.
+8. Writes a run report to `.klaus/reports/` in the frame's format, with the output name `figma-relay`.
+
+The pages the code touches are in the generator's README, under "Which pages it touches".
 
 A unit that failed stays `generated`. The next relay run on the same folder sends its file again, and the next generator run plans it again. Sending a file twice is safe: the code leaves a set that already exists alone and reports it as `exists`.
 
@@ -85,7 +98,7 @@ A call's relay tokens are Codex's `input_tokens` plus `output_tokens`. Cached in
 
 ## What the real runs measured
 
-On 2026-10-18 the relay ran four times on the laptop, at low effort, into the Klaus prototype file. Each code file held one component version.
+On 2026-10-18 the relay ran four times on the laptop, at low effort, into the Klaus prototype file. Each code file held one component version. These runs were before the relay built the code itself; the artifact then held the code, generated by the same codegen.
 
 | Call | Code file (calls 1 to 3 on `gpt-6-luna`) | Characters | Relay tokens (input, cached input, output) | Seconds | Outcome |
 |---|---|---|---|---|---|
@@ -104,7 +117,7 @@ What follows from it:
 
 Next to the frame's fields (`written`, `deferred`, `failed`, `estimated`, `actual`), `adapter.details` lists:
 
-- `files`: each code file with its status (`sent`, `partly sent`, `failed`, `deferred`, `already sent`, `would send`), calls, tokens, Codex's token usage, predicted tokens and time taken.
+- `files`: each data file with its status (`sent`, `partly sent`, `failed`, `deferred`, `already sent`, `would send`), calls, tokens, Codex's token usage, predicted tokens and time taken.
 - `units`: each unit with its status, what Figma reported, and its share of its file's call and tokens. A file's call is shared evenly among its units.
 
 Exit code 1 means a unit failed. Exit code 2 means something to fix before a run, such as the Figma sign-in.
@@ -123,4 +136,4 @@ Exit code 1 means a unit failed. Exit code 2 means something to fix before a run
 node --test "plugins/process-pack/tools/klaus/adapters/figma/relay/**/*.test.mjs"
 ```
 
-The tests put a stub `codex` and a stub `gh` first on `PATH` (`tests/stub/`). The stub replays the event output in `tests/fixtures/`. `success.jsonl` is the event stream of real call 1, with the code, file key and result replaced by placeholders. The stub also covers a tool error, a crash, a reply with no call, and code changed on the way. The no-call and crash fixtures follow Codex's documented event shapes, because no real run has produced them.
+The tests put a stub `codex` and a stub `gh` first on `PATH` (`tests/stub/`). The stub `gh` answers the run, repo and compare reads and the download. The stub `codex` keeps what it was given, so a test can check the code that would have reached Figma. The stub replays the event output in `tests/fixtures/`. `success.jsonl` is the event stream of real call 1, with the code, file key and result replaced by placeholders. The stub also covers a tool error, a crash, a reply with no call, and code changed on the way. The no-call and crash fixtures follow Codex's documented event shapes, because no real run has produced them.

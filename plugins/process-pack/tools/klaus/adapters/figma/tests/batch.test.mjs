@@ -1,4 +1,4 @@
-/** Packing units into code files of at most 50,000 characters. */
+/** Packing units into data files whose code is at most 50,000 characters. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { packUnits } from "../batch.mjs";
@@ -13,7 +13,7 @@ test("components go about ten to a file", () => {
   const units = Array.from({ length: 25 }, (_, i) => tinyUnit(`C${i}`));
   const { files, tooLarge } = packUnits(units, { config: CONFIG });
   assert.deepEqual(files.map((f) => f.units.length), [10, 10, 5]);
-  assert.deepEqual(files.map((f) => f.name), ["figma-001.js", "figma-002.js", "figma-003.js"]);
+  assert.deepEqual(files.map((f) => f.name), ["figma-001.json", "figma-002.json", "figma-003.json"]);
   assert.equal(tooLarge.length, 0);
 });
 

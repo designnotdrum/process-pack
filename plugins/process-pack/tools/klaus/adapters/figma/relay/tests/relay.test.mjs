@@ -1,11 +1,19 @@
 /** The relay, run as a command against a stub codex that replays recorded event output. */
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
+import { codeFor } from "../../codegen.mjs";
+import { readData } from "../../data-file.mjs";
 import { CALL_BASE_TOKENS } from "../../settings.mjs";
 import { DEFAULT_MODEL, predictTokens } from "../relay.mjs";
 import { generatedRepo, KEY, ledgerOf, outputOf, relay } from "./helpers.mjs";
+
+/** The code the relay builds for a data file: its data and the runtime in this checkout. */
+const builtCode = (folder, name) => codeFor(readData(readFileSync(path.join(folder, name), "utf8")));
+
+/** Text padded with a comment to exactly length characters. */
+const padTo = (text, length) => `${text}//${"x".repeat(length - text.length - 2)}`;
 
 // The recorded success call's usage: 86,388 input and 6,274 output tokens.
 const SUCCESS_TOKENS = 92662;
@@ -53,8 +61,8 @@ test("the code reaches Codex unchanged on stdin, and the prompt carries no code"
   const run = await relay(root, [folder]);
 
   assert.equal(run.calls.length, 1);
-  const file = readFileSync(path.join(folder, manifest.files[0].name));
-  assert.ok(run.calls[0].stdin.equals(file), "stdin is the code file, byte for byte");
+  const built = Buffer.from(builtCode(folder, manifest.files[0].name), "utf8");
+  assert.ok(run.calls[0].stdin.equals(built), "stdin is the code the relay built from the data, byte for byte");
 
   const { args } = run.calls[0];
   const prompt = args.at(-1);
@@ -191,7 +199,7 @@ test("the token cap stops before the call that would pass it, and defers the res
   const output = outputOf(run.report);
   assert.deepEqual(output.written, ["Button"]);
   assert.deepEqual(output.deferred, [{ id: "Card", kind: "component", reason: "token-cap" }, { id: "Badge", kind: "component", reason: "token-cap" }]);
-  assert.deepEqual(output.adapter.details.files.map((f) => [f.name, f.status]), [["figma-001.js", "sent"], ["figma-002.js", "deferred"], ["figma-003.js", "deferred"]]);
+  assert.deepEqual(output.adapter.details.files.map((f) => [f.name, f.status]), [["figma-001.json", "sent"], ["figma-002.json", "deferred"], ["figma-003.json", "deferred"]]);
   assert.ok(output.warnings.some((w) => /stopped before a call that would pass the token-cap/.test(w)));
   assert.equal(ledgerOf(root).components.Card["1.0.0"], "generated", "a deferred unit stays unsent for the next run");
 });
@@ -242,26 +250,106 @@ test("Codex not signed in to Figma stops the run before any call", async () => {
   assert.match(missing.stderr, /codex mcp add figma --url https:\/\/mcp\.figma\.com\/mcp/);
 });
 
-test("--run downloads the CI artifact with gh and relays the release in it", async () => {
+test("--run checks the run with gh, then downloads its artifact and relays the release in it", async () => {
   const { root, folder } = await generatedRepo({ perFile: 10 });
   const run = await relay(root, ["--run", "123456", "--repo", "acme/app"], { ghSource: path.dirname(folder) });
 
   assert.equal(run.code, 0, run.stderr);
-  assert.deepEqual(run.gh.slice(0, 7), ["run", "download", "123456", "--name", "klaus-figma", "--dir", run.gh[6]]);
-  assert.deepEqual(run.gh.slice(7), ["--repo", "acme/app"]);
+  assert.deepEqual(run.gh.slice(0, 2), [["api", "repos/acme/app/actions/runs/123456"], ["api", "repos/acme/app"]], "the run is checked before anything is downloaded");
+  const download = run.gh.find((call) => call[0] === "run");
+  assert.deepEqual(download.slice(0, 7), ["run", "download", "123456", "--name", "klaus-figma", "--dir", download[6]]);
+  assert.deepEqual(download.slice(7), ["--repo", "acme/app"]);
   assert.deepEqual(outputOf(run.report).written, ["Button", "Card"]);
   // The ledger is the repo's, not the downloaded copy's.
   assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "sent" }, Card: { "1.0.0": "sent" } });
-  assert.equal(existsSync(run.gh[6]), false, "the downloaded artifact is removed after the run");
+  assert.equal(existsSync(download[6]), false, "the downloaded artifact is removed after the run");
   assert.equal(outputOf(run.report).adapter.details.folder, "the klaus-figma artifact of run 123456");
 });
 
-test("a code file that changed after it was generated is not sent", async () => {
+test("an equal-length payload in the artifact is never sent: the relay builds the code from data", async () => {
   const { root, folder, manifest } = await generatedRepo({ perFile: 10 });
-  writeFileSync(path.join(folder, manifest.files[0].name), "figma.closePlugin();\n");
+  const name = manifest.files[0].name;
+  const built = builtCode(folder, name);
+  // What an attacker would put in the artifact: code the same length as the call, that deletes pages.
+  const payload = padTo("figma.root.children.forEach(function (p) { p.remove(); });", built.length);
+  assert.equal(payload.length, built.length);
+  writeFileSync(path.join(folder, "figma-001.js"), payload);
+
   const run = await relay(root, [folder]);
+  assert.equal(run.code, 0, run.stderr);
+  assert.equal(run.calls.length, 1);
+  assert.ok(run.calls[0].stdin.equals(Buffer.from(built, "utf8")), "the stub was given the code the relay built");
+  assert.ok(!run.calls[0].stdin.toString().includes("p.remove()"), "the payload never reached Codex");
+});
+
+test("a data file replaced by code of the same length is refused before any call", async () => {
+  const { root, folder, manifest } = await generatedRepo({ perFile: 10 });
+  const name = manifest.files[0].name;
+  const length = readFileSync(path.join(folder, name), "utf8").length;
+  writeFileSync(path.join(folder, name), padTo("figma.root.children.forEach(function (p) { p.remove(); });", length));
+  const run = await relay(root, [folder]);
+  assert.equal(run.code, 2);
   assert.equal(run.calls.length, 0);
-  assert.match(outputOf(run.report).failed[0].error, /changed after it was generated/);
+  assert.match(run.stderr, /figma-001\.json is refused, so nothing was sent: figma-001\.json is not JSON\./);
+});
+
+test("data that is not the generator's shape is refused before any call", async () => {
+  const cases = [
+    ["a unit of an unknown kind", (d) => { d.units[0].kind = "script"; }, /units\[0\]\.kind must be one of/],
+    ["a header that would end the comment line", (d) => { d.header = "x\nfigma.root.children[0].remove();"; }, /header must be one line of printable ASCII/],
+    ["a key the generator does not write", (d) => { d.units[0].code = "figma.closePlugin()"; }, /has a key the generator does not write: "code"/],
+    ["a node index that points nowhere", (d) => { d.units[0].cells[0][1][0] = 99999; }, /must be a whole number from 0 to/],
+    ["a page the settings do not name", (d) => { d.units[0].page = "Cover"; }, /writes to the page "Cover", but the settings put it on "Button"/],
+    ["another variable collection", (d) => { d.config.collection = "Brand colours"; }, /writes to the variable collection "Brand colours"/],
+    ["earlier versions moved to another page", (d) => { d.units[0].older = "Cover"; }, /moves earlier versions to "Cover"/],
+  ];
+  for (const [what, change, message] of cases) {
+    const { root, folder, manifest } = await generatedRepo({ perFile: 10 });
+    const file = path.join(folder, manifest.files[0].name);
+    const data = JSON.parse(readFileSync(file, "utf8"));
+    change(data);
+    writeFileSync(file, JSON.stringify(data));
+    const run = await relay(root, [folder]);
+    assert.equal(run.code, 2, what);
+    assert.equal(run.calls.length, 0, `${what}: no call`);
+    assert.match(run.stderr, message, what);
+  }
+});
+
+test("the Figma file comes from the settings: a manifest naming another file is refused", async () => {
+  const { root, folder, manifest } = await generatedRepo();
+  writeFileSync(path.join(folder, "manifest.json"), JSON.stringify({ ...manifest, fileKey: "SomeOtherFigmaFileKey000" }));
+  const run = await relay(root, [folder]);
+  assert.equal(run.code, 2);
+  assert.equal(run.calls.length, 0);
+  assert.match(run.stderr, new RegExp(`The manifest is for Figma file "SomeOtherFigmaFileKey000", but klaus.config.json names ${KEY}`));
+
+  rmSync(path.join(root, "klaus.config.json"));
+  const unset = await relay(root, [folder]);
+  assert.equal(unset.code, 2);
+  assert.match(unset.stderr, /The relay needs the repo's klaus.config.json, which names the Figma file to write/);
+});
+
+test("--run refuses a run from another workflow, a run that failed, and a run off the default branch", async () => {
+  const { root, folder } = await generatedRepo({ perFile: 10 });
+  const good = { path: ".github/workflows/klaus.yml", status: "completed", conclusion: "success", head_branch: "main", head_sha: "b".repeat(40) };
+  const cases = [
+    ["another workflow", { ...good, path: ".github/workflows/ci.yml" }, "diverged", /is from "\.github\/workflows\/ci\.yml", not the Klaus workflow/],
+    ["a failed run", { ...good, conclusion: "failure" }, "diverged", /did not succeed \(failure\)/],
+    ["another branch", { ...good, head_branch: "feature" }, "diverged", /ran on "feature", at a commit that is not on main/],
+  ];
+  for (const [what, ghRun, ghCompare, message] of cases) {
+    const run = await relay(root, ["--run", "42"], { ghSource: path.dirname(folder), ghRun, ghCompare });
+    assert.equal(run.code, 2, what);
+    assert.match(run.stderr, message, what);
+    assert.equal(run.gh.some((call) => call[0] === "run"), false, `${what}: nothing is downloaded`);
+    assert.equal(run.calls.length, 0, `${what}: no call`);
+  }
+
+  // A release run starts from a tag, so its head branch is the tag. Its commit is on main.
+  const tagged = await relay(root, ["--run", "43"], { ghSource: path.dirname(folder), ghRun: { ...good, head_branch: "v1.4.0" }, ghCompare: "behind" });
+  assert.equal(tagged.code, 0, tagged.stderr);
+  assert.ok(tagged.gh.some((call) => call[0] === "api" && call[1] === `repos/{owner}/{repo}/compare/main...${"b".repeat(40)}`));
 });
 
 test("a manifest from before the relay is refused with what to do", async () => {

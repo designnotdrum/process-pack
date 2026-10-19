@@ -42,23 +42,41 @@ export function mergeTokens(units) {
   return { tokens: [...merged.values()].map((t) => ({ ...t, scopes: [...t.scopes] })), maps };
 }
 
+/** The data file format's version. data-file.mjs reads this format. */
+export const DATA_FILE_VERSION = 1;
+
 /**
- * The code for one file.
+ * The data of one call: what a data file holds. It is plain JSON and holds no code.
  *
  * @param {object} args
  * @param {object[]} args.units     Units from spec.mjs, or retention units.
  * @param {{ collection: string, mode: string }} args.config
  * @param {string} args.header      One line that says which file this is.
  */
-export function renderFile({ units, config, header }) {
+export function dataFor({ units, config, header }) {
   const { tokens, maps } = mergeTokens(units);
   const body = units.map(({ tokens: _tokens, warnings: _warnings, ...unit }, i) => ({ ...unit, tk: maps[i] }));
+  return { version: DATA_FILE_VERSION, header, config, tokens, units: body };
+}
+
+/**
+ * The code of one call: the data as three constants, then the runtime from this checkout. Every
+ * value is written as JSON, and the header must be one line of printable ASCII (data-file.mjs
+ * checks it), so no part of the data can become code.
+ */
+export function codeFor(data) {
+  if (!/^[\x20-\x7e]*$/.test(data.header)) throw new Error("A file header must be one line of printable ASCII.");
   return [
-    `// ${header}`,
-    `const CONFIG = ${asciiJson(config)};`,
-    `const TOKENS = ${asciiJson(tokens)};`,
-    `const UNITS = ${asciiJson(body)};`,
+    `// ${data.header}`,
+    `const CONFIG = ${asciiJson(data.config)};`,
+    `const TOKENS = ${asciiJson(data.tokens)};`,
+    `const UNITS = ${asciiJson(data.units)};`,
     RUNTIME_CODE,
     "",
   ].join("\n");
+}
+
+/** The code for one file of units. */
+export function renderFile(args) {
+  return codeFor(dataFor(args));
 }

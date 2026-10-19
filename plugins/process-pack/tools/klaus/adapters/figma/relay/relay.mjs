@@ -1,22 +1,30 @@
 #!/usr/bin/env node
 /**
- * The Figma relay: sends the generator's code files to Figma through a
- * signed-in Codex CLI, because Figma's MCP server refuses a plain script.
+ * The Figma relay: writes the generator's data to Figma through a signed-in
+ * Codex CLI, because Figma's MCP server refuses a plain script.
  *
  *   node relay.mjs <folder> [options]
  *   node relay.mjs --run <id> [--repo <owner/name>] [--artifact <name>] [--release <release>] [options]
  *
  * <folder> is a release folder the generator wrote, `.klaus/figma/<release>/`,
- * holding manifest.json and figma-001.js, figma-002.js, ... `--run` downloads
- * the CI artifact that holds one with `gh run download`.
+ * holding manifest.json and the data files figma-001.json, figma-002.json, ...
+ * `--run` downloads the CI artifact that holds one with `gh run download`, and
+ * only from a successful run of the Klaus workflow at a commit on the default
+ * branch. A local folder is trusted as the operator's own.
  *
- * For each code file, in the manifest's order, the relay runs `codex exec`
- * once. The prompt tells Codex to call use_figma exactly once with the file's
- * code and to report the result, and nothing else. The code goes to Codex on
- * stdin, byte for byte. The relay reads Codex's JSON events, checks that the
- * code use_figma received is the file's code, and records a unit as sent in
- * the ledger only when the code's own result says it was written or was
- * already there. A unit that failed stays generated, so the next run retries it.
+ * The artifact supplies data, never code. Before any call the relay reads every
+ * data file with data-file.mjs, refuses one that is not the generator's shape
+ * or writes anywhere the repo's settings do not name, and builds each call's
+ * code from the data and the runtime in this checkout. The Figma file is the
+ * one klaus.config.json names; a manifest naming another file is refused.
+ *
+ * For each data file, in the manifest's order, the relay runs `codex exec`
+ * once. The prompt tells Codex to call use_figma exactly once with the code and
+ * to report the result, and nothing else. The code goes to Codex on stdin,
+ * byte for byte. The relay reads Codex's JSON events, checks that the code
+ * use_figma received is the code it built, and records a unit as sent in the
+ * ledger only when the code's own result says it was written or was already
+ * there. A unit that failed stays generated, so the next run retries it.
  *
  * Before each call the relay checks the spending cap in klaus.config.json
  * (component writes and relay tokens) and, when given, --max-calls. A call
@@ -25,15 +33,14 @@
  *
  * Options:
  *   --root <dir>           The repo. klaus.config.json, the ledger and the reports are under it. Default: here.
- *   --config <file>        Default klaus.config.json. Without one, the frame's default cap applies.
+ *   --config <file>        Default klaus.config.json. It must name the Figma file (outputs.figma.target).
  *   --ledger <file>        Default <outputDir>/ledger.json, as the generator keeps it.
  *   --report-dir <dir>     Default .klaus/reports.
- *   --file-key <key>       Write to this Figma file instead of the manifest's.
  *   --model <id>           The relaying model. Default gpt-5.6-terra.
  *   --effort <level>       Its reasoning effort. Default low.
  *   --max-calls <n>        Make at most n calls in this run.
  *   --timeout <seconds>    For one call. Default 600.
- *   --events-dir <dir>     Keep each call's Codex events, one .jsonl per code file.
+ *   --events-dir <dir>     Keep each call's Codex events, one .jsonl per data file.
  *   --keep-codex-config    Run Codex with ~/.codex/config.toml as it is. By default the relay ignores
  *                          it and gives Codex the figma server alone, so no other server, plugin or
  *                          hook adds to the tokens.
@@ -53,13 +60,15 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { DEFAULT_SPENDING_CAP, loadConfig } from "../../../frame/config.mjs";
+import { loadConfig } from "../../../frame/config.mjs";
 import { UserError } from "../../../frame/errors.mjs";
 import { readJsonFile, writeJsonFile } from "../../../frame/json-file.mjs";
 import { buildReport, writeReport } from "../../../frame/report.mjs";
-import { MANIFEST_VERSION } from "../index.mjs";
+import { codeFor } from "../codegen.mjs";
+import { checkTargets, DataError, readData } from "../data-file.mjs";
+import { fileKeyOf, MANIFEST_VERSION } from "../index.mjs";
 import { CHANGED, entrySent, entryStatus, readLedger, recordEntry, SENT } from "../ledger.mjs";
-import { DEFAULT_OPTIONS, readOptions, relayCallTokens } from "../settings.mjs";
+import { MAX_CODE_CHARS, readOptions, relayCallTokens } from "../settings.mjs";
 import { FIGMA_SERVER, FIGMA_TOOL, parseEvents, readCodeResult, relayTokens, resultText, summarizeEvents } from "./events.mjs";
 
 /**
@@ -79,7 +88,10 @@ const MCP_LIST_TIMEOUT_MS = 30000;
 /** The output name in the run report, so a relay run is not counted as another generator run. */
 export const REPORT_OUTPUT = "figma-relay";
 
-const FILE_NAME = /^figma-\d{3,}\.js$/;
+const FILE_NAME = /^figma-\d{3,}\.json$/;
+
+/** Where design-onboard installs the Klaus workflow. A run of any other workflow is not trusted. */
+export const KLAUS_WORKFLOW = ".github/workflows/klaus.yml";
 const FILE_KEY = /^[0-9A-Za-z]{22,128}$/;
 const MODEL = /^[A-Za-z0-9._-]{1,100}$/;
 const EFFORT = /^[a-z]{1,20}$/;
@@ -123,18 +135,23 @@ export function codexArgs({ model, effort, workdir, figmaUrl, keepCodexConfig, p
   return args;
 }
 
+/**
+ * The repo's own Klaus settings: the cap, the Figma adapter's options, and the Figma file. The
+ * file comes from here only, never from an artifact.
+ */
 function readSettings(root, configOption) {
   const file = path.resolve(root, configOption ?? "klaus.config.json");
-  if (!existsSync(file)) {
-    if (configOption) throw new UserError(`Config ${file} does not exist.`);
-    return { cap: { ...DEFAULT_SPENDING_CAP }, outputDir: DEFAULT_OPTIONS.outputDir };
-  }
+  if (!existsSync(file)) throw new UserError(`The relay needs the repo's ${path.basename(file)}, which names the Figma file to write. ${file} does not exist.`);
   const config = loadConfig(file);
+  let options;
   try {
-    return { cap: config.spendingCap, outputDir: readOptions(config.outputs.figma ?? {}).outputDir };
+    options = readOptions(config.outputs.figma ?? {});
   } catch (error) {
     throw new UserError(error.message);
   }
+  const fileKey = fileKeyOf(config.outputs.figma?.target);
+  if (!fileKey) throw new UserError(`${file} does not name a Figma file. Set outputs.figma.target to the file's key or URL.`);
+  return { cap: config.spendingCap, options, outputDir: options.outputDir, fileKey };
 }
 
 function readManifest(folder) {
@@ -147,7 +164,7 @@ function readManifest(folder) {
   if (!Array.isArray(manifest.files)) throw new UserError(`${file} has no files list.`);
   const entries = manifest.ledgerEntries ?? {};
   for (const entry of manifest.files) {
-    if (!FILE_NAME.test(entry?.name ?? "")) throw new UserError(`${file} names a code file ${JSON.stringify(entry?.name)}, which is not a name the generator writes.`);
+    if (!FILE_NAME.test(entry?.name ?? "")) throw new UserError(`${file} names a data file ${JSON.stringify(entry?.name)}, which is not a name the generator writes.`);
     if (!Array.isArray(entry.units) || entry.units.length === 0) throw new UserError(`${file} lists ${entry.name} without its units.`);
     if (!Number.isInteger(entry.chars) || entry.chars < 0) throw new UserError(`${file} lists ${entry.name} without its character count.`);
     for (const id of entry.units) {
@@ -186,8 +203,45 @@ function findReleaseFolder(dir, release) {
   throw new UserError(`The artifact holds ${folders.length} releases (${releases.map((r) => r.release).join(", ")}). Pick one with --release.`);
 }
 
-function downloadArtifact({ gh, run, repo, artifact }) {
+/** Reads a GitHub API path with gh, as JSON. */
+function ghApi(gh, apiPath, cwd) {
+  try {
+    return JSON.parse(execFileSync(gh, ["api", apiPath], { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", timeout: MCP_LIST_TIMEOUT_MS }));
+  } catch (error) {
+    const said = String(error.stderr || error.message).trim().slice(0, 300);
+    throw new UserError(`gh could not read ${apiPath}: ${said}`);
+  }
+}
+
+/**
+ * Checks that a CI run may be trusted: it ran the Klaus workflow, it succeeded, and its commit is
+ * on the default branch. A release run is started by a tag, so its head branch is the tag's name;
+ * then the commit must be in the default branch's history.
+ */
+function checkRun({ gh, run, repo, cwd }) {
+  const target = repo ?? "{owner}/{repo}";
+  const info = ghApi(gh, `repos/${target}/actions/runs/${run}`, cwd);
+  if (info.path !== KLAUS_WORKFLOW) {
+    throw new UserError(`Run ${run} is from ${JSON.stringify(info.path)}, not the Klaus workflow (${KLAUS_WORKFLOW}). The relay sends only what the Klaus workflow made.`);
+  }
+  if (info.status !== "completed" || info.conclusion !== "success") {
+    throw new UserError(`Run ${run} did not succeed (${info.conclusion ?? info.status}). The relay sends only what a successful run made.`);
+  }
+  const main = ghApi(gh, `repos/${target}`, cwd).default_branch;
+  if (typeof main !== "string" || main === "") throw new UserError(`gh did not say what the default branch of ${target} is.`);
+  if (info.head_branch === main) return;
+  const sha = String(info.head_sha ?? "");
+  if (!/^[0-9a-f]{40}$/.test(sha)) throw new UserError(`Run ${run} has no commit id the relay can check.`);
+  const compared = ghApi(gh, `repos/${target}/compare/${encodeURIComponent(main)}...${sha}`, cwd);
+  if (compared.status !== "identical" && compared.status !== "behind") {
+    throw new UserError(`Run ${run} ran on ${JSON.stringify(info.head_branch)}, at a commit that is not on ${main}. The relay sends only what was made from the default branch.`);
+  }
+}
+
+function downloadArtifact({ gh, run, repo, artifact, cwd }) {
   if (!/^\d+$/.test(run)) throw new UserError(`--run must be a run id, a number, not ${JSON.stringify(run)}.`);
+  if (repo !== undefined && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new UserError(`--repo must be owner/name, not ${JSON.stringify(repo)}.`);
+  checkRun({ gh, run, repo, cwd });
   // A fresh empty folder: the artifact is data from CI, kept apart from everything else.
   const dir = mkdtempSync(path.join(tmpdir(), "klaus-relay-artifact-"));
   const args = ["run", "download", run, "--name", artifact, "--dir", dir];
@@ -200,6 +254,44 @@ function downloadArtifact({ gh, run, repo, artifact }) {
     throw new UserError(`gh could not download the ${artifact} artifact of run ${run}: ${said}`);
   }
   return dir;
+}
+
+/**
+ * Reads and checks every data file the manifest lists, and builds each one's code, before any call.
+ * Anything that is not the generator's shape, writes where the settings do not say, or does not
+ * match the manifest's ledger entries stops the run here.
+ * @returns {Map<string, string>}  The code of each data file, by name.
+ */
+function prepareCode(folder, manifest, options) {
+  const code = new Map();
+  for (const file of manifest.files) {
+    const where = path.join(folder, file.name);
+    const fail = (why) => {
+      throw new UserError(`${file.name} is refused, so nothing was sent: ${why}`);
+    };
+    if (!existsSync(where) || !lstatSync(where).isFile()) fail("it is not in the folder.");
+    let data;
+    try {
+      data = readData(readFileSync(where, "utf8"), file.name);
+      checkTargets(data, options, file.name);
+    } catch (error) {
+      if (error instanceof DataError) fail(error.message);
+      throw error;
+    }
+    const ids = data.units.map((unit) => unit.id);
+    if (ids.length !== file.units.length || ids.some((id, i) => id !== file.units[i])) fail(`it holds ${ids.join(", ")}, but the manifest lists ${file.units.join(", ")}.`);
+    for (const unit of data.units) {
+      const entry = manifest.ledgerEntries[unit.id];
+      const same = unit.kind === "component"
+        ? entry.kind === "component" && entry.name === unit.name && entry.version === unit.version
+        : unit.kind === "screen" && entry.kind === "screen" && entry.route === unit.route && entry.release === unit.release;
+      if (!same) fail(`its unit ${unit.id} does not match the manifest's ledger entry.`);
+    }
+    const built = codeFor(data);
+    if (built.length > MAX_CODE_CHARS) fail(`its code comes to ${built.length} characters, more than the ${MAX_CODE_CHARS} one call takes.`);
+    code.set(file.name, built);
+  }
+  return code;
 }
 
 /** Checks Codex has a signed-in figma server, and returns its URL. */
@@ -377,7 +469,7 @@ export async function runRelay(options) {
   const ledgerPath = options.ledger ? path.resolve(root, options.ledger) : path.join(root, settings.outputDir, "ledger.json");
   if (Boolean(options.folder) === Boolean(options.run)) throw new UserError("Give a release folder or --run <id>, not both and not neither.");
   if (!options.run) return relayRelease(options, { root, settings, ledgerPath, folder: path.resolve(root, options.folder), source: null });
-  const downloaded = downloadArtifact({ gh: options.gh ?? "gh", run: options.run, repo: options.repo, artifact: options.artifact ?? DEFAULT_ARTIFACT });
+  const downloaded = downloadArtifact({ gh: options.gh ?? "gh", run: options.run, repo: options.repo, artifact: options.artifact ?? DEFAULT_ARTIFACT, cwd: root });
   try {
     const source = `the ${options.artifact ?? DEFAULT_ARTIFACT} artifact of run ${options.run}`;
     return await relayRelease(options, { root, settings, ledgerPath, folder: findReleaseFolder(downloaded, options.release), source });
@@ -397,8 +489,13 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
   const maxCalls = options.maxCalls ?? null;
   const timeoutMs = (options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
   const manifest = readManifest(folder);
-  const fileKey = options.fileKey ?? manifest.fileKey;
-  if (!FILE_KEY.test(fileKey ?? "")) throw new UserError("The manifest has no Figma file key. Set outputs.figma.target, or pass --file-key.");
+  // The Figma file comes from the repo's settings. The manifest only has to agree with them.
+  const fileKey = settings.fileKey;
+  if (!FILE_KEY.test(fileKey)) throw new UserError(`outputs.figma.target is not a Figma file key the relay can use.`);
+  if (manifest.fileKey !== fileKey) {
+    throw new UserError(`The manifest is for Figma file ${JSON.stringify(manifest.fileKey)}, but klaus.config.json names ${fileKey}. The relay writes only to the file the settings name, so nothing was sent.`);
+  }
+  const prepared = prepareCode(folder, manifest, settings.options);
 
   const warnings = [];
   let figmaUrl = DEFAULT_FIGMA_URL;
@@ -431,7 +528,9 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
     for (const file of manifest.files) {
       const entries = file.units.map((id) => ({ id, ...manifest.ledgerEntries[id] }));
       const pending = entries.filter((entry) => !entrySent(ledger, entry));
-      const record = { name: file.name, chars: file.chars, units: file.units };
+      const code = Buffer.from(prepared.get(file.name), "utf8");
+      const chars = prepared.get(file.name).length;
+      const record = { name: file.name, chars, units: file.units };
       const unitBase = (entry) => ({ id: entry.id, kind: entry.kind, file: file.name });
       if (pending.length === 0) {
         fileRecords.push({ ...record, status: "already sent", calls: 0, tokens: 0 });
@@ -439,7 +538,7 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
         continue;
       }
       planned += pending.length;
-      const predicted = predictTokens(file.chars, ratios);
+      const predicted = predictTokens(chars, ratios);
       uncapped.calls += 1;
       uncapped.tokens += predicted;
       const components = pending.filter((entry) => entry.kind === "component").length;
@@ -453,19 +552,6 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
         }
         continue;
       }
-      const codeFile = path.join(folder, file.name);
-      const code = existsSync(codeFile) ? readFileSync(codeFile) : null;
-      const length = code?.toString("utf8").length;
-      if (length !== file.chars) {
-        const error = code === null
-          ? `${file.name} is not in ${folder}.`
-          : `${file.name} has ${length} characters and the manifest says ${file.chars}. It changed after it was generated; run the generator again.`;
-        fileRecords.push({ ...record, status: "failed", error, calls: 0, tokens: 0 });
-        for (const entry of pending) failed.push({ id: entry.id, error });
-        unitRecords.push(...entries.map((entry) => ({ ...unitBase(entry), status: pending.includes(entry) ? "failed" : "already sent", error: pending.includes(entry) ? error : undefined, calls: 0, tokens: 0 })));
-        continue;
-      }
-
       estimated.calls += 1;
       estimated.tokens += predicted;
       totals.calls += 1;
@@ -480,7 +566,7 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
       log(`${file.name}: sending ${plural(entries.length, "unit")}, about ${predicted} relay tokens`);
       const prompt = relayPrompt({ fileKey, fileName: file.name });
       const args = codexArgs({ model, effort, workdir, figmaUrl, keepCodexConfig: Boolean(options.keepCodexConfig), prompt });
-      const eventsFile = keepEvents ? path.join(keepEvents, file.name.replace(/\.js$/, ".jsonl")) : null;
+      const eventsFile = keepEvents ? path.join(keepEvents, file.name.replace(/\.json$/, ".jsonl")) : null;
       const outcome = await sendFile({ codex, args, code, workdir, timeoutMs, fileKey, eventsFile });
 
       if (outcome.tokens === null) {
@@ -490,7 +576,7 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
       } else {
         totals.tokens += outcome.tokens;
         totals.measured += outcome.tokens;
-        ratios.push(outcome.tokens / predictTokens(file.chars));
+        ratios.push(outcome.tokens / predictTokens(chars));
       }
 
       let sentHere = 0;
@@ -631,7 +717,6 @@ const OPTIONS = {
   config: { type: "string" },
   ledger: { type: "string" },
   "report-dir": { type: "string" },
-  "file-key": { type: "string" },
   model: { type: "string" },
   effort: { type: "string" },
   "max-calls": { type: "string" },
@@ -664,7 +749,6 @@ export async function main(argv) {
       config: values.config,
       ledger: values.ledger,
       reportDir: values["report-dir"],
-      fileKey: values["file-key"],
       model: values.model,
       effort: values.effort,
       maxCalls: wholeNumber(values["max-calls"], "--max-calls", 0) ?? null,

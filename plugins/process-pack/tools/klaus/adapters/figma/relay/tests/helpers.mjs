@@ -48,7 +48,8 @@ export async function generatedRepo({ components = ["Button", "Card"], perFile =
   const ctx = {
     output: "figma",
     root,
-    settings: { enabled: true, target: KEY, options: { page: "Relay test", componentsPerCall: perFile } },
+    // The generator runs with the repo's own settings, as the relay reads them.
+    settings: { ...config.outputs.figma, options: { ...config.outputs.figma.options, componentsPerCall: perFile } },
     selection: { componentGroups: [], screens: { mode: "none", routes: [] }, newComponents: { rule: "all", minUsage: 2 } },
     inventory: { schemaVersion: 1, folders: ["packages/ui"], entries: components.map(entry) },
     trigger: "manual",
@@ -69,7 +70,7 @@ export async function generatedRepo({ components = ["Button", "Card"], perFile =
  * Runs the relay as a command, with the stub codex and gh first on PATH.
  * @returns {Promise<{ code: number, stdout: string, stderr: string, calls: Array<{ args: string[], stdin: Buffer }>, report: object | null }>}
  */
-export function relay(root, args, { scenarios = "success", mcp, ghSource, otherRunLedger } = {}) {
+export function relay(root, args, { scenarios = "success", mcp, ghSource, ghRun, ghCompare, otherRunLedger } = {}) {
   const log = mkdtempSync(path.join(tmpdir(), "klaus-relay-log-"));
   const ghLog = path.join(log, "gh.json");
   const env = {
@@ -81,6 +82,8 @@ export function relay(root, args, { scenarios = "success", mcp, ghSource, otherR
   };
   if (mcp !== undefined) env.STUB_CODEX_MCP = JSON.stringify(mcp);
   if (ghSource) env.STUB_GH_SOURCE = ghSource;
+  if (ghRun) env.STUB_GH_RUN = JSON.stringify(ghRun);
+  if (ghCompare) env.STUB_GH_COMPARE = ghCompare;
   if (otherRunLedger) env.STUB_CODEX_OTHER_RUN_LEDGER = otherRunLedger;
   return new Promise((resolve) => {
     execFile(process.execPath, [RELAY, ...args, "--root", root, "--json"], { env, cwd: root, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => {
@@ -100,7 +103,8 @@ export function relay(root, args, { scenarios = "success", mcp, ghSource, otherR
           reportError = parseError;
         }
       }
-      const gh = existsSync(ghLog) ? JSON.parse(readFileSync(ghLog, "utf8")) : null;
+      // Every gh call, in order. The download is the call that starts with "run".
+      const gh = existsSync(ghLog) ? readFileSync(ghLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
       resolve({ code: error ? error.code : 0, stdout, stderr, calls, report, reportError, gh });
     });
   });

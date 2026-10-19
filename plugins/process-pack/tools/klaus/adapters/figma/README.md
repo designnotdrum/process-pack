@@ -1,6 +1,6 @@
 # Klaus Figma adapter
 
-Turns a release's planned writes into Figma Plugin API code. It uses no model and makes no Figma call. A separate relay (issue #28) sends the code through a signed-in agent, because Figma's MCP server refuses a plain script.
+Turns a release's planned writes into the data for Figma Plugin API code. It uses no model and makes no Figma call. The relay (`relay/`) builds each call's code from that data and the runtime in its own checkout, and sends it through a signed-in agent, because Figma's MCP server refuses a plain script.
 
 The values come from the browser's computed styles, not from the CSS files. On Meridian's Button the CSS file says an 8px radius and the browser draws 6px, because Tailwind's `rounded-md` wins. The text size of the large Button differs the same way: the browser draws 14px where the CSS file says 16px.
 
@@ -10,7 +10,7 @@ The values come from the browser's computed styles, not from the CSS files. On M
 |---|---|
 | `plan` | Lists the components whose current version is not written yet, and the screens to write for this release. A component with no story in the Storybook build is left out. |
 | `estimate` | Costs a component version at the relay's measured rate: 71,000 relay tokens a call plus 1.4 a character of code, about 100,000 for a Button-sized version, and one call. The code's size is the runtime plus about 1,200 characters and 155 a variant. A screenshot upload and an editable screen are costed apart (unverified, there is no measurement). |
-| `write` | Reads each story in a static Storybook build, builds the code, packs it into files of one component version each (`componentsPerCall`) and at most 50,000 characters, and lists the screenshots to upload. It sends nothing. |
+| `write` | Reads each story in a static Storybook build, builds the data, packs it into files of one component version each (`componentsPerCall`) whose code is at most 50,000 characters, and lists the screenshots to upload. It sends nothing. |
 | `report` | Says where the files are and links the Figma file. |
 
 ## What the relay finds
@@ -19,15 +19,23 @@ The values come from the browser's computed styles, not from the CSS files. On M
 
 | File | Holds |
 |---|---|
-| `figma-001.js`, `figma-002.js`, ... | Plugin API code. Each file is one `use_figma` call and holds one component version, unless `componentsPerCall` says more. |
-| `manifest.json` | The file key, each code file with its character count and units, the ledger entry of each unit, the uploads, the retention file, and warnings. |
-| `figma-retention.js` | Present when there are screenshots. Run it after the uploads. It keeps the last N versions of each screen. |
+| `figma-001.json`, `figma-002.json`, ... | Data, no code. Each file is one `use_figma` call and holds one component version, unless `componentsPerCall` says more. |
+| `manifest.json` | The file key, each data file with the length of its code and its units, the ledger entry of each unit, the uploads, the retention file, and warnings. |
+| `figma-retention.json` | Present when there are screenshots. Run it after the uploads. It keeps the last N versions of each screen. |
+
+A data file holds the call's variable collection, its colour tokens and its units, as JSON (`codegen.mjs` `dataFor`). Whatever sends it reads it with `data-file.mjs`, which refuses anything that is not the generator's shape, checks that it writes only to the collection and pages the repo's settings name, and builds the code with `codegen.mjs` `codeFor`. So an artifact from CI never supplies code.
 
 An entry in `uploads` has the image path, the page, and the name the frame must have: `<route> <release>`. The retention code reads that name, so the relay must keep it.
 
-Each code file returns, for every unit, `written`, `exists` or `failed` with an error. A set that fails is removed again and the next unit still runs. The relay reports failures back to Klaus.
+The code built from each data file returns, for every unit, `written`, `exists` or `failed` with an error. A set that fails is removed again and the next unit still runs. The relay reports failures back to Klaus.
 
-`.klaus/figma/ledger.json` records each component version and screen release as `generated` when its code file exists, and as `sent` once the relay has seen `use_figma` report it written or already there. A run plans every unit that is not sent, so a unit whose relay call failed is generated and sent again. A unit Figma drew from code the relaying model changed is `changed` until a person deletes the set and the relay writes it again. The manifest's `ledgerEntries` tell the relay which version each unit is. If the ledger is lost, the next run plans everything again. The code leaves a set that already exists alone, so the only cost is relay tokens. The relay is in [`relay/`](relay/README.md).
+`.klaus/figma/ledger.json` records each component version and screen release as `generated` when its data file exists, and as `sent` once the relay has seen `use_figma` report it written or already there. A run plans every unit that is not sent, so a unit whose relay call failed is generated and sent again. A unit Figma drew from code the relaying model changed is `changed` until a person deletes the set and the relay writes it again. The manifest's `ledgerEntries` tell the relay which version each unit is. If the ledger is lost, the next run plans everything again. The code leaves a set that already exists alone, so the only cost is relay tokens. The relay is in [`relay/`](relay/README.md).
+
+## Which pages it touches
+
+The code touches three kinds of page, all found or created by name: the page a component goes on (the `page` setting, or the component's name), `Older versions`, and `Screens`. It touches no other page. Figma puts every new node on the person's current page, so the code appends each node to its parent in the same step, and a unit that fails leaves nothing behind. The variables it writes are in the collection the `collectionName` setting names.
+
+Klaus cannot tell a page it made from a page a person made with the same name, because `use_figma` does not support plugin data. A person's own page named like a component, or named `Older versions` or `Screens`, is treated as Klaus's. Then a set on it named `<component> <version>` can move to `Older versions`, and on `Screens` an old frame named `<route> <release>` can be removed. In a file with pages of its own, set `page` to a page only Klaus uses.
 
 ## What lands in Figma
 
@@ -53,7 +61,7 @@ All of them sit under `outputs.figma.options` in `klaus.config.json` and all hav
 | `icons` | `false` | Adds a hidden icon layer behind a `Show icon` property, from the icon a story draws. |
 | `label` | `true` | Puts the component's name in the text layer. |
 | `stories` | `{}` | Story ids by component name, when the automatic pick is wrong. |
-| `componentsPerCall` | `1` | Components in one code file, and so in one relay call. A bulk load can set up to 50. A file is also cut at 50,000 characters. |
+| `componentsPerCall` | `1` | Components in one data file, and so in one relay call. A bulk load can set up to 50. A file is also cut where its code would pass 50,000 characters. |
 | `editableScreens` | `false` | Write screens as editable layers. Needs `screensBaseUrl`. |
 | `screensBaseUrl`, `screensStorageState` | empty | The running app, and a Playwright storage state for a signed-in app. |
 | `screenshotsDir` | `.klaus/screens` | Where Dieter leaves the screenshots. |

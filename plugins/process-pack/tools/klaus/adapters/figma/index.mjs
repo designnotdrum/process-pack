@@ -1,16 +1,17 @@
 /**
- * The Figma adapter: turns a release's planned writes into Plugin API code.
+ * The Figma adapter: turns a release's planned writes into data for Plugin API code.
  *
- * It uses no model and makes no Figma call. `write` leaves code files and an
- * upload list in a folder, and the relay (issue #28) sends them through a
+ * It uses no model and makes no Figma call. `write` leaves data files and an
+ * upload list in a folder. The relay (relay/) builds each call's code from a
+ * data file and the runtime in its own checkout, and sends it through a
  * signed-in agent, because Figma's MCP server refuses a plain script.
  *
  *   plan      components whose current version is not written yet, and the screens to write
  *   estimate  calls and relay tokens, at the measured relay rate: 71,000 tokens a call plus
  *             1.4 a character of code, about 100,000 for a Button-sized component version
- *   write     read computed styles from a static Storybook build, build the code, pack it into
- *             files of one component each by default and at most 50,000 characters, and list
- *             the screenshots to upload
+ *   write     read computed styles from a static Storybook build, build the data, pack it into
+ *             files of one component each by default whose code is at most 50,000 characters,
+ *             and list the screenshots to upload
  *   report    where the files are, and a link to the Figma file
  *
  * Settings are under outputs.figma.options. See settings.mjs.
@@ -216,17 +217,19 @@ export function createAdapter(browser = {}) {
       if (imageRoutes.length > 0) {
         const retention = { kind: "retain", id: "retain-screens", page: SCREENS_PAGE, keep: options.screenVersionsKept, routes: imageRoutes, tokens: [] };
         const { files: kept } = packUnits([retention], { config });
-        afterUploads = { ...kept[0], name: "figma-retention.js" };
+        afterUploads = { ...kept[0], name: "figma-retention.json" };
       }
 
       const directory = path.join(root, options.outputDir, safeName(release));
       fs.mkdirSync(directory, { recursive: true });
       for (const name of fs.readdirSync(directory)) {
         // Only the names this adapter writes. A file someone else left in the folder stays.
-      if (/^figma-(\d+|retention)\.js$/.test(name) || name === "manifest.json") fs.rmSync(path.join(directory, name));
+      // An older generator wrote code files (.js); they go too, so no code is left in the folder.
+      if (/^figma-(\d+|retention)\.(js|json)$/.test(name) || name === "manifest.json") fs.rmSync(path.join(directory, name));
       }
       const everyFile = afterUploads ? [...files, afterUploads] : files;
-      for (const file of everyFile) fs.writeFileSync(path.join(directory, file.name), file.code);
+      // Data only. Whatever sends a file to Figma builds its code from the runtime in its own checkout.
+      for (const file of everyFile) writeJsonFile(path.join(directory, file.name), file.data);
 
       // What relaying these files will cost. No relay has run yet, so this is the measured rate.
       const actual = {
@@ -272,10 +275,10 @@ export function createAdapter(browser = {}) {
         return { summary: `Figma: ${outcome.dryRun ? "a dry run, so no code was generated" : "nothing was written"}.`, links };
       }
       const { manifest, directory } = run;
-      const parts = [`${manifest.files.reduce((n, f) => n + f.units.length, 0)} in ${manifest.files.length} code file${manifest.files.length === 1 ? "" : "s"}`];
+      const parts = [`${manifest.files.reduce((n, f) => n + f.units.length, 0)} in ${manifest.files.length} data file${manifest.files.length === 1 ? "" : "s"}`];
       if (manifest.uploads.length > 0) parts.push(`${manifest.uploads.length} screenshot${manifest.uploads.length === 1 ? "" : "s"} to upload`);
       return {
-        summary: `Figma code is ready for the relay in ${directory}: ${parts.join(" and ")}.`,
+        summary: `Figma data is ready for the relay in ${directory}: ${parts.join(" and ")}.`,
         links,
         details: { directory, manifest: `${directory}/manifest.json`, files: manifest.files, uploads: manifest.uploads.length, warnings: manifest.warnings },
       };
