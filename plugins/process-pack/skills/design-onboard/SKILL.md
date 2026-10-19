@@ -1,6 +1,6 @@
 ---
 name: design-onboard
-description: Use when a repo has UI files and no DESIGN.md, when a session-start message says to run design-onboard before UI work, when someone asks to onboard design or set up a design system for a repo, or before the first UI work in a new or unfamiliar repo. Writes PRODUCT.md and DESIGN.md through impeccable, picks a visual direction or audits the existing one, and installs the guardrails that keep later UI work on the system.
+description: Use when a repo has UI files and no DESIGN.md, when a session-start message says to run design-onboard before UI work, when someone asks to onboard design or set up a design system for a repo, or before the first UI work in a new or unfamiliar repo. Writes PRODUCT.md and DESIGN.md through impeccable, picks a visual direction or audits the existing one, installs the guardrails that keep later UI work on the system, and offers Klaus, which keeps Storybook and design files in step with each release, with every cost shown before it is turned on.
 ---
 
 # Design onboard
@@ -11,10 +11,12 @@ A new repo's UI looks like library defaults for its first several sessions, each
 
 Impeccable is the design engine. This skill runs impeccable's flows in order and fills the gaps between them. It does not replace or fork them.
 
-Two paths share the first two steps and the last one:
+Two paths share the first two steps and the last two:
 
-- **Greenfield:** the repo has no UI yet. Steps 1, 2, 3G to 6G, 7.
-- **Existing UI:** the repo already has screens. Steps 1, 2, 3E to 5E, 7.
+- **Greenfield:** the repo has no UI yet. Steps 1, 2, 3G to 6G, 7, 8.
+- **Existing UI:** the repo already has screens. Steps 1, 2, 3E to 5E, 7, 8.
+
+Step 8 sets up Klaus and is optional. The person can skip it.
 
 `<plugin-root>` below means the process-pack plugin's folder: two folders above this skill's folder.
 
@@ -131,6 +133,140 @@ Lean in writes one line in that file saying why the current system stays.
 4. **`.process/repo.yaml`.** Write the `design` block (schema: `constants/schemas/repo.schema.json` in process-pack): `onboarded_at`, `impeccable_version`, `stack`, `path` (`greenfield`, `lean-in`, `polish-hard`, or `new-direction`), and `ui_skills` with each skill's `name`, `source`, and the reason it was picked. The commits live in `skills-lock.json` only.
 5. **Commit** PRODUCT.md, DESIGN.md, the tokens, the checks, `docs/design/`, the skill directories, `skills-lock.json`, AGENTS.md, and `.process/repo.yaml`.
 
+## Step 8. Klaus
+
+Klaus keeps a list of every component the repo ships. After each release it writes the components into the design outputs the team chose: Storybook and Figma now, Penpot and Pencil later. Its scripts and its README are in `<plugin-root>/tools/klaus/`. Below, `<klaus-src>` means that folder, and `install.mjs` means `<klaus-src>/install/install.mjs`.
+
+Run this step after DESIGN.md exists. Ask once whether to set Klaus up now. If not, skip to the report and say Klaus was skipped.
+
+### Rules for this step
+
+- **Cost comes first.** Until the person has seen an output's cost lines and chosen, write nothing to the repo, call no platform and read no secret. Every recurring spend (relay tokens, platform calls, storage) is a setting for this repo. Every default is only a default.
+- **Cost lines come from the adapters.** `install.mjs costs` runs each adapter's plan and estimate steps and prints the lines. Show its text as printed. Do not work out a cost, and do not quote one from memory or from `klaus-outputs.md`. When it prints "No estimate", show that and the reason.
+- **Limits come from `klaus-outputs.md`.** Quote the limit with its source and date. A limit older than a month is checked against the platform's own page first, and you say you did.
+- **One output per screen.** Each screen shows the route, the cost lines, the limits and the default, then asks one question.
+- **Secrets stay out.** The config holds names, never values. Never ask for a token and never print one. The person sets the values in the repo's CI secrets.
+- **This step runs no model and writes nothing to Figma.** It makes no deploy and no Codex call.
+
+### 8.1 Preflight, read only
+
+1. **Node and git.** Node 22 or later. A git repo, with release tags (`git tag --list`). No tags is allowed: say that Klaus counts a git tag as a release, and the first one starts it.
+2. **The repo's own TypeScript.** The inventory reads components with the repo's `typescript` package. Not installed: stop and say to install it.
+3. **Storybook.** Find a `.storybook` folder (`git ls-files` for `*/.storybook/*`) and the script that runs `storybook build`. Without Storybook, Storybook and Figma cannot be turned on: Figma draws each component from its story. Say that Klaus does not install Storybook.
+4. **Package manager.** From the lockfile and `packageManager` in package.json. Work out the repo's install command: `pnpm install --frozen-lockfile`, `npm ci`, or `yarn install --immutable` (`--frozen-lockfile` before Yarn 2). Look at the repo's own CI workflow too. If it has install steps (a pinned `pnpm/action-setup`, for instance), copy those steps without the checkout into a file in the scratch folder and use them in place of the command.
+5. **CI.** GitHub Actions only. On other CI, do everything except the workflow and say so.
+6. **An earlier install.** If `scripts/klaus/VERSION.txt` or `klaus.config.json` exists, this is an upgrade. Show the version line, keep the existing answers as defaults, and expect `copy` to refuse a hand-edited copy.
+7. Make a scratch folder with `mktemp -d`. Everything until step 8.6 goes there.
+
+### 8.2 Inventory folders
+
+Ask which folders hold the repo's UI components. Offer the folders that contain `.tsx` or `.jsx` files and match common names (`packages/*/src`, `src/components`, `app/components`), with the shared UI package first. Paths have no spaces. Build the inventory into the scratch folder, so nothing lands in the repo yet:
+
+```bash
+node <klaus-src>/inventory/inventory.mjs --root <repo> --out <scratch> <folder> [<folder> ...]
+```
+
+It prints one line for each folder. A folder under `packages/` is `shared`, any other is `app`. Show those lines.
+
+Write `<scratch>/klaus.config.json` as a draft with both outputs off, `inventory.folders`, and `selection` set to the defaults in 8.4. The cost command reads it.
+
+### 8.3 The outputs, one per screen
+
+Run the cost command once:
+
+```bash
+node <klaus-src>/install/install.mjs costs --repo <repo> --config <scratch>/klaus.config.json --inventory <scratch>/inventory.json
+```
+
+Then show one output at a time: its block from that text, then its limits and credential from `klaus-outputs.md`, then the default and the question. Re-run the command with `--outputs <name>` when an answer changes a cost.
+
+1. **Storybook.** Default on when the repo has Storybook, otherwise off. Ask for the Vercel project name (suggest `<repo>-storybook`) and whether a Vercel team owns it. Secrets: `VERCEL_TOKEN`, and `VERCEL_ORG_ID` for a team. Storybook ignores the component selection and shows every component with a story.
+2. **Figma.** Ask whether the team uses Figma. On only if they say yes and the repo has Storybook and `@playwright/test`. Say plainly that there are two parts: the plugin does the first load at no token cost, and the relay does the updates after each release at the cost printed. Then ask the two Figma settings:
+   - the Figma file to write to (a file URL or key, in a file the person can edit), and
+   - the relay's cost cap for one run, `spendingCap.maxRelayTokens`, with the default and the component limit `maxComponentWrites` shown. After the answer, re-run the cost command so the line says how many versions a run sends under that cap.
+3. **Penpot and Pencil.** Off. Show the "no adapter yet" line and the limits. Nothing to ask. Write `{ "enabled": false }` for each, so the choice is recorded.
+4. **Claude Design and Paper.** Show the reason each cannot run unattended and the limit. Nothing to ask, and they have no entry in the config.
+
+### 8.4 Components, screens and trigger
+
+Ask these three together, each pre-filled.
+
+- **Components.** Default `selection.componentGroups`: every inventory folder marked `shared`, plus any folder the person names as the marketing kit or the icon set. App and local components stay in the inventory and out of the design files. Add `newComponents` with rule `all`, so a new component in a selected group joins on the release that ships it. The other rules are `min-usage` and `none`.
+- **Screens.** The default is every screen the repo's visual checks capture, and only when the same workflow job can produce one PNG per route (named `home.png`, `settings.png`, in `outputs.figma.options.screenshotsDir`, `.klaus/screens` by default). Ask whether visual checks exist and where the screenshots land. If the workflow cannot produce them, set `screens.mode` to `none` and say why. A listed screen with no screenshot fails the run.
+- **Trigger.** Default `release`: CI runs after each release tag, with `tagPattern` taken from the existing tags (`v*` when they look like `v1.4.0`). `schedule` takes a five-field cron in UTC. A one-off run is the third choice: write no workflow, and tell the person to run `node scripts/klaus/frame/cli.mjs run --trigger manual` themselves.
+
+If a changed selection moves a cost, re-run the cost command and show the new line.
+
+### 8.5 Create the Vercel project
+
+Skip this when Storybook is off. The Storybook adapter needs the project to exist before its first run, and onboarding creates it. It is the one platform call in this step, it creates an empty project, and it needs `VERCEL_TOKEN`. Ask first, once. On yes, run the command with the token in the environment of that one command, from the person's secret store, never printed:
+
+```bash
+npx vercel@64.5.0 project create <project> [--scope <team>]
+```
+
+Leave deployment protection at Vercel's default. The adapter deploys an empty index first, so the first release is a protected preview. On no, give the command as a next step.
+
+### 8.6 Write the files
+
+All answers are in. Now write to the repo, in this order:
+
+1. **`klaus.config.json`** at the repo root, with `$schema` set to `./scripts/klaus/klaus.config.schema.json`. Shape (the schema is `<klaus-src>/klaus.config.schema.json`):
+
+   ```json
+   {
+     "$schema": "./scripts/klaus/klaus.config.schema.json",
+     "outputs": {
+       "storybook": { "enabled": true, "target": "<vercel project>", "secrets": ["VERCEL_TOKEN"] },
+       "figma": { "enabled": true, "target": "<file URL or key>", "route": "codex-relay", "logins": ["codex"] },
+       "penpot": { "enabled": false },
+       "pencil": { "enabled": false }
+     },
+     "inventory": { "folders": ["<folder>"] },
+     "selection": {
+       "componentGroups": ["<folder>"],
+       "screens": { "mode": "none" },
+       "newComponents": { "rule": "all" }
+     },
+     "spendingCap": { "maxComponentWrites": 50, "maxRelayTokens": 500000 },
+     "trigger": { "mode": "release", "tagPattern": "v*" }
+   }
+   ```
+
+2. **The scripts:** `node <klaus-src>/install/install.mjs copy --repo <repo>`. It copies Klaus to `scripts/klaus/` and writes `scripts/klaus/VERSION.txt`, one line with the Klaus version, the process-pack version and a hash of the files. Show that line.
+3. **Check the config:** `node scripts/klaus/frame/cli.mjs validate` must print that the file is valid. Fix what it names and run it again. Its errors never repeat a secret.
+4. **The workflow**, unless the trigger is a one-off:
+
+   ```bash
+   node <klaus-src>/install/install.mjs workflow --repo <repo> --install "<install command>" \
+     [--corepack] [--install-steps <file>] [--node <major>] \
+     [--storybook-build "<command>"] [--playwright "<command>"] [--captures <file>]
+   ```
+
+   `--storybook-build` is needed when Figma is on. It is the command that writes a static Storybook to `storybook-static` (or to `outputs.figma.options.storybookDir`). `--captures` names the file the version picker reads when the repo's visual checks write one. The command prints the parts it kept, the secrets to set, and the result of actionlint. When actionlint is not installed it parses the YAML with python3 or ruby instead and says so. Report which check ran. If the check fails, fix the cause and render again.
+5. **Housekeeping.** Add `.klaus/` to `.gitignore`. Look at how the repo treats other copied script folders (`scripts/dieter`, for instance) in its lint, format and test configs, and treat `scripts/klaus` the same.
+
+### 8.7 What the person does next
+
+Show these as a short list. Do not run them.
+
+- **Secrets** to add in the repo's settings, by name: the ones the command printed. Their values come from the person's own secret store.
+- **Figma, when on.** (1) Once, in the Figma desktop app: open the target file, then Plugins, Development, Import plugin from manifest, and pick `scripts/klaus/adapters/figma/plugin/manifest.json` in the repo. (2) On the machine that will run the relay, install the Codex CLI and sign it in to Figma: the steps are in `scripts/klaus/adapters/figma/relay/README.md`. (3) After the onboarding run has written the Figma data files, apply them with the plugin ("Klaus: apply a release"), then run `relay.mjs --reconcile` once so the relay does not send what the plugin wrote.
+
+### 8.8 The onboarding run: show the estimate and stop
+
+Print the one-time estimate for the outputs that are on:
+
+```bash
+node <klaus-src>/install/install.mjs costs --repo <repo> --config klaus.config.json --inventory <scratch>/inventory.json --enabled
+```
+
+Commit `scripts/klaus/`, `klaus.config.json`, the workflow and `.gitignore` in one commit, apart from the design commits.
+
+The onboarding run builds the baseline (process-pack issue #30). It starts here, after the person has read the estimate and said yes. If that step is not in this skill yet, stop after the estimate and say what is left.
+
 ## Report
 
 End with: the path taken, the direction or branch the user picked, the references, the Jev results with their sources, the checks installed and whether they pass, each UI Skill with its pinned commit, and anything left open.
+
+For Klaus, say whether it was skipped. If it was set up, give each output as on or off with its cost lines as `install.mjs costs` printed them, the spending cap, the trigger, the version line from `scripts/klaus/VERSION.txt`, the secrets still to set, the steps left for the person, which workflow check ran, and the onboarding run's one-time estimate.

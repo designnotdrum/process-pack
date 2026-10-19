@@ -14,7 +14,8 @@ The decisions behind it are on the Klaus map in Linear: [NJM-1767](https://linea
 | The frame: adapter interface, settings file, spending cap, triggers, report | `frame/` | #25 |
 | Storybook adapter | `adapters/storybook/` | #26 |
 | Figma code generator, relay, plugin and reconcile mode | `adapters/figma/` | #27, #28, #43, #44 |
-| Onboarding step and baseline run | design-onboard | #29, #30 |
+| Onboarding step and baseline run | `skills/design-onboard/` (step 8) | #29, #30 |
+| Install: the copy with its version line, the cost display, the workflow renderer | `install/` | #29 |
 | Penpot and Pencil adapters | `adapters/penpot/`, `adapters/pencil/` | #31, #32 |
 
 The rest of this file covers the frame.
