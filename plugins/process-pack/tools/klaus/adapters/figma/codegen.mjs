@@ -60,17 +60,37 @@ export function dataFor({ units, config, header }) {
 }
 
 /**
- * The code of one call: the data as three constants, then the runtime from this checkout. Every
- * value is written as JSON, and the header must be one line of printable ASCII (data-file.mjs
- * checks it), so no part of the data can become code.
+ * True when text can go in a template literal and read back the same: printable ASCII, tabs and
+ * line breaks, and no backtick, backslash or "${", which are the only things a template literal treats
+ * as code or escapes.
+ */
+export function templateSafe(text) {
+  return /^[\x20-\x7e\n\t]*$/.test(text) && !text.includes("`") && !text.includes("\\") && !text.includes("${");
+}
+
+/**
+ * The code of one call: the data as constants, then the runtime from this checkout. Every value is
+ * written as JSON, except SVG markup, and the header must be one line of printable ASCII
+ * (data-file.mjs checks it), so no part of the data can become code.
+ *
+ * SVG markup is full of double quotes, which JSON writes as backslash-quote. A model copying the
+ * code into use_figma tends to drop backslashes (gpt-5.6-terra dropped all 46 in one call on
+ * 2026-10-18), so markup that templateSafe allows goes in SVGS as a template literal, and the unit
+ * keeps its index. Other markup stays a JSON string. The runtime holds no backslash either.
  */
 export function codeFor(data) {
   if (!/^[\x20-\x7e]*$/.test(data.header)) throw new Error("A file header must be one line of printable ASCII.");
+  const svgs = [];
+  const units = data.units.map((unit) => {
+    if (!Array.isArray(unit.svgs)) return unit;
+    return { ...unit, svgs: unit.svgs.map((svg) => (templateSafe(svg) ? svgs.push(svg) - 1 : svg)) };
+  });
   return [
     `// ${data.header}`,
     `const CONFIG = ${asciiJson(data.config)};`,
     `const TOKENS = ${asciiJson(data.tokens)};`,
-    `const UNITS = ${asciiJson(data.units)};`,
+    `const UNITS = ${asciiJson(units)};`,
+    `const SVGS = [${svgs.map((svg) => `\`${svg}\``).join(",")}];`,
     RUNTIME_CODE,
     "",
   ].join("\n");

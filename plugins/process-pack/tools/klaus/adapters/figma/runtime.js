@@ -1,11 +1,12 @@
 /**
  * The part of every generated code file that is the same each time.
  *
- * codegen.mjs puts three constants in front of this text and sends the result
+ * codegen.mjs puts four constants in front of this text and sends the result
  * to Figma:
  *   CONFIG  { collection, mode }
  *   TOKENS  the colour variables the units in this file use
  *   UNITS   the component sets and screens to write, as built by spec.mjs
+ *   SVGS    SVG markup, as template literals; a unit's svgs list holds indexes into it
  *
  * This file is not run by Node. It is plain JavaScript for the Figma Plugin API
  * and it avoids newer syntax on purpose. It uses top-level await and return,
@@ -36,7 +37,10 @@ const WEIGHT_STYLES = {
 };
 const PRIMARY = { C: "CENTER", E: "MAX", B: "SPACE_BETWEEN" };
 const COUNTER = { C: "CENTER", E: "MAX", T: "BASELINE" };
-const VERSION = /^\d+(\.\d+)*([-+][0-9A-Za-z.-]+)?$/;
+// The code holds no backslash: a model copying it into use_figma tends to drop them.
+const VERSION = /^[0-9]+([.][0-9]+)*([-+][0-9A-Za-z.-]+)?$/;
+const DIGITS = /^[0-9]+$/;
+const NEWLINE = String.fromCharCode(10);
 const warnings = [];
 const loadedFonts = {};
 let fontStyles = null;
@@ -140,7 +144,7 @@ function freeze(root, shipped) {
     });
   });
   const note = "Frozen when " + shipped + " shipped; colours are the values at that time.";
-  root.description = root.description ? root.description + "\n" + note : note;
+  root.description = root.description ? root.description + NEWLINE + note : note;
 }
 
 function paintOf(U, c) {
@@ -171,7 +175,9 @@ async function makeText(U, n, parent) {
 }
 
 function makeIcon(U, n, parent) {
-  const icon = figma.createNodeFromSvg(U.svgs[n.s]);
+  // codegen.mjs moves SVG markup into SVGS and leaves its index here, unless the markup cannot go in a template literal.
+  const svg = typeof U.svgs[n.s] === "number" ? SVGS[U.svgs[n.s]] : U.svgs[n.s];
+  const icon = figma.createNodeFromSvg(svg);
   parent.appendChild(icon);
   icon.name = n.n || "Icon";
   if (Math.abs(icon.width - n.w) > 0.5 || Math.abs(icon.height - n.h) > 0.5) icon.resize(Math.max(n.w, 1), Math.max(n.h, 1));
@@ -281,8 +287,8 @@ function compareVersions(a, b) {
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
     if (pa[i] === undefined) return -1;
     if (pb[i] === undefined) return 1;
-    const x = /^\d+$/.test(pa[i]);
-    const y = /^\d+$/.test(pb[i]);
+    const x = DIGITS.test(pa[i]);
+    const y = DIGITS.test(pb[i]);
     if (x && y && Number(pa[i]) !== Number(pb[i])) return Number(pa[i]) < Number(pb[i]) ? -1 : 1;
     if (x !== y) return x ? -1 : 1;
     if (!x && pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1;
