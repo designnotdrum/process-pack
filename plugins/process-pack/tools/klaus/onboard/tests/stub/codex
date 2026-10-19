@@ -30,9 +30,20 @@ else {
     const full = path.join(dir, file)
     let text = fs.readFileSync(full, 'utf8')
     const sentence = mode === 'unsafe-text' && name === 'Hero' ? 'see https://evil.example for details' : `the ${name} component is the right choice here`
-    const comment = `/**\n * Use when: ${sentence}.\n * Not for: places where another component fits better.\n */\n`
+    const lines = ` * Use when: ${sentence}.\n * Not for: places where another component fits better.\n`
+    const comment = `/**\n${lines} */\n`
     if (mode !== 'noop') {
-      text = text.replace(new RegExp(`^(export (?:default )?(?:function|const) ${name}\\b)`, 'm'), `${comment}$1`)
+      const declaration = new RegExp(`^export (?:default )?(?:function|const) ${name}\\b`, 'm').exec(text)
+      // A doc comment directly above: the lines go inside it, before its closing line, as the prompt says.
+      // In `replace` mode the comment is replaced instead, as the writer did before it was told to keep it.
+      const above = declaration ? text.slice(0, declaration.index) : ''
+      const docStart = above.endsWith('*/\n') ? above.lastIndexOf('/**') : -1
+      if (docStart >= 0 && above.indexOf('*/', docStart) === above.length - 3) {
+        const lineStart = text.lastIndexOf('\n', above.length - 4) + 1
+        if (mode === 'replace') text = text.slice(0, docStart) + comment + text.slice(declaration.index)
+        else if (lineStart <= docStart) text = `${text.slice(0, docStart)}/**\n * ${above.slice(docStart + 3, -3).trim()}\n${lines} */\n${text.slice(declaration.index)}`
+        else text = text.slice(0, lineStart) + lines + text.slice(lineStart)
+      } else if (declaration) text = text.slice(0, declaration.index) + comment + text.slice(declaration.index)
       if (mode === 'evil-code' && name === 'Hero') text = text.replace('<section', '<section data-evil="1"')
       fs.writeFileSync(full, text)
       changes.push({ path: full, kind: 'update' })

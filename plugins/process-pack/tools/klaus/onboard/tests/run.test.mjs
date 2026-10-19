@@ -205,7 +205,7 @@ test('the run refuses without the plan id, with a wrong one, and when the repo c
   await assert.rejects(() => run(estimated), (e) => e instanceof UserError && /not the one the estimate was made on/.test(e.message))
 })
 
-test('the run refuses a dirty tree, a branch that exists, a missing key, a base that is not the default and a commit that is only here', async () => {
+test('the run refuses a dirty tree, a missing key, a base that is not the default and a commit that is only here', async () => {
   const estimated = await estimate()
   fs.writeFileSync(path.join(sample.repo, 'note.txt'), 'x')
   await assert.rejects(() => run(estimated), /working tree has changes/)
@@ -218,10 +218,6 @@ test('the run refuses a dirty tree, a branch that exists, a missing key, a base 
   process.env.STUB_DEFAULT_BRANCH = 'trunk'
   await assert.rejects(() => run(estimated), /starts from the default branch, trunk/)
   delete process.env.STUB_DEFAULT_BRANCH
-
-  sample.git('branch', BRANCHES[1])
-  await assert.rejects(() => run(estimated), /already exists/)
-  sample.git('branch', '-q', '-D', BRANCHES[1])
 
   fs.writeFileSync(path.join(sample.repo, 'local-only.txt'), 'x')
   sample.git('add', 'local-only.txt')

@@ -66,15 +66,106 @@ export function findComponent(ts, sourceFile, name) {
 
 /**
  * The doc comment directly above a statement, as its start and end in the file's text. This is the
- * comment the inventory reads as the component's purpose.
+ * comment the inventory reads as the component's purpose. `node` is the compiler's JSDoc node, for
+ * its text before the first tag (`comment`) and its tags.
  *
- * @returns {{ start: number, end: number, text: string } | null}
+ * @returns {{ start: number, end: number, text: string, node: object } | null}
  */
 export function docCommentOf(ts, sourceFile, statement) {
   const docs = ts.getJSDocCommentsAndTags(statement).filter((d) => ts.isJSDoc(d))
   const doc = docs[docs.length - 1]
   if (!doc) return null
-  return { start: doc.pos, end: doc.end, text: sourceFile.text.slice(doc.pos, doc.end) }
+  return { start: doc.pos, end: doc.end, text: sourceFile.text.slice(doc.pos, doc.end), node: doc }
+}
+
+/** The words of a comment, without its markers, on one line: `/** a\n * b *\/` and `// a b` both become `a b`. */
+export function commentWords(raw) {
+  const body = raw.startsWith('//') ? raw.replace(/^\/\/+/, '') : raw.replace(/^\s*\/\*\*?/, '').replace(/\*\/\s*$/, '').split('\n').map((line) => line.replace(/^\s*\*\s?/, '')).join('\n')
+  return body.replace(/\s+/g, ' ').trim()
+}
+
+const commentCache = new Map()
+
+/**
+ * Every comment in a file, found from the syntax tree so that text inside a string or JSX is not
+ * mistaken for one: { pos, end, line, raw }. The JSX comments `{/* ... *\/}` are included.
+ */
+export function commentsIn(ts, file) {
+  let text
+  try {
+    text = fs.readFileSync(file, 'utf8')
+  } catch {
+    return []
+  }
+  const cached = commentCache.get(file)
+  if (cached?.text === text) return cached.comments
+  let sourceFile
+  try {
+    sourceFile = parseSource(ts, file, text)
+  } catch {
+    return []
+  }
+  const found = new Map()
+  const add = (ranges) => {
+    for (const r of ranges ?? []) if (!found.has(r.pos)) found.set(r.pos, { pos: r.pos, end: r.end, line: sourceFile.getLineAndCharacterOfPosition(r.pos).line + 1, raw: text.slice(r.pos, r.end) })
+  }
+  // getChildren holds the tokens too, so a comment before a closing brace is found as well.
+  const visit = (node) => {
+    add(ts.getLeadingCommentRanges(text, node.pos))
+    add(ts.getTrailingCommentRanges(text, node.end))
+    for (const child of node.getChildren(sourceFile)) visit(child)
+  }
+  visit(sourceFile)
+  const comments = [...found.values()].sort((a, b) => a.pos - b.pos)
+  commentCache.set(file, { text, comments })
+  return comments
+}
+
+/** How much of the comments the checker is shown. A comment longer than a mention is cut around the name. */
+export const COMMENT_LIMITS = Object.freeze({ own: 4000, mention: 600, mentions: 4 })
+
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+function around(text, at, size) {
+  if (text.length <= size) return text
+  const start = Math.max(0, Math.min(at - Math.floor(size / 3), text.length - size))
+  return `${start > 0 ? '...' : ''}${text.slice(start, start + size)}${start + size < text.length ? '...' : ''}`
+}
+
+/**
+ * What the checker judges a purpose against, besides the props: the places the component is used,
+ * the comments directly above its declaration (`own`, to which the purpose is added), and the other
+ * comments that name it, in its own file and in the files that use it (`mentions`).
+ *
+ * @returns {{ snippets: object[], own: string, mentions: { file: string, line: number, text: string }[] }}
+ */
+export function checkerContext({ ts, root, usage, entry, limit }) {
+  const file = path.join(root, entry.file)
+  const snippets = snippetsFor({ ts, root, usage, entry, limit })
+  let ownRanges = []
+  try {
+    const sourceFile = parseSource(ts, file)
+    const found = findComponent(ts, sourceFile, entry.name)
+    if (found) ownRanges = ts.getLeadingCommentRanges(sourceFile.text, found.statement.getFullStart()) ?? []
+  } catch {
+    // A file that cannot be read has no comments to show.
+  }
+  const ownText = commentsIn(ts, file).filter((c) => ownRanges.some((r) => r.pos === c.pos)).map((c) => commentWords(c.raw)).filter(Boolean).join(' / ')
+  const own = ownText.length > COMMENT_LIMITS.own ? `${ownText.slice(0, COMMENT_LIMITS.own)}...` : ownText
+  const name = new RegExp(`\\b${escapeRegExp(entry.name)}\\b`)
+  const names = [entry.name, ...entry.parts.map((p) => p.name)]
+  const importers = usage.importersOf(file, names, true).filter((f) => f !== file).sort()
+  const mentions = []
+  for (const where of [file, ...importers]) {
+    for (const comment of commentsIn(ts, where)) {
+      if (mentions.length >= COMMENT_LIMITS.mentions) break
+      if (where === file && ownRanges.some((r) => r.pos === comment.pos)) continue
+      const words = commentWords(comment.raw)
+      const hit = name.exec(words)
+      if (hit) mentions.push({ file: path.relative(root, where).split(path.sep).join('/'), line: comment.line, text: around(words, hit.index, COMMENT_LIMITS.mention) })
+    }
+  }
+  return { snippets, own, mentions }
 }
 
 /** What a file imports, without type-only imports: the module, the default name and the named bindings. */

@@ -65,11 +65,10 @@ test('applyPurposes puts the comment above a lint directive that sits on the dec
   assert.equal(out, BEFORE.replace('// eslint-disable-next-line', `${COMMENT}// eslint-disable-next-line`))
 })
 
-test('applyPurposes replaces a comment that is not in the form, and indents inside a block', () => {
+test('applyPurposes keeps a one-line comment that is not in the form, and lays it out over lines with the two added', () => {
   const before = "/** A chip. */\nexport function Chip() { return <span /> }\n"
   const out = applyPurposes(ts, FILE, before, [{ name: 'Chip', useWhen: 'showing a short label.', notFor: 'long text.' }])
-  assert.equal(out, `${COMMENT}export function Chip() { return <span /> }\n`.replace(/\n$/, '\n'))
-  assert.equal(out.includes('A chip.'), false)
+  assert.equal(out, '/**\n * A chip.\n *\n * Use when: showing a short label.\n * Not for: long text.\n */\nexport function Chip() { return <span /> }\n')
 })
 
 test('applyPurposes handles two components in one file', () => {

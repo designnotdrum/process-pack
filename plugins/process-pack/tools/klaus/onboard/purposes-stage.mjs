@@ -12,10 +12,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { UserError } from '../frame/errors.mjs'
 import { readJsonFile } from '../frame/json-file.mjs'
-import { checkerPrompt, cleanReason, runCheck } from './checker.mjs'
+import { checkerPrompt, cleanReason, isCheckable, runCheck } from './checker.mjs'
 import { changedFiles, git, resetPaths } from './git.mjs'
 import { assertPlainPath, mkdirPlain, removePlainFile } from './plain-path.mjs'
-import { snippetsFor } from './source.mjs'
+import { checkerContext } from './source.mjs'
 import { judgeWrittenFile } from './verify.mjs'
 import { newBoundary, runCodex, writerEnvironment, writerPrompt } from './writer.mjs'
 
@@ -156,12 +156,12 @@ function readWriterBranch({ ctx, state, items, pending, ref }) {
   state.writerExecuted = plan.calls.length
 }
 
-function snippetsOf(ctx, component) {
-  const { plan, onboarding } = ctx
-  return snippetsFor({ ts: plan.ts, root: plan.root, usage: plan.usage, entry: component.entry, limit: onboarding.checker.usageSnippets })
+/** What a component's purpose is checked against: its usage, its own comment and the comments that name it. */
+export function contextOf({ plan, onboarding }, component) {
+  return checkerContext({ ts: plan.ts, root: plan.root, usage: plan.usage, entry: component.entry, limit: onboarding.checker.usageSnippets })
 }
 
-const promptFor = (p) => checkerPrompt({ name: p.component.name, entry: p.component.entry, useWhen: p.useWhen, notFor: p.notFor, snippets: p.snippets })
+const promptFor = (p) => checkerPrompt({ name: p.component.name, entry: p.component.entry, useWhen: p.useWhen, notFor: p.notFor, snippets: p.snippets, own: p.own, mentions: p.mentions })
 
 function setVerdict(items, id, verdict, reason) {
   const current = items.get(id)
@@ -222,6 +222,32 @@ function readChecksFile({ ctx, state, items, todo, file }) {
 }
 
 /**
+ * The model results an earlier run saved for this plan that a run would use again: the writer
+ * calls, and the checks of the purposes those calls wrote. Calls no model and changes nothing.
+ *
+ * @returns {{ writerCalls: string[], checks: number }}
+ */
+export function savedWork({ plan, onboarding, store }) {
+  const writerCalls = []
+  let checks = 0
+  const ctx = { repo: plan.root, plan }
+  for (const call of plan.calls) {
+    const saved = store.loadWriterCall(call)
+    if (!saved) continue
+    writerCalls.push(call.id)
+    const items = new Map(call.files.flatMap((f) => f.components.map((c) => [c.id, { id: c.id }])))
+    const pending = []
+    judgeCall({ ctx, call, items, pending, after: saved.after, outside: saved.outside, failure: null })
+    for (const p of pending) {
+      const context = contextOf({ plan, onboarding }, p.component)
+      const source = call.files.find((f) => f.file === p.file).source
+      if (isCheckable(context) && store.loadCheck({ ...p, ...context }, source)) checks += 1
+    }
+  }
+  return { writerCalls, checks }
+}
+
+/**
  * Writes the purposes and checks them.
  *
  * @returns {Promise<{ waiting: null | { part: string, message: string }, items: Map<string, object>, pending: object[] }>}
@@ -240,16 +266,20 @@ export async function obtainPurposes({ ctx, state }) {
     readWriterBranch({ ctx, state, items, pending, ref: options.writerBranch })
   } else await writeLocally({ ctx, state, items, pending })
 
+  const contexts = new Map()
+  const context = (component) => {
+    if (!contexts.has(component.id)) contexts.set(component.id, contextOf(ctx, component))
+    return contexts.get(component.id)
+  }
   const todo = []
   for (const p of pending) {
-    const snippets = snippetsOf(ctx, p.component)
-    if (snippets.length === 0) items.set(p.component.id, { ...items.get(p.component.id), status: 'unchecked', reason: 'it is not used anywhere, so there is no usage to check against' })
-    else todo.push({ ...p, snippets })
+    if (!isCheckable(context(p.component))) items.set(p.component.id, { ...items.get(p.component.id), status: 'unchecked', reason: 'it is not used anywhere and no comment names it, so there is nothing to check it against' })
+    else todo.push({ ...p, ...context(p.component) })
   }
-  // The estimate counts a check for every component that is used somewhere. One whose purpose the
-  // writer did not get through (rejected, or never written) is not checked, and the report says how many.
+  // The estimate counts a check for every component that has something to check against. One whose
+  // purpose the writer did not get through (rejected, or never written) is not checked, and the report says how many.
   const sent = new Set(todo.map((p) => p.component.id))
-  state.checksNotReached = plan.purposes.components.filter((c) => !sent.has(c.id) && snippetsOf(ctx, c).length > 0).map((c) => c.id)
+  state.checksNotReached = plan.purposes.components.filter((c) => !sent.has(c.id) && isCheckable(context(c))).map((c) => c.id)
   if (onboarding.checker.route === 'external') {
     if (todo.length > 0 && !options.checksFile) {
       writeCheckerBriefs({ ctx, todo })

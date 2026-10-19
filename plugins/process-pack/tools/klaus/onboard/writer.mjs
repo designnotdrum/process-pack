@@ -7,7 +7,8 @@
  * repo's AGENTS.md. It has the apply_patch tool and nothing else. The folder's files are in the
  * prompt, so it does not need to read anything. Text from the repo is marked as data. What the
  * model writes is never trusted as it stands: verify.mjs reads the two sentences out of it and writes
- * the comment itself.
+ * the two lines itself. A component's doc comment that is not in the form is kept whole: the writer
+ * is shown it and adds the two lines to it, and an edit that removes any of its text is rejected.
  */
 import { spawn } from 'node:child_process'
 import crypto from 'node:crypto'
@@ -15,7 +16,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { parseEvents, summarizeEvents } from './codex-events.mjs'
 import { MAX_SENTENCE } from './purpose-text.mjs'
-import { snippetsFor } from './source.mjs'
+import { commentWords, snippetsFor } from './source.mjs'
 
 /** A call is split when its files would pass this many characters, so one prompt stays a sensible size. */
 export const MAX_CALL_CHARS = 120_000
@@ -87,13 +88,13 @@ export function writerPrompt(call, boundary = newBoundary(), { external = false 
     '',
     'Rules',
     external ? '1. Your working folder is the repository root. File paths below are relative to it. Edit only the files listed under FILES.' : `1. Your working folder is ${folder}. File paths below are relative to it. Edit only the files listed under FILES.`,
-    '2. For each component listed under COMPONENTS, put one doc comment directly above its declaration, above the `export` keyword or above the `const` statement. If the component already has a doc comment, one that starts with /**, replace that one comment and keep nothing of its layout. A comment that starts with // or with /* is not a doc comment: leave it exactly as it is, and put the new doc comment above it.',
-    '3. The comment has exactly this form, with real text in place of the angle brackets:',
+    '2. For each component listed under COMPONENTS, the doc comment directly above its declaration, above the `export` keyword or above the `const` statement, gets the two lines of rule 3. A doc comment is one that starts with /**. If the component has none, add one that holds only the two lines. If it has one, keep every word of it exactly where it is and add the two lines inside it: after its text, and before its first line that starts with @, or before its closing */ when it has no such line. Never remove or reword any of its text. A comment that starts with // or with /* is not a doc comment: leave it exactly as it is, and put a new doc comment above it.',
+    '3. The two lines have exactly this form, with real text in place of the angle brackets. A new comment is these four lines:',
     '/**',
     ` * Use when: <one sentence of at most ${MAX_SENTENCE - 40} characters that says what the component is for and where it fits>.`,
     ` * Not for: <one sentence of at most ${MAX_SENTENCE - 40} characters that says what to use instead, or what it is the wrong choice for>.`,
     ' */',
-    '4. Base each sentence on the component\'s code and on its usage lines. Do not describe features the code does not have. Use plain words. No links, no markdown, no tags that start with @, no code fences, and only plain ASCII characters.',
+    '4. Base each sentence on the component\'s code, on its usage lines, and on its doc comment when it has one. The two sentences must agree with that comment, and need not repeat it. Do not describe features the code does not have. Use plain words. No links, no markdown, no tags that start with @, no code fences, and only plain ASCII characters.',
     '5. Change nothing else. Do not touch other components, imports, code or other comments. Do not create, rename or delete files. Do not format anything.',
     external ? '6. Edit the files in place with the tools you have. Do not run the repo\'s tests, install packages or commit anything. Leave every file that is not listed exactly as it is.' : '6. Use the apply_patch tool, in one call that covers every file you change. You have no other tool, and you do not need one.',
     '7. When the patch is applied, reply with the word done.',
@@ -103,7 +104,7 @@ export function writerPrompt(call, boundary = newBoundary(), { external = false 
   ]
   for (const file of call.files) {
     for (const c of file.components) {
-      lines.push(`- ${c.name}, in ${where(c.file)}. Props: ${props(c.entry)}.${c.existing ? ' It has a comment that is not in the form above; replace it.' : ''}`)
+      lines.push(`- ${c.name}, in ${where(c.file)}. Props: ${props(c.entry)}.${c.existing ? ` It has a doc comment that is not in the form above. Keep all of its text and add the two lines to it. It reads: ${commentWords(c.existing)}` : ''}`)
     }
   }
   lines.push('', 'USAGE (places the components are used)')

@@ -13,7 +13,7 @@ The decisions behind it are in NJM-1779 on the Klaus map (NJM-1767). The Linear 
 ## Running it
 
 ```sh
-node onboard/onboard.mjs estimate --repo <dir>
+node onboard/onboard.mjs estimate --repo <dir> [--captures <file>]
 node onboard/onboard.mjs run --repo <dir> --approve <plan id>
 ```
 
@@ -32,7 +32,17 @@ Run from the repo's default branch, with a clean tree, after the Klaus install c
 
 The checker's key is read from the environment variable the settings name (`OPENROUTER_API_KEY`). Start the command through the secret store so the variable exists for that command only, for example `2password run --env "OPENROUTER_API_KEY=op://..." -- node onboard/onboard.mjs run ...`. The key is sent in one header, appears in no log and no file, and is removed from the environment of the writer's process.
 
-To start over after a failure, delete the branches the run made (`klaus/onboarding-1-list`, `-2-purposes`, `-3-stories`), here and on `origin`, and close their pull requests. The run refuses to start while one exists. It names them when it stops, and puts back any file of the commit that failed.
+### After a stop: run it again
+
+A run that stops names the branches and pull requests it made, and puts back any file of the commit that failed. To go on, run `run` again with the same plan. It continues from the first pull request that is not merged (`stages.mjs`):
+
+- **The first pull request counts as merged** when the default branch holds each of its files with the same content as the plan writes, apart from the formatting a commit hook may have done: a JSON file is compared as parsed JSON, and a Markdown file with its whitespace collapsed. The list records the commit it was made at, and a list made at an earlier commit of this branch is the same list. None of its files is a component file, so the plan can always write them again.
+- **The second and third count as merged** when their own record is on the default branch: `docs/klaus/purposes.md` for the second and `docs/klaus/stories.json` for the third. Once either merges, its files are the plan's input (the components hold their purposes, or have stories), so a later plan cannot write it again. Run `estimate` again first: the plan changes.
+- **From the first that is not merged, every pull request is made again.** Its branch is cut again from the plan with `git checkout -B`, so a branch an earlier run made, with or without a pull request, is moved and its old commits stay in its reflog. An open pull request for that branch is closed with a comment, the branch is pushed over origin's only if origin still has the commit the run saw (`--force-with-lease`), and a new pull request is opened that says which one it replaces. The first one made is based on the default branch.
+- **The model's saved results are used again** (below), so a run that stopped after the model work makes no model call when it continues. When the purposes are merged there is no model work at all, and the key is not needed.
+- **Merged content that is not what the plan writes stops the run** before anything is spent, with each file that differs and the place: the JSON path, with the component's name, or the first Markdown line. The run does not overwrite a merged file. The same holds when `inventory.json` is there without the run's other files: that repo already has a baseline.
+
+`estimate` shows the same answer before a run: which pull requests are merged, where the run would continue, how many writer calls and checks are saved for this plan, and which results were saved for another plan and so are not used.
 
 ### Before any model call: the commit hook
 
@@ -44,7 +54,7 @@ The hook is run with `git hook run pre-commit`, which finds it the way a commit 
 
 ### A stop after the model work keeps it
 
-Each writer call that finishes and each check that answers pass or fail is saved under `.git/klaus-onboarding/results/<plan id>/` as soon as it arrives, written to a temporary file and renamed. A later `run` with the same plan uses a saved result instead of calling the model, when the file it is about hashes the same as now and the prompt would be the same (the prompt holds the usage lines, which come from files the plan id does not cover). A saved writer result is judged again by `verify.mjs`, the same as a new one. A writer call that failed and a check that could not answer are made again. The report counts the reused calls separately and at no cost.
+Each writer call that finishes and each check that answers pass or fail is saved under `.git/klaus-onboarding/results/<plan id>/` as soon as it arrives, written to a temporary file and renamed. A later `run` with the same plan uses a saved result instead of calling the model (a result saved for another plan id is not read), when the file it is about hashes the same as now and the prompt would be the same (the prompt holds the usage lines, which come from files the plan id does not cover). A saved writer result is judged again by `verify.mjs`, the same as a new one. A writer call that failed and a check that could not answer are made again. The report counts the reused calls separately and at no cost.
 
 ## Settings
 
@@ -83,7 +93,7 @@ With `"route": "external"` the run does not call that agent. It writes briefs an
 
 `estimate` prints what each part will do and cost, and `run` ends by setting the same numbers beside what happened (a table in the third pull request and in `.git/klaus-onboarding/report.json`).
 
-- **Counts are exact.** Entries, components needing a purpose, writer calls, checker calls, stories, duplicate pairs, tickets and decisions must match. Every call the estimate counted is accounted for. A writer call is made or reused. A check is made, reused, or not reached: the estimate counts a check for every component used somewhere, and a component whose written purpose was rejected before the check (or never written) gets none. The estimate cannot know beforehand which text will be rejected, so the report counts those and says how many under the table. On Meridian that was 13 of 248: the run made 235 checks, and every one of its 55 writer calls had finished.
+- **Counts are exact.** Entries, components needing a purpose, writer calls, checker calls, stories, duplicate pairs, tickets and decisions must match. Every call the estimate counted is accounted for. A writer call is made or reused. A check is made, reused, or not reached: the estimate counts a check for every component used somewhere or named by a comment, and a component whose written purpose was rejected before the check (or never written) gets none. The estimate cannot know beforehand which text will be rejected, so the report counts those and says how many under the table. On Meridian that was 13 of 248: the run made 235 checks, and every one of its 55 writer calls had finished.
 - **Tokens must land within 30%.** They are compared for the calls made in that run, against the estimate's figure for each of those calls.
 - **Dollars must land within 100% or USD 0.001, whichever is more.** The checker's cost is a few hundredths of a cent for a handful of components, so the floor is what applies to a small repo.
 
@@ -99,23 +109,23 @@ The estimate says plainly that the code leaves the machine: the files of each fo
 
 Text from the repo (component names, doc comments, usage lines) is untrusted input to both models. It is passed as data between two lines that carry a random token for each call, and the instructions come first.
 
-- **The checker has no tools.** It gets the purpose, the props and up to five places the component is used, and replies with a verdict. Its reply is read as `pass` or `fail` and a reason. It names no file, no path and no command. The reason is cleaned (addresses, markdown and anything outside plain ASCII are removed) before it reaches a pull request.
+- **The checker has no tools.** It gets the purpose, the props, up to five places the component is used, the comment directly above the component (which the purpose is added to) and up to four other comments that name it, in its own file and the files that use it, and replies with a verdict. A purpose that contradicts one of those comments fails. Its reply is read as `pass` or `fail` and a reason. It names no file, no path and no command. The reason is cleaned (addresses, markdown and anything outside plain ASCII are removed) before it reaches a pull request.
 - **The writer has one tool.** `codex exec` runs with the folder as its working root, `--sandbox workspace-write`, no shell (`features.shell_tool=false`), no web search, no hooks, none of the user's Codex settings and no `AGENTS.md`. The files of the folder are in the prompt, so it has nothing to read. It has `apply_patch` to write. A shell would let a comment in a file steer a command.
-- **Nothing the writer wrote is trusted as it stands.** After each call `verify.mjs` compares each file with the plan. A file passes only if, once the doc comments of the listed components are cut out, it is the same as before (line breaks and indentation aside). A file outside the plan, a new file or a changed line of code rejects the call. For a passing file, the run reads the two sentences out of the comment and writes the comment itself in one fixed form. Sentences with a link, an `@` tag, a pipe, a comment marker, markup or a non-ASCII character are refused, and so is one over 200 characters.
+- **Nothing the writer wrote is trusted as it stands.** After each call `verify.mjs` compares each file with the plan. A file passes only if, once the doc comments of the listed components are cut out, it is the same as before (line breaks and indentation aside). A file outside the plan, a new file or a changed line of code rejects the call. For a passing file, the run reads the two sentences out of the comment and writes the two lines itself in one fixed form. A doc comment the component had before is kept: the writer is shown it and told to add the two lines after its text, an edit that removes or rewords any of its text is rejected, and the run writes the two lines into the old comment, before its first tag (the inventory reads only the text before the tags), without removing a byte of it. Sentences with a link, an `@` tag, a pipe, a comment marker, markup or a non-ASCII character are refused, and so is one over 200 characters.
 - **A plain comment is left where it is.** A `//` comment above a component is not a doc comment. The new doc comment goes above it, so a lint directive keeps its target. (The first real call replaced it, which this check rejected, and the prompt now says so.)
 - **No link is followed when writing.** Every write goes through `plain-path.mjs`, which refuses a symbolic link on the way to a file or in the file itself, and a path that resolves outside the repo. It repeats `install/safe-write.mjs` because `install/` is not part of the copy that design-onboard puts in a repo.
 - **Only named paths are committed.** The run adds the files it wrote by name, never everything.
 
 ## Purposes
 
-A component needs a purpose when it has no doc comment, or its comment lacks "Use when:" or "Not for:". Components are grouped by folder, with at most `maxComponentsPerCall` in one call and about 120,000 characters of source. A file over 60,000 characters is left for a person.
+A component needs a purpose when it has no doc comment, or its comment lacks "Use when:" or "Not for:". A doc comment that is there keeps all of its text, and the two lines are added to it, so the reason a comment gives for the code stays with the code. (The first Meridian run replaced 153 such comments and lost that text.) A comment that already has one of the two labels is left for a person, since a second label would make the inventory read the first. Components are grouped by folder, with at most `maxComponentsPerCall` in one call and about 120,000 characters of source. A file over 60,000 characters is left for a person.
 
-Each written purpose is then checked once, against up to five places the component is used, found from the inventory's own import graph (so barrels and path aliases count). The outcomes:
+Each written purpose is then checked once, against up to five places the component is used, found from the inventory's own import graph (so barrels and path aliases count), and against its own comment and the comments that name it. The outcomes:
 
 - **Written and passed.** In the pull request.
-- **Written and not checked.** In the pull request, and listed as such. This is a component used nowhere, or one whose check could not be answered.
+- **Written and not checked.** In the pull request, and listed as such. This is a component used nowhere and named by no comment, or one whose check could not be answered.
 - **Failed the check.** Not in the pull request. Its proposed text and the checker's reason are in `docs/klaus/purposes.md`, so a person can edit it and add it.
-- **Rejected.** The writer changed more than the comment, or the text was not acceptable. Nothing is written.
+- **Rejected.** The writer changed more than the comment, removed text from a comment that was there, or wrote text that was not acceptable. Nothing is written.
 
 ## Duplicates
 
@@ -146,7 +156,7 @@ A component shows live data when its own file imports a data or auth package (`@
 - A required prop typed as an object, a generic or a type from another file cannot be given a sample value, so that component is listed for a person to write.
 - Existing `.mdx` stories are not read.
 - The writer's coverage is the files of a folder. A component declared in a way `source.mjs` cannot place (a re-export from another file) is left for a person with the reason.
-- A purpose is checked against how the component is used, not against what it does. A purpose the usage cannot contradict passes.
+- A purpose is checked against how the component is used and what comments say about it, not against what it does. A purpose the usage and the comments cannot contradict passes. A comment that describes the component without naming it, such as "this component" inside another file, is not found.
 
 ## Tests
 
@@ -154,4 +164,4 @@ A component shows live data when its own file imports a data or auth package (`@
 node --test "plugins/process-pack/tools/klaus/onboard/**/*.test.mjs"
 ```
 
-The tests run on a copy of a small sample repo in `tests/fixtures/sample` (the same five components as the real sample, `designnotdrum/klaus-onboarding-sample`, with a stub for React's types), a local bare repository as `origin`, a stub `gh` and a stub `codex` in `tests/stub/`, and a fake `fetch` for the checker. They call no model and no network. The quoted glob is needed on Node 22, where a bare directory argument is not expanded. `hooks-and-resume.test.mjs` installs a pre-commit hook in the copy, a shell script that reads what is staged, to show a refusal before the writer and a run that reuses what a stopped run saved.
+The tests run on a copy of a small sample repo in `tests/fixtures/sample` (the same five components as the real sample, `designnotdrum/klaus-onboarding-sample`, with a stub for React's types), a local bare repository as `origin`, a stub `gh` and a stub `codex` in `tests/stub/`, and a fake `fetch` for the checker. They call no model and no network. The quoted glob is needed on Node 22, where a bare directory argument is not expanded. `hooks-and-resume.test.mjs` installs a pre-commit hook in the copy, a shell script that reads what is staged, to show a refusal before the writer and a run that reuses what a stopped run saved. `keep-comments.test.mjs` gives a component a comment with its reason in it. `continue.test.mjs` merges pull requests into the copy's `main`, with the formatting a hook would add, and runs again.

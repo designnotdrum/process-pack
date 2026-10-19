@@ -14,6 +14,7 @@ import { buildInventory } from '../inventory/inventory.mjs'
 import { createTsconfigLoader } from '../inventory/tsconfig.mjs'
 import { readUsage } from '../inventory/usage.mjs'
 import { findDuplicates } from './duplicates.mjs'
+import { hasPurposeLabel } from './purpose-text.mjs'
 import { docCommentOf, findComponent, parseSource } from './source.mjs'
 import { planStories } from './stories.mjs'
 import { groupIntoCalls } from './writer.mjs'
@@ -38,7 +39,13 @@ export function planPurposes({ root, ts, inventory }) {
       continue
     }
     const doc = docCommentOf(ts, sourceFile, found.statement)
-    components.push({ id, name: entry.name, file: entry.file, dir: path.posix.dirname(entry.file), kind: entry.purpose ? 'unformatted' : 'missing', existing: doc?.text ?? null, entry })
+    // Half a purpose is a person's to finish: a second label would make the comment read as the first.
+    if (doc && hasPurposeLabel(doc.text)) {
+      skipped.push({ id, name: entry.name, file: entry.file, reason: 'its doc comment already has a Use when or a Not for line, but not both where the inventory reads them' })
+      continue
+    }
+    // A doc comment with only tags gives the inventory no purpose text, and it is kept all the same.
+    components.push({ id, name: entry.name, file: entry.file, dir: path.posix.dirname(entry.file), kind: doc ? 'unformatted' : 'missing', existing: doc?.text ?? null, entry })
   }
   return { components, skipped }
 }
