@@ -2,7 +2,7 @@
 
 The Figma generator (`../`) writes data for Plugin API code and makes no Figma call. Figma's MCP server refuses a plain script, so the relay builds each call's code from that data and sends it through a signed-in Codex CLI. Codex calls `use_figma` once per data file with the code unchanged. It makes no design decisions.
 
-The relay carries the small updates after each release: one component version per call, by default. The first, large load of a repo's components goes through a Klaus Figma plugin instead (a separate ticket), because a relay call costs about 70,000 to 100,000 relay tokens.
+The relay carries the small updates after each release: one component version per call, by default. The first, large load of a repo's components goes through a Klaus Figma plugin instead (a separate ticket), because a relay call costs about 70,000 to 100,000 relay tokens. The plugin cannot write the repo's ledger, so `--reconcile` marks what the plugin wrote (see "Reconcile after the plugin's first load").
 
 ## Which machine runs it
 
@@ -144,10 +144,47 @@ Next to the frame's fields (`written`, `deferred`, `failed`, `estimated`, `actua
 
 Exit code 1 means a unit failed. Exit code 2 means something to fix before a run, such as the Figma sign-in.
 
+## Reconcile after the plugin's first load
+
+The Klaus plugin runs inside Figma and cannot write the repo's ledger, `.klaus/figma/ledger.json`. After it runs, the ledger still lists every unit as `generated`, and the next relay run would send each one again. `--reconcile` fixes that with one read-only `use_figma` call:
+
+```sh
+node scripts/klaus/adapters/figma/relay/relay.mjs --reconcile
+```
+
+It takes no release folder, `--run`, `--repo`, `--artifact` or `--release`. `--dry-run`, `--json`, `--max-calls`, `--model`, `--effort`, `--timeout`, `--events-dir`, `--ledger`, `--config` and `--report-dir` work as they do for a send.
+
+What it does:
+
+1. Reads the ledger and takes every component version that is `generated`. Screens are not read: they are frames, not components, so generated screens stay `generated` and the report says so. A `changed` version is not looked for and is never touched. A `sent` version is not looked for.
+2. Works out the pages to read: each version's page (the `page` setting, or the component's own name, the same rule as the generator) and `Older versions`. A component whose page name has a control character or is over 100 characters is left `generated`, with a warning.
+3. Writes the call's code (`reconcile.mjs` `reconcileCode`). It writes nothing, makes no page and switches no page. For each page it finds the page by name, loads it with `page.loadAsync()` (as the generated code does, so it is not a page switch), and collects the names of the component sets and components that sit directly on it. It returns `{ names }` and nothing else.
+4. Checks the spending cap as a send does (the predicted tokens and `--max-calls`). Component writes count for nothing, because the call writes none. A call over the cap is not made, and the versions are reported as deferred.
+5. Runs `codex exec` once, with the same limits as a send: the settings' Figma file only, a clean Codex config, only the figma server's `use_figma` tool, a 60-second start-up wait, no hooks, a read-only sandbox, the code on stdin byte for byte.
+6. Applies the copy check. The code `use_figma` received, by Codex's own events, must equal the code the relay wrote, on the settings' file, and the call must have completed. If not, the result is refused, and the error says the code could have written, so the file needs a look.
+7. Reads the names from the tool's result only, never the model's closing message. The result must hold a `names` list of strings. Anything else is refused and nothing changes. A string that is not shaped like `<Name> <version>` (another person's component on a Klaus page, for example) is dropped and counted as `otherNames`. A name that matches no generated version is ignored.
+8. Marks each generated version whose exact `<Name> <version>` is in the list as `sent`. The ledger is read again just before the write, so a mark another run wrote is kept, and a version that is no longer `generated` by then is left as it is. Versions not found stay `generated`.
+
+The report counts the call and its tokens under `figma-relay`, like a send. It differs from a send in these ways:
+
+- `written` is empty, because the relay wrote no set. The versions it marked are in `adapter.details.reconciled`, with status `reconciled` in `adapter.details.units`, so a reconciled version can be told from a relayed send (`sent`).
+- `adapter.details.missing` lists the versions the file did not have. They stay `generated`. A missing version is not a failure: the plugin may not have written it yet.
+- `adapter.details.changed` lists the `changed` versions that were left alone.
+- A refused or failed call is one entry in `failed`, with the id `reconcile`, and the run exits with 1. No version is called missing then, because the answer could not be read.
+
+The ledger itself does not record how a version became `sent`. Its statuses are still `generated`, `sent` and `changed`, so the generator and the relay read it as before.
+
+The page names are the one part of the call's code that is not fixed text. They come from the repo's own settings and ledger, never from an artifact, and each is written as a list of character codes, so the relaying model reads no name. The code holds no backslash.
+
+A set found by name is a set that exists. As with the generator's `exists`, Klaus cannot tell a set the plugin wrote from a person's set with the same name, and it does not check the set's contents.
+
+On 2026-10-18 one real call ran against the Klaus prototype file, with `page` set to `Runtime check 2` and Button 1.0.0 and 1.1.0 `generated`. It returned `["Button 1.1.0", "Button 1.0.0"]`, found both, and cost 41,351 relay tokens (40,918 input, 433 output) in 17 seconds. The code was 630 characters and arrived exactly. The prediction was 71,882, because the cap uses the rate measured for 20,000-character send calls, so it is high for this call. This is one sample.
+
 ## Limits
 
 - Screenshot uploads go through another tool, which the relay does not call yet. They are reported as deferred with the reason `upload-not-supported`, and so is the retention file.
 - `templates/klaus.yml` does not upload `.klaus/figma/` as an artifact yet. `--run` expects an artifact, named `klaus-figma` unless `--artifact` says otherwise, that holds a release folder.
+- Reconcile looks only at the top level of each page it reads. A set a person moved into a section or a frame is not found, and its version stays `generated`.
 - Run one relay at a time for a ledger. The relay re-reads the ledger just before each write and keeps marks written since, but it takes no lock.
 - The report's `usd` is always 0, because the relay spends the ChatGPT plan's Codex quota, not money per call.
 - The ledger must be where both the generator and the relay read it. When the generator runs in CI and the relay runs elsewhere, the relay updates its own repo's ledger, not CI's.
