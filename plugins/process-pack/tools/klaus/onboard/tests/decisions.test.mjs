@@ -431,3 +431,30 @@ test('a namespace import of a barrel makes a wrapper when the file uses the comp
     second.cleanup()
   }
 })
+
+test('an import of a package of this repo that resolves to source is followed, so a same-named component elsewhere in the package is not a wrapper target', async () => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const second = makeDecisionsSample()
+  try {
+    const tsconfig = JSON.parse(fs.readFileSync(path.join(second.repo, 'tsconfig.json'), 'utf8'))
+    tsconfig.compilerOptions.paths['@sample/ui'] = ['./packages/ui/src/index.ts']
+    fs.writeFileSync(path.join(second.repo, 'tsconfig.json'), JSON.stringify(tsconfig))
+    const body = (name, classes) => `export function ${name}({ data, selected }: { data: string; selected?: boolean }) {\n  return <div className="${classes}" data-selected={selected}>{data}</div>\n}\n`
+    const ui = path.join(second.repo, 'packages/ui/src')
+    fs.mkdirSync(path.join(ui, 'legacy'))
+    fs.writeFileSync(path.join(ui, 'Crate.tsx'), body('Crate', 'rounded border bg-white'))
+    fs.writeFileSync(path.join(ui, 'legacy/Crate.tsx'), body('Crate', 'shadow-lg bg-gray-900'))
+    fs.appendFileSync(path.join(ui, 'index.ts'), "export { Crate } from './Crate'\n")
+    fs.writeFileSync(path.join(second.repo, 'apps/web/src/components/WideCrate.tsx'), `import { Crate } from '@sample/ui'\n\n${body('WideCrate', 'rounded-xl bg-red-100').replace('{data}</div>', '<Crate data={data} /></div>')}`)
+    fs.mkdirSync(path.join(second.repo, 'apps/web/src/app/crates'))
+    fs.writeFileSync(path.join(second.repo, 'apps/web/src/app/crates/page.tsx'), "import { Crate as Old } from '../../../../../packages/ui/src/legacy/Crate'\nimport { WideCrate } from '@/components/WideCrate'\n\nexport default function CratesPage() {\n  return [Old, WideCrate]\n}\n")
+    const found = planOf(second.repo).duplicates
+    const reasons = found.dismissed.map((d) => d.reason)
+    assert.ok(reasons.some((r) => r === "the web app's WideCrate is built on the shared UI package's Crate"), reasons.join(' | '))
+    // The wrapper does not import the legacy Crate, so that pair is still a question.
+    assert.ok(found.some((p) => p.verdict === 'decide' && [p.keep.file, p.drop.file].includes('packages/ui/src/legacy/Crate.tsx') && [p.keep.name, p.drop.name].includes('WideCrate')), 'the legacy Crate and the wrapper')
+  } finally {
+    second.cleanup()
+  }
+})

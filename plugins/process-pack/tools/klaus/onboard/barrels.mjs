@@ -13,6 +13,13 @@ function declares(ts, statement, name) {
   return (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)) && statement.name?.text === name
 }
 
+/** True for `export default function F`, `export default class C`. */
+function isDefaultDeclaration(ts, statement) {
+  if (!(ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) || !ts.canHaveModifiers(statement)) return false
+  const kinds = (ts.getModifiers(statement) ?? []).map((m) => m.kind)
+  return kinds.includes(ts.SyntaxKind.ExportKeyword) && kinds.includes(ts.SyntaxKind.DefaultKeyword)
+}
+
 /** The module a file's own import brings each local name from, and the name it had there: `import { A as B } from './a'` gives B from './a' as A. */
 function importBindings(ts, sourceFile) {
   const bindings = new Map()
@@ -67,7 +74,12 @@ export function declaringFile({ ts, tsconfigs, file, name, seen = new Set() }) {
         const target = imported && resolveFrom(ts, tsconfigs, file, imported.spec)
         return target ? (declaringFile({ ts, tsconfigs, file: target, name: imported.imported, seen }) ?? target) : file
       }
-    } else if (declares(ts, statement, name)) return file
+    } else if (name === 'default' && ts.isExportAssignment(statement) && !statement.isExportEquals) {
+      // `export default Foo`: Foo is declared here, or imported here from another file.
+      const imported = ts.isIdentifier(statement.expression) ? importBindings(ts, sourceFile).get(statement.expression.text) : null
+      const target = imported && resolveFrom(ts, tsconfigs, file, imported.spec)
+      return target ? (declaringFile({ ts, tsconfigs, file: target, name: imported.imported, seen }) ?? target) : file
+    } else if (declares(ts, statement, name) || (name === 'default' && isDefaultDeclaration(ts, statement))) return file
   }
   for (const spec of stars) {
     const target = resolveFrom(ts, tsconfigs, file, spec)

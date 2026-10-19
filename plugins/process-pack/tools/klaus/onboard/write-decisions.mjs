@@ -31,8 +31,8 @@ import { mkdirPlain, removePlainFile, writePlainFile } from './plain-path.mjs'
 
 /** The files an earlier run of this command may have left: numbered tickets and numbered pictures. Nothing else in those folders is touched. */
 const GENERATED = [
-  { folder: 'tickets', name: /^\d\d-(?:merge|remove)-.+\.md$/ },
-  { folder: 'decisions', name: /^\d\d-.+\.png$/ },
+  { folder: 'tickets', name: /^\d{2,}-(?:merge|remove)-.+\.md$/ },
+  { folder: 'decisions', name: /^\d{2,}-.+\.png$/ },
 ]
 
 const USAGE = 'Usage: write-decisions.mjs --repo <dir> [--storybook <dir>] [--out <dir>] [--ask-all]'

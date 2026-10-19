@@ -119,9 +119,10 @@ export function findDuplicates({ ts, root, inventory, setAside: setAsideOn = tru
   /**
    * True when the file of `entry` imports `other`, so `entry` is built on `other`. An import is
    * followed to the file it names, through barrel files, and counts when that is the file `other` is
-   * in, whatever the import calls it. An import of a package in this repo cannot be followed to its
-   * source, so it counts when it takes a name that `other` has and `other` is in that package. A
-   * namespace import counts when the file uses `Namespace.Name` and the barrel reaches `other`.
+   * in, whatever the import calls it. An import that does not resolve to a source file in this repo,
+   * as an import of a package here usually resolves to its built files, counts when it is of a
+   * package in this repo, takes a name that `other` has and `other` is in that package. A namespace
+   * import counts when the file uses `Namespace.Name` and the barrel reaches `other`.
    */
   const builtOn = (entry, other) => {
     const file = path.join(root, entry.file)
@@ -129,11 +130,12 @@ export function findDuplicates({ ts, root, inventory, setAside: setAsideOn = tru
     const target = toPosix(path.join(root, other.file))
     const text = fs.readFileSync(file, 'utf8')
     return imported.get(entry.file).some((item) => {
-      const folder = workspaces.get(packageOf(item.module))
-      if (folder !== undefined) return isIn(other.file, folder) && (item.defaultName === other.name || item.names.some((n) => n.imported === other.name))
       const resolved = ts.resolveModuleName(item.module, file, tsconfigs.optionsFor(file), ts.sys).resolvedModule?.resolvedFileName
-      if (!resolved) return false
-      const module = toPosix(resolved)
+      const module = resolved && toPosix(resolved)
+      if (!module || module.endsWith('.d.ts') || module.includes('/node_modules/') || !module.startsWith(`${toPosix(root)}/`)) {
+        const folder = workspaces.get(packageOf(item.module))
+        return folder !== undefined && isIn(other.file, folder) && (item.defaultName === other.name || item.names.some((n) => n.imported === other.name))
+      }
       if (item.namespace && text.includes(`${item.namespace}.${other.name}`) && (module === target || reExportedFiles({ ts, tsconfigs, file: module }).includes(target))) return true
       return module === target || [...item.names.map((n) => n.imported), ...(item.defaultName ? ['default'] : [])].some((name) => declaringFile({ ts, tsconfigs, file: module, name }) === target)
     })
