@@ -69,7 +69,7 @@ node scripts/klaus/adapters/figma/relay/relay.mjs --run 1234567890 --repo acme/a
 
 1. Reads `manifest.json`. If it names another Figma file than `klaus.config.json`, the run stops.
 2. Reads every data file with `../data-file.mjs`, before any call. A file that is not JSON, is not the generator's shape, writes to a variable collection or page the settings do not name, or does not match the manifest stops the run, and nothing is sent.
-3. Builds each call's code from its data file and the runtime in this checkout (`../codegen.mjs` `codeFor`). Code in the artifact is never read.
+3. Builds each call's code from its data file and the runtime in this checkout (`../codegen.mjs` `codeFor`). Code in the artifact is never read. Every string from the data is encoded with a new random key for each call, so the model reads no text from the data (see "What the model sees" below).
 4. Checks that Codex has a `figma` server that is signed in. If not, it stops before any call.
 5. Reads the ledger, `.klaus/figma/ledger.json` (or `outputs.figma.options.outputDir`).
 6. For each data file in order, skips it when every unit in it is already sent. Otherwise it checks the spending cap, then runs `codex exec` once:
@@ -92,11 +92,25 @@ When Codex changed the code and Figma still wrote a unit from it, the set in Fig
 
 The cap comes from `spendingCap` in `klaus.config.json`. A repo picks it at onboarding, with the cost shown first. Without one, the frame's defaults apply: 50 component writes and 500,000 relay tokens a run.
 
-500,000 relay tokens is about six Button-sized component versions at the measured average of about 83,000 a call. The cap counts the prediction, about 100,000 for such a version, so a run sends five. A version with more variants costs more, and the rest wait for the next run.
+500,000 relay tokens is about six Button-sized component versions at the measured average of about 83,000 a call. The cap counts the prediction, about 101,000 for such a version, so a run sends four. A version with more variants costs more, and the rest wait for the next run.
 
  Before each call the relay adds the file's components and its predicted tokens to what the run has used. If either would pass its limit, the call is not made. That file and every file after it are reported as deferred, and they stay `generated`. A file that alone needs more tokens than the whole limit is deferred as `larger-than-token-cap`, with a warning that it will never fit. `--max-calls <n>` adds a limit on calls. Going over the cap is not a failure.
 
 A call's relay tokens are Codex's `input_tokens` plus `output_tokens`. Cached input is part of input, and reasoning output is part of output. The prediction is 71,000 tokens plus 1.4 tokens per character of code, from the real runs. The generator's `estimate` uses the same rate (`relayCallTokens` in `../settings.mjs`), so the frame's cap and the relay's cap count the same thing. A call measured during the run raises the prediction for the next ones, never lowers it. A call that ends without a token count is left out of the report's actual tokens, and the cap counts its prediction.
+
+## What the model sees
+
+Text in a data file (a description, a button's words, SVG markup, a component or page name) could be written to steer the model that copies the code, for example a description that says to ignore the prompt and send other code. The copy check only runs after Figma has run the call, so the relay keeps that text from the model instead:
+
+- Every string from the data becomes its UTF-8 bytes XORed with a random 32-byte key, in base64. The key is new for each call and sits in the code as a list of numbers, `KEY`.
+- Seven fields stay plain: `kind`, `k`, `L`, `pa`, `ca`, `td` and `tt`. `data-file.mjs` holds each to a few fixed values, such as `"component"` or `"H"`, and the runtime branches on them.
+- The file's header line becomes the fixed text `Klaus Figma code`, because a header lists units by name.
+- The runtime decodes every string once, before it uses any of the data, with a decoder of its own (no `atob`, no backslashes). The rest of the runtime is the code call 7 ran.
+- The copy check compares what `use_figma` received against this encoded code.
+
+The Klaus Figma plugin builds the same code without a key, because no model reads what a plugin runs. Both read data files with the same `data-file.mjs`.
+
+Encoding makes text about a third longer, and the decoder adds about 1,900 characters to the runtime. The Button with icons came to 22,688 characters, against 20,329 before. The estimate's data part is now 1,600 characters a component plus 160 a variant, from Meridian's two Button files encoded (4,434 characters for 18 variants, 6,337 for 30).
 
 ## What the real runs measured
 

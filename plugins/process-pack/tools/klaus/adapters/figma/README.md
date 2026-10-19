@@ -9,7 +9,7 @@ The values come from the browser's computed styles, not from the CSS files. On M
 | Step | What the adapter does |
 |---|---|
 | `plan` | Lists the components whose current version is not written yet, and the screens to write for this release. A component with no story in the Storybook build is left out. |
-| `estimate` | Costs a component version at the relay's measured rate: 71,000 relay tokens a call plus 1.4 a character of code, about 100,000 for a Button-sized version, and one call. The code's size is the runtime plus about 1,200 characters and 155 a variant. A screenshot upload and an editable screen are costed apart (unverified, there is no measurement). |
+| `estimate` | Costs a component version at the relay's measured rate: 71,000 relay tokens a call plus 1.4 a character of code, about 100,000 for a Button-sized version, and one call. The code's size is the runtime plus about 1,600 characters and 160 a variant, as the relay encodes it. A screenshot upload and an editable screen are costed apart (unverified, there is no measurement). |
 | `write` | Reads each story in a static Storybook build, builds the data, packs it into files of one component version each (`componentsPerCall`) whose code is at most 50,000 characters, and lists the screenshots to upload. It sends nothing. |
 | `report` | Says where the files are and links the Figma file. |
 
@@ -23,7 +23,7 @@ The values come from the browser's computed styles, not from the CSS files. On M
 | `manifest.json` | The file key, each data file with the length of its code and its units, the ledger entry of each unit, the uploads, the retention file, and warnings. |
 | `figma-retention.json` | Present when there are screenshots. Run it after the uploads. It keeps the last N versions of each screen. |
 
-A data file holds the call's variable collection, its colour tokens and its units, as JSON (`codegen.mjs` `dataFor`). Whatever sends it reads it with `data-file.mjs`, which refuses anything that is not the generator's shape, checks that it writes only to the collection and pages the repo's settings name, and builds the code with `codegen.mjs` `codeFor`. So an artifact from CI never supplies code.
+A data file holds the call's variable collection, its colour tokens and its units, as JSON (`codegen.mjs` `dataFor`). Whatever sends it reads it with `data-file.mjs`, which refuses anything that is not the generator's shape, checks that it writes only to the collection and pages the repo's settings name, and builds the code with `codegen.mjs` `codeFor`. So an artifact from CI never supplies code. The relay passes `codeFor` a key, which encodes every string in the data so the relaying model cannot read it; the plugin passes none.
 
 An entry in `uploads` has the image path, the page, and the name the frame must have: `<route> <release>`. The retention code reads that name, so the relay must keep it.
 

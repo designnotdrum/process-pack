@@ -15,7 +15,7 @@ export const SCHEMA = JSON.parse(readFileSync(new URL("../klaus.config.schema.js
 /**
  * A repo picks its cap at onboarding. 500,000 relay tokens is about six Button-sized component
  * versions through the Figma relay at the measured average of about 83,000 a call. The cap counts
- * the relay's prediction, about 100,000 for such a version, so a run sends five.
+ * the relay's prediction, about 101,000 for such a version, so a run sends four.
  */
 export const DEFAULT_SPENDING_CAP = Object.freeze({ maxComponentWrites: 50, maxRelayTokens: 500000 });
 

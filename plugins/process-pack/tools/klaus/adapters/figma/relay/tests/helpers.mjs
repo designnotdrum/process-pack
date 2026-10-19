@@ -12,7 +12,7 @@ export const KEY = "KlausRelayTestFileKey0000";
 export const RELAY = fileURLToPath(new URL("../relay.mjs", import.meta.url));
 export const STUBS = fileURLToPath(new URL("./stub", import.meta.url));
 
-const entry = (name) => ({
+const entry = (name, purpose = { useWhen: "", notFor: "", text: "" }) => ({
   name,
   kind: "shared",
   folder: "packages/ui",
@@ -21,7 +21,7 @@ const entry = (name) => ({
   parts: [],
   // The recorded capture's own axes, so the unit matches it.
   variants: { variant: ["primary", "secondary", "destructive", "outline", "ghost", "link"], size: ["sm", "md", "lg"] },
-  purpose: { useWhen: "", notFor: "", text: "" },
+  purpose,
   version: "1.0.0",
   usedIn: ["a.tsx"],
 });
@@ -40,9 +40,9 @@ const browser = {
  * perFile says otherwise. Returns the repo, the release folder and the manifest.
  */
 /** A cap no test reaches unless it means to. At measured costs, the frame's default allows about one call. */
-const ROOMY = { outputs: { figma: { enabled: true, target: KEY } }, spendingCap: { maxRelayTokens: 10000000 } };
+export const ROOMY = { outputs: { figma: { enabled: true, target: KEY } }, spendingCap: { maxRelayTokens: 10000000 } };
 
-export async function generatedRepo({ components = ["Button", "Card"], perFile = 1, release = "v1.0.0", config = ROOMY } = {}) {
+export async function generatedRepo({ components = ["Button", "Card"], perFile = 1, release = "v1.0.0", config = ROOMY, purpose } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "klaus-relay-"));
   if (config) writeFileSync(path.join(root, "klaus.config.json"), JSON.stringify(config));
   const ctx = {
@@ -51,7 +51,7 @@ export async function generatedRepo({ components = ["Button", "Card"], perFile =
     // The generator runs with the repo's own settings, as the relay reads them.
     settings: { ...config.outputs.figma, options: { ...config.outputs.figma.options, componentsPerCall: perFile } },
     selection: { componentGroups: [], screens: { mode: "none", routes: [] }, newComponents: { rule: "all", minUsage: 2 } },
-    inventory: { schemaVersion: 1, folders: ["packages/ui"], entries: components.map(entry) },
+    inventory: { schemaVersion: 1, folders: ["packages/ui"], entries: components.map((name) => entry(name, purpose)) },
     trigger: "manual",
     release,
     releases: [release],

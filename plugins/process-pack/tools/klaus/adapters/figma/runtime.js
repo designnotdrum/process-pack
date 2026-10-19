@@ -7,6 +7,11 @@
  *   TOKENS  the colour variables the units in this file use
  *   UNITS   the component sets and screens to write, as built by spec.mjs
  *   SVGS    SVG markup, as template literals; a unit's svgs list holds indexes into it
+ *   KEY     null, or the key the relay encoded every string of the data with
+ *
+ * With a KEY, every string in CONFIG, TOKENS and UNITS is base64 of its UTF-8
+ * bytes XORed with the key, except the fields in PLAIN_FIELDS. decodeData turns
+ * them back before anything else runs, so the rest of this file sees plain data.
  *
  * This file is not run by Node. It is plain JavaScript for the Figma Plugin API
  * and it avoids newer syntax on purpose. It uses top-level await and return,
@@ -41,6 +46,9 @@ const COUNTER = { C: "CENTER", E: "MAX", T: "BASELINE" };
 const VERSION = /^[0-9]+([.][0-9]+)*([-+][0-9A-Za-z.-]+)?$/;
 const DIGITS = /^[0-9]+$/;
 const NEWLINE = String.fromCharCode(10);
+// The same list as codegen.mjs PLAIN_FIELDS.
+const PLAIN_FIELDS = ["kind", "k", "L", "pa", "ca", "td", "tt"];
+const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const warnings = [];
 const loadedFonts = {};
 let fontStyles = null;
@@ -492,6 +500,61 @@ async function retainScreens(U) {
   } catch (e) {
     return { id: U.id, status: "failed", error: message(e) };
   }
+}
+
+/** The text one encoded string holds: base64 to bytes, XOR with KEY, UTF-8 to text. */
+function decodeText(encoded) {
+  const bytes = [];
+  let value = 0;
+  let bits = 0;
+  for (let i = 0; i < encoded.length; i++) {
+    const digit = BASE64.indexOf(encoded.charAt(i));
+    if (digit < 0) continue;
+    value = (value << 6) | digit;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes.push((value >> bits) & 255);
+      value = value & ((1 << bits) - 1);
+    }
+  }
+  for (let i = 0; i < bytes.length; i++) bytes[i] = bytes[i] ^ KEY[i % KEY.length];
+  let text = "";
+  let i = 0;
+  while (i < bytes.length) {
+    const first = bytes[i];
+    let size = 1;
+    let point = first;
+    if (first >= 240) { size = 4; point = first & 7; } else if (first >= 224) { size = 3; point = first & 15; } else if (first >= 192) { size = 2; point = first & 31; }
+    for (let j = 1; j < size; j++) point = (point << 6) | (bytes[i + j] & 63);
+    i += size;
+    if (point > 65535) {
+      point -= 65536;
+      text += String.fromCharCode(55296 + (point >> 10), 56320 + (point & 1023));
+    } else {
+      text += String.fromCharCode(point);
+    }
+  }
+  return text;
+}
+
+/** Decodes every string in place, except those of PLAIN_FIELDS. field is the key the value sits under. */
+function decodeData(value, field) {
+  if (typeof value === "string") return PLAIN_FIELDS.indexOf(field) >= 0 ? value : decodeText(value);
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) value[i] = decodeData(value[i], field);
+    return value;
+  }
+  if (value !== null && typeof value === "object") {
+    Object.keys(value).forEach(function (name) { value[name] = decodeData(value[name], name); });
+  }
+  return value;
+}
+
+if (KEY) {
+  decodeData(CONFIG, "");
+  decodeData(TOKENS, "");
+  decodeData(UNITS, "");
 }
 
 const result = { tokens: { made: [], updated: [] }, units: [], warnings: warnings };

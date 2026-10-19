@@ -8,7 +8,7 @@ import { resolveConfig, runKlaus, validateConfig } from "../../../frame/index.mj
 import adapter, { createAdapter, DEFAULT_VERSION, fileKeyOf } from "../index.mjs";
 import { readLedger, recordComponent, SENT } from "../ledger.mjs";
 import { MAX_CODE_CHARS, TOKENS_PER_EDITABLE_SCREEN, TOKENS_PER_SCREEN_IMAGE } from "../settings.mjs";
-import { codeFor, RUNTIME_CODE } from "../codegen.mjs";
+import { codeFor, RUNTIME_CODE, SIZING_KEY } from "../codegen.mjs";
 import { readData } from "../data-file.mjs";
 import { runCode } from "./fake-figma.mjs";
 import { buttonCapture, newFigma } from "./helpers.mjs";
@@ -141,9 +141,9 @@ test("estimate: one relay call for each component version, at the measured relay
   const plan = await adapter.plan(ctx);
   const estimate = await adapter.estimate(plan, ctx);
 
-  // 6 variants by 3 sizes: the runtime plus 1,200 + 155 x 18 characters of data, at 71,000 a call and 1.4 a character.
-  const tokens = Math.ceil(71000 + (RUNTIME_CODE.length + 1200 + 155 * 18) * 1.4);
-  assert.ok(tokens > 90000 && tokens < 100000, `a Button-sized version is about 100,000 relay tokens, got ${tokens}`);
+  // 6 variants by 3 sizes: the runtime plus 1,600 + 160 x 18 characters of encoded data, at 71,000 a call and 1.4 a character.
+  const tokens = Math.ceil(71000 + (RUNTIME_CODE.length + 1600 + 160 * 18) * 1.4);
+  assert.ok(tokens > 95000 && tokens < 105000, `a Button-sized version is about 100,000 relay tokens, got ${tokens}`);
   assert.deepEqual(estimate.items, [
     { id: "Button", calls: 1, tokens, usd: 0 },
     { id: "Card", calls: 1, tokens, usd: 0 },
@@ -153,7 +153,7 @@ test("estimate: one relay call for each component version, at the measured relay
   const five = context(root, { entries: [entry("Button")], options: { componentsPerCall: 5 } });
   const [shared] = (await adapter.estimate(await adapter.plan(five), five)).items;
   assert.equal(shared.calls, 0.2);
-  assert.equal(shared.tokens, Math.ceil((71000 + RUNTIME_CODE.length * 1.4) / 5 + (1200 + 155 * 18) * 1.4));
+  assert.equal(shared.tokens, Math.ceil((71000 + RUNTIME_CODE.length * 1.4) / 5 + (1600 + 160 * 18) * 1.4));
 });
 
 test("estimate: a State property multiplies the variants a version carries", async () => {
@@ -163,7 +163,7 @@ test("estimate: a State property multiplies the variants a version carries", asy
   const [one] = (await adapter.estimate(await adapter.plan(plain), plain)).items;
   const [three] = (await adapter.estimate(await adapter.plan(states), states)).items;
   // 18 variants become 54: each one is drawn default, loading and disabled.
-  assert.equal(three.tokens, Math.ceil(71000 + (RUNTIME_CODE.length + 1200 + 155 * 54) * 1.4));
+  assert.equal(three.tokens, Math.ceil(71000 + (RUNTIME_CODE.length + 1600 + 160 * 54) * 1.4));
   assert.ok(three.tokens > one.tokens);
 });
 
@@ -202,13 +202,16 @@ test("write leaves data files, a manifest and a ledger that says generated, and 
 
   const directory = outputOf(root);
   assert.deepEqual(readdirSync(directory).toSorted(), ["figma-001.json", "manifest.json"], "data only: no code in the folder");
-  const code = codeFor(readData(readFileSync(path.join(directory, "figma-001.json"), "utf8")));
+  const data = readData(readFileSync(path.join(directory, "figma-001.json"), "utf8"));
+  const code = codeFor(data);
+  // The manifest gives the length of the relay's encoded code, the longest a call can come to.
+  const chars = codeFor(data, { key: [...SIZING_KEY] }).length;
   assert.ok(code.length <= MAX_CODE_CHARS);
   const manifest = JSON.parse(readFileSync(path.join(directory, "manifest.json"), "utf8"));
   assert.equal(manifest.fileKey, KEY);
   assert.equal(manifest.release, "v1.0.0");
   assert.equal(manifest.schemaVersion, 2);
-  assert.deepEqual(manifest.files, [{ name: "figma-001.json", chars: code.length, units: ["Button", "Card"] }]);
+  assert.deepEqual(manifest.files, [{ name: "figma-001.json", chars, units: ["Button", "Card"] }]);
   assert.deepEqual(manifest.ledgerEntries, {
     Button: { kind: "component", name: "Button", version: "1.0.0" },
     Card: { kind: "component", name: "Card", version: "1.0.0" },
@@ -217,7 +220,7 @@ test("write leaves data files, a manifest and a ledger that says generated, and 
   assert.equal(manifest.afterUploads, null);
 
   // What relaying the file will cost, at the measured rate: 71,000 a call and 1.4 a character.
-  assert.deepEqual(result.actual, { calls: 1, tokens: Math.ceil(71000 + code.length * 1.4), usd: 0 });
+  assert.deepEqual(result.actual, { calls: 1, tokens: Math.ceil(71000 + chars * 1.4), usd: 0 });
 
   const ledgerPath = path.join(root, ".klaus/figma/ledger.json");
   const ledger = readLedger(ledgerPath);
@@ -406,7 +409,7 @@ test("the frame can run it: a dry run shows the estimate, and a run writes throu
   try {
     const dry = await runKlaus({ ...args, dryRun: true, env: {} });
     assert.equal(dry.report.status, "ok");
-    const perVersion = Math.ceil(71000 + (RUNTIME_CODE.length + 1200 + 155 * 18) * 1.4);
+    const perVersion = Math.ceil(71000 + (RUNTIME_CODE.length + 1600 + 160 * 18) * 1.4);
     assert.deepEqual(dry.report.outputs[0].estimated, { calls: 2, tokens: 2 * perVersion, usd: 0 }, "two versions fit the default cap of 500,000");
     assert.equal(existsSync(path.join(root, ".klaus/figma")), false, "a dry run writes nothing");
 

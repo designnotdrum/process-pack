@@ -15,8 +15,10 @@
  * The artifact supplies data, never code. Before any call the relay reads every
  * data file with data-file.mjs, refuses one that is not the generator's shape
  * or writes anywhere the repo's settings do not name, and builds each call's
- * code from the data and the runtime in this checkout. The Figma file is the
- * one klaus.config.json names; a manifest naming another file is refused.
+ * code from the data and the runtime in this checkout. Every string from the
+ * data is encoded with a new key for each call, so text in the data cannot
+ * steer the model that copies the code. The Figma file is the one
+ * klaus.config.json names; a manifest naming another file is refused.
  *
  * For each data file, in the manifest's order, the relay runs `codex exec`
  * once. The prompt tells Codex to call use_figma exactly once with the code and
@@ -64,7 +66,7 @@ import { loadConfig } from "../../../frame/config.mjs";
 import { UserError } from "../../../frame/errors.mjs";
 import { readJsonFile, writeJsonFile } from "../../../frame/json-file.mjs";
 import { buildReport, writeReport } from "../../../frame/report.mjs";
-import { codeFor } from "../codegen.mjs";
+import { codeFor, newKey } from "../codegen.mjs";
 import { checkTargets, DataError, readData } from "../data-file.mjs";
 import { fileKeyOf, MANIFEST_VERSION } from "../index.mjs";
 import { CHANGED, entrySent, entryStatus, readLedger, recordEntry, SENT } from "../ledger.mjs";
@@ -292,7 +294,8 @@ function prepareCode(folder, manifest, options) {
         : unit.kind === "screen" && entry.kind === "screen" && entry.route === unit.route && entry.release === unit.release;
       if (!same) fail(`its unit ${unit.id} does not match the manifest's ledger entry.`);
     }
-    const built = codeFor(data);
+    // A new key for each call: the model sees every piece of the data's text as noise (codegen.mjs).
+    const built = codeFor(data, { key: newKey() });
     if (built.length > MAX_CODE_CHARS) fail(`its code comes to ${built.length} characters, more than the ${MAX_CODE_CHARS} one call takes.`);
     code.set(file.name, built);
   }

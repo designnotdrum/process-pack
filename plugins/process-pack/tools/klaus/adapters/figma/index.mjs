@@ -234,7 +234,7 @@ export function createAdapter(browser = {}) {
       // What relaying these files will cost. No relay has run yet, so this is the measured rate.
       const actual = {
         calls: everyFile.length + (uploads.length > 0 ? Math.ceil(uploads.length / 60) : 0),
-        tokens: everyFile.reduce((sum, file) => sum + relayCallTokens(file.code.length), 0) + uploads.length * TOKENS_PER_SCREEN_IMAGE,
+        tokens: everyFile.reduce((sum, file) => sum + relayCallTokens(file.chars), 0) + uploads.length * TOKENS_PER_SCREEN_IMAGE,
         usd: 0,
       };
       const sendable = units.filter((u) => packed.has(u.id));
@@ -244,14 +244,15 @@ export function createAdapter(browser = {}) {
         fileKey: fileKeyOf(ctx.settings.target),
         release,
         generatedAt: new Date().toISOString(),
-        files: files.map((file) => ({ name: file.name, chars: file.code.length, units: file.units.map((unit) => unit.id) })),
+        // chars: the length of the code the relay sends, which is what a call costs.
+        files: files.map((file) => ({ name: file.name, chars: file.chars, units: file.units.map((unit) => unit.id) })),
         // What the relay records in the ledger for each unit once use_figma confirms it.
         ledgerEntries: Object.fromEntries([
           ...sendable.map((unit) => [unit.id, entryOf(unit)]),
           ...uploads.map((upload) => [upload.id, { kind: "screen", route: upload.screen, release: upload.release }]),
         ]),
         uploads,
-        afterUploads: afterUploads ? { name: afterUploads.name, chars: afterUploads.code.length } : null,
+        afterUploads: afterUploads ? { name: afterUploads.name, chars: afterUploads.chars } : null,
         warnings: [...new Set(warnings)],
       };
       writeJsonFile(path.join(directory, "manifest.json"), manifest);

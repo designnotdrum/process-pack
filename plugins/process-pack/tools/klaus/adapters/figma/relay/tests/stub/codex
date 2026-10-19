@@ -73,13 +73,24 @@ const fail = (message) => {
   process.stderr.write(`stub codex: ${message}\n`);
   process.exit(2);
 };
-const line = code.split("\n").find((l) => l.startsWith("const UNITS = "));
+const lines = code.split("\n");
+const line = lines.find((l) => l.startsWith("const UNITS = "));
 let units = [];
 try {
   units = line ? JSON.parse(line.slice("const UNITS = ".length, -1)) : [];
 } catch (error) {
   fail(`cannot read the UNITS line of the code: ${error.message}`);
 }
+// The relay encodes every string with the call's key, as the runtime would decode it in Figma.
+const keyLine = lines.find((l) => l.startsWith("const KEY = "));
+const key = keyLine ? JSON.parse(keyLine.slice("const KEY = ".length, -1)) : null;
+const plain = (text) => {
+  if (!key) return text;
+  const bytes = Buffer.from(text, "base64");
+  for (let i = 0; i < bytes.length; i++) bytes[i] ^= key[i % key.length];
+  return bytes.toString("utf8");
+};
+units = units.map((unit) => ({ ...unit, id: plain(unit.id), name: unit.name === undefined ? undefined : plain(unit.name), version: unit.version === undefined ? undefined : plain(unit.version) }));
 const status = scenario === "exists" ? "exists" : "written";
 const results = units.map((unit) => ({ id: unit.id, status, name: `${unit.name} ${unit.version}` }));
 if (scenario === "unit-failed" && results.length > 0) {

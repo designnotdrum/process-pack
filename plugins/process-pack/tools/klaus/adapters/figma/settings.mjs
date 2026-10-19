@@ -22,11 +22,12 @@ export const TOKENS_PER_CODE_CHAR = 1.4;
 export const relayCallTokens = (chars) => Math.ceil(CALL_BASE_TOKENS + chars * TOKENS_PER_CODE_CHAR);
 
 /**
- * Characters of a component's own data in a code file, next to the shared runtime. From the two
- * Button files of 2026-10-18: 3,929 characters for 18 variants and 5,761 for 30.
+ * Characters of a component's own data in the relay's code, next to the shared runtime. The relay
+ * encodes every string, which makes the data about a tenth longer. From Meridian's two Button
+ * files of 2026-10-18, encoded: 4,434 characters for 18 variants and 6,337 for 30.
  */
-export const DATA_CHARS_PER_COMPONENT = 1200;
-export const DATA_CHARS_PER_VARIANT = 155;
+export const DATA_CHARS_PER_COMPONENT = 1600;
+export const DATA_CHARS_PER_VARIANT = 160;
 
 /** Unverified: no measurement exists. It covers the text of one upload call. */
 export const TOKENS_PER_SCREEN_IMAGE = 300;
