@@ -63,6 +63,10 @@ if (process.env.STUB_CODEX_OTHER_RUN_LEDGER) {
   const file = process.env.STUB_CODEX_OTHER_RUN_LEDGER;
   const ledger = JSON.parse(readFileSync(file, "utf8"));
   ledger.components.Other = { "1.0.0": "sent" };
+  // Marks a test wants the other run to have written, by component and version.
+  for (const [name, versions] of Object.entries(JSON.parse(process.env.STUB_CODEX_OTHER_RUN_MARKS ?? "{}"))) {
+    ledger.components[name] = { ...ledger.components[name], ...versions };
+  }
   writeFileSync(file, JSON.stringify(ledger));
 }
 const scenarios = (process.env.STUB_CODEX_SCENARIOS ?? "success").split(",");
@@ -102,9 +106,13 @@ if (scenario === "unit-failed" && results.length > 0) {
 }
 // The reconcile code is read-only and returns the names it found.
 const reconcile = lines.some((l) => l.startsWith("const PAGES = "));
-const returned = reconcile
-  ? { names: JSON.parse(process.env.STUB_CODEX_NAMES ?? "[]") }
-  : { tokens: { made: [], updated: [] }, units: results, warnings: [] };
+let names = [];
+try {
+  names = JSON.parse(process.env.STUB_CODEX_NAMES ?? "[]");
+} catch (error) {
+  fail(`STUB_CODEX_NAMES is not JSON: ${error.message}`);
+}
+const returned = reconcile ? { names } : { tokens: { made: [], updated: [] }, units: results, warnings: [] };
 const resultText = process.env.STUB_CODEX_RESULT_TEXT ?? JSON.stringify(returned);
 
 const fixture = { success: "success", exists: "success", "unit-failed": "success", "changed-code": "success", "changed-code-failed": "tool-error", "wrong-file-key": "success", "tool-error": "tool-error", "no-call": "no-call", crash: "crash" }[scenario];

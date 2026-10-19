@@ -62,6 +62,7 @@ export function lookupPlan(entries, options) {
  * The text is fixed apart from the page names. Those come from the repo's settings and ledger,
  * never from an artifact, and each is written as a list of character codes, so the relaying
  * model reads no name. It holds no backslash, because a model drops them (see the README).
+ * A page name is at most 100 characters, so `String.fromCharCode.apply` gets a short argument list.
  * @param {string[]} pages
  */
 export function reconcileCode(pages) {

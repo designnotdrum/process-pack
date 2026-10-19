@@ -215,7 +215,11 @@ test("a component whose page name cannot go in code is left generated, with a wa
   assert.deepEqual(pagesIn(run.calls[0].stdin), ["Button", "Older versions"]);
   assert.equal(ledgerOf(root).components.Button["1.0.0"], "sent");
   assert.equal(ledgerOf(root).components[`Bad${String.fromCharCode(7)}`]["1.0.0"], "generated");
-  assert.ok(outputOf(run.report).warnings.some((w) => /was not looked for/.test(w)));
+  const output = outputOf(run.report);
+  assert.ok(output.warnings.some((w) => /was not looked for/.test(w)));
+  const bad = `Bad${String.fromCharCode(7)} 1.0.0`;
+  assert.deepEqual(output.deferred, [{ id: bad, kind: "component", reason: "page-name-not-usable" }], "the version that was not looked for is in the report's unit lists");
+  assert.deepEqual(output.adapter.details.units.map((u) => [u.id, u.status]), [[bad, "deferred"], ["Button 1.0.0", "reconciled"]]);
 });
 
 test("generated screens stay generated, and the report says reconcile does not read them", async () => {
@@ -231,6 +235,25 @@ test("a mark another run wrote while the call ran is kept", async () => {
   const run = await reconcile(root, [], { names: ["Button 1.0.0", "Button 1.1.0"], otherRunLedger: path.join(root, ".klaus/figma/ledger.json") });
   assert.equal(run.code, 0, run.stderr);
   assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "sent", "1.1.0": "sent" }, Other: { "1.0.0": "sent" } });
+});
+
+test("a version found in Figma whose status another run changed during the call is left as it is, and reported as not marked", async () => {
+  const root = reconcileRepo({ components: BOTH });
+  const run = await reconcile(root, [], {
+    names: ["Button 1.0.0", "Button 1.1.0"],
+    otherRunLedger: path.join(root, ".klaus/figma/ledger.json"),
+    otherRunMarks: { Button: { "1.1.0": "changed" } },
+  });
+
+  assert.equal(run.code, 0, run.stderr);
+  assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "sent", "1.1.0": "changed" }, Other: { "1.0.0": "sent" } }, "the changed mark stands");
+  const output = outputOf(run.report);
+  assert.deepEqual(output.adapter.details.reconciled, ["Button 1.0.0"]);
+  assert.deepEqual(output.adapter.details.notMarked, ["Button 1.1.0"]);
+  assert.deepEqual(output.adapter.details.units.map((u) => [u.id, u.status]), [["Button 1.0.0", "reconciled"], ["Button 1.1.0", "not marked"]]);
+  assert.match(output.adapter.summary, /1 of 2 generated component versions found in Figma and marked sent/);
+  assert.ok(output.warnings.some((w) => /was not marked, because the ledger changed while the call ran: Button 1\.1\.0/.test(w)));
+  assert.match(describeRun(run.report, null), /found but not marked, the ledger changed meanwhile: Button 1\.1\.0/);
 });
 
 test("a second reconcile has nothing left to look for and makes no call", async () => {

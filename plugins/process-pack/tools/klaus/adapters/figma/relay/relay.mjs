@@ -790,6 +790,17 @@ async function sendReconcile({ codex, args, code, workdir, timeoutMs, fileKey, e
   };
 }
 
+/** The one-line summary of a reconcile run. tokens is null when the call ended without a count. */
+function reconcileSummary({ total, pages, changed, dryRun, stopped, failed, reconciled, missing, predicted, tokens }) {
+  const versions = plural(total, "component version");
+  const cost = `1 call, ${tokens ?? "unknown"} relay tokens`;
+  if (total === 0) return `Figma reconcile: no generated component version to look for${changed > 0 ? `; ${plural(changed, "changed version")} left alone` : ""}.`;
+  if (dryRun) return `Figma reconcile, dry run: would look for ${versions} on ${plural(pages, "page")} in 1 call, about ${predicted} relay tokens.`;
+  if (stopped) return `Figma reconcile: the call was deferred (${stopped}); ${versions} stay generated.`;
+  if (failed) return `Figma reconcile: failed, so nothing was marked; ${versions} stay generated. ${cost}.`;
+  return `Figma reconcile: ${reconciled} of ${plural(total, "generated component version")} found in Figma and marked sent; ${missing} missing; ${cost}.`;
+}
+
 /**
  * Reconcile mode. One read-only call lists the component sets and components on the pages Klaus
  * writes. Each generated component version whose `<Name> <version>` is in the list becomes sent.
@@ -811,31 +822,36 @@ async function reconcileLedger(options, { settings, ledgerPath, root }) {
   const ledger = readLedger(ledgerPath);
   const generated = generatedComponents(ledger);
   const { pages, looked, skipped } = lookupPlan(generated, settings.options);
-  const label = labelOf;
   const changedLabels = [];
   for (const [name, versions] of Object.entries(ledger.components)) {
-    for (const [version, status] of Object.entries(versions)) if (status === CHANGED) changedLabels.push(label({ kind: "component", name, version }));
+    for (const [version, status] of Object.entries(versions)) if (status === CHANGED) changedLabels.push(labelOf({ kind: "component", name, version }));
   }
   const screens = generatedScreenCount(ledger);
 
   const warnings = [];
-  for (const { entry, reason } of skipped) warnings.push(`${label(entry)} was not looked for: ${reason}.`);
+  const unitRecords = [];
+  const deferred = [];
+  for (const { entry, reason } of skipped) {
+    warnings.push(`${labelOf(entry)} was not looked for: ${reason}.`);
+    deferred.push({ id: labelOf(entry), kind: "component", reason: "page-name-not-usable" });
+    unitRecords.push({ id: labelOf(entry), kind: "component", status: "deferred", reason: "page-name-not-usable" });
+  }
   if (screens > 0) warnings.push(`${plural(screens, "generated screen")} stay generated: reconcile reads component sets and components only.`);
 
   const failed = [];
-  const deferred = [];
   const estimated = { calls: 0, tokens: 0, usd: 0 };
   const uncapped = { calls: 0, tokens: 0, usd: 0 };
-  const unitRecords = [];
   const reconciled = [];
+  const notMarked = [];
   const missing = [];
   let fileRecord = null;
-  let tokensUsed = 0;
+  let callTokens = null;
   let otherNames = 0;
   let stopped = null;
 
   if (looked.length > 0) {
     const code = reconcileCode(pages);
+    // As with a send (prepareCode), code over one call's limit is a setting to fix, so the run stops with an error.
     if (code.length > MAX_CODE_CHARS) {
       throw new UserError(`The reconcile call would name ${plural(pages.length, "page")} and come to ${code.length} characters, more than the ${MAX_CODE_CHARS} one call takes. Set outputs.figma.options.page to one page for the components.`);
     }
@@ -843,19 +859,19 @@ async function reconcileLedger(options, { settings, ledgerPath, root }) {
     uncapped.calls = 1;
     uncapped.tokens = predicted;
     stopped = capReason({ totals: { calls: 0, tokens: 0, componentWrites: 0 }, predicted, components: 0, cap: settings.cap, maxCalls });
-    const record = { name: "reconcile", chars: code.length, units: looked.map(label), pages };
+    const record = { name: "reconcile", chars: code.length, units: looked.map(labelOf), pages };
 
     if (stopped) {
       fileRecord = { ...record, status: "deferred", reason: stopped, predictedTokens: predicted, calls: 0, tokens: 0 };
       for (const entry of looked) {
-        deferred.push({ id: label(entry), kind: "component", reason: stopped });
-        unitRecords.push({ id: label(entry), kind: "component", status: "deferred", reason: stopped });
+        deferred.push({ id: labelOf(entry), kind: "component", reason: stopped });
+        unitRecords.push({ id: labelOf(entry), kind: "component", status: "deferred", reason: stopped });
       }
     } else if (dryRun) {
       estimated.calls = 1;
       estimated.tokens = predicted;
       fileRecord = { ...record, status: "would send", predictedTokens: predicted, calls: 1, tokens: null };
-      for (const entry of looked) unitRecords.push({ id: label(entry), kind: "component", status: "would look" });
+      for (const entry of looked) unitRecords.push({ id: labelOf(entry), kind: "component", status: "would look" });
     } else {
       estimated.calls = 1;
       estimated.tokens = predicted;
@@ -871,27 +887,27 @@ async function reconcileLedger(options, { settings, ledgerPath, root }) {
       } finally {
         rmSync(workdir, { recursive: true, force: true });
       }
-      tokensUsed = outcome.tokens ?? 0;
+      callTokens = outcome.tokens;
       otherNames = outcome.ignored;
       if (outcome.tokens === null) warnings.push("The call ended without a token count, so actual tokens leave it out. The cap counted its predicted tokens.");
 
       if (outcome.names === null) {
         failed.push({ id: "reconcile", error: outcome.error ?? "The call returned no list of names." });
-        for (const entry of looked) unitRecords.push({ id: label(entry), kind: "component", status: "not checked" });
+        for (const entry of looked) unitRecords.push({ id: labelOf(entry), kind: "component", status: "not checked" });
       } else {
-        for (const entry of looked) {
-          if (outcome.names.has(label(entry))) reconciled.push(entry);
-          else missing.push(entry);
-        }
-        if (reconciled.length > 0) {
+        const found = looked.filter((entry) => outcome.names.has(labelOf(entry)));
+        for (const entry of looked) if (!found.includes(entry)) missing.push(entry);
+        if (found.length > 0) {
           // Apply the marks to the ledger as it is now, so a mark another run wrote since this run read it is kept.
+          // A version that is no longer generated by now is left as it is, and the report says it was not marked.
           const fresh = readLedger(ledgerPath);
-          let wrote = false;
-          for (const entry of reconciled) if (markGeneratedAsSent(fresh, entry)) wrote = true;
-          if (wrote) writeJsonFile(ledgerPath, fresh);
+          for (const entry of found) (markGeneratedAsSent(fresh, entry) ? reconciled : notMarked).push(entry);
+          if (reconciled.length > 0) writeJsonFile(ledgerPath, fresh);
         }
-        for (const entry of reconciled) unitRecords.push({ id: label(entry), kind: "component", status: "reconciled" });
-        for (const entry of missing) unitRecords.push({ id: label(entry), kind: "component", status: "missing" });
+        for (const entry of reconciled) unitRecords.push({ id: labelOf(entry), kind: "component", status: "reconciled" });
+        for (const entry of notMarked) unitRecords.push({ id: labelOf(entry), kind: "component", status: "not marked", note: "Its status changed while the call ran, so the relay left it as it is." });
+        for (const entry of missing) unitRecords.push({ id: labelOf(entry), kind: "component", status: "missing" });
+        if (notMarked.length > 0) warnings.push(`${plural(notMarked.length, "version")} found in Figma ${notMarked.length === 1 ? "was" : "were"} not marked, because the ledger changed while the call ran: ${notMarked.map(labelOf).join(", ")}.`);
       }
       fileRecord = {
         ...record,
@@ -913,17 +929,9 @@ async function reconcileLedger(options, { settings, ledgerPath, root }) {
   } else if (stopped) warnings.push(`The relay stopped before the call, which would pass the ${stopped}.`);
   for (const labelText of changedLabels) unitRecords.push({ id: labelText, kind: "component", status: "changed", note: "Not touched. Delete the set in Figma, then run the relay." });
 
-  const actual = { calls: fileRecord && fileRecord.calls === 1 && !dryRun ? 1 : 0, tokens: tokensUsed, usd: 0 };
+  const actual = { calls: fileRecord && fileRecord.calls === 1 && !dryRun ? 1 : 0, tokens: callTokens ?? 0, usd: 0 };
   const total = looked.length;
-  const summary = looked.length === 0
-    ? `Figma reconcile: no generated component version to look for${changedLabels.length > 0 ? `; ${plural(changedLabels.length, "changed version")} left alone` : ""}.`
-    : dryRun
-      ? `Figma reconcile, dry run: would look for ${plural(total, "component version")} on ${plural(pages.length, "page")} in 1 call, about ${estimated.tokens} relay tokens.`
-      : stopped
-        ? `Figma reconcile: the call was deferred (${stopped}); ${plural(total, "component version")} stay generated.`
-        : failed.length > 0
-          ? `Figma reconcile: failed, so nothing was marked; ${plural(total, "component version")} stay generated. 1 call, ${tokensUsed} relay tokens.`
-          : `Figma reconcile: ${reconciled.length} of ${plural(total, "generated component version")} found in Figma and marked sent; ${missing.length} missing; 1 call, ${tokensUsed} relay tokens.`;
+  const summary = reconcileSummary({ total, pages: pages.length, changed: changedLabels.length, dryRun, stopped, failed: failed.length > 0, reconciled: reconciled.length, missing: missing.length, predicted: estimated.tokens, tokens: callTokens });
   const outputRecord = {
     output: REPORT_OUTPUT,
     status: dryRun ? "dry-run" : "ok",
@@ -949,8 +957,9 @@ async function reconcileLedger(options, { settings, ledgerPath, root }) {
         maxCalls,
         pages,
         // The units the call found and marked sent, which no relayed send is.
-        reconciled: reconciled.map(label),
-        missing: missing.map(label),
+        reconciled: reconciled.map(labelOf),
+        notMarked: notMarked.map(labelOf),
+        missing: missing.map(labelOf),
         changed: changedLabels,
         otherNames,
         files: fileRecord ? [fileRecord] : [],
@@ -985,6 +994,7 @@ export function describeRun(report, reportFile) {
   const details = output.adapter.details;
   if (details.mode === "reconcile") {
     if (details.reconciled.length > 0) lines.push(`  reconciled, now sent: ${details.reconciled.join(", ")}`);
+    if (details.notMarked.length > 0) lines.push(`  found but not marked, the ledger changed meanwhile: ${details.notMarked.join(", ")}`);
     if (details.missing.length > 0) lines.push(`  missing, still generated: ${details.missing.join(", ")}`);
     if (details.changed.length > 0) lines.push(`  changed, left alone: ${details.changed.join(", ")}`);
   }

@@ -70,7 +70,7 @@ export async function generatedRepo({ components = ["Button", "Card"], perFile =
  * Runs the relay as a command, with the stub codex and gh first on PATH.
  * @returns {Promise<{ code: number, stdout: string, stderr: string, calls: Array<{ args: string[], stdin: Buffer }>, report: object | null }>}
  */
-export function relay(root, args, { scenarios = "success", mcp, ghSource, ghRun, ghCompare, otherRunLedger, names, resultText, message } = {}) {
+export function relay(root, args, { scenarios = "success", mcp, ghSource, ghRun, ghCompare, otherRunLedger, names, resultText, message, otherRunMarks } = {}) {
   const log = mkdtempSync(path.join(tmpdir(), "klaus-relay-log-"));
   const ghLog = path.join(log, "gh.json");
   const env = {
@@ -88,6 +88,7 @@ export function relay(root, args, { scenarios = "success", mcp, ghSource, ghRun,
   if (names !== undefined) env.STUB_CODEX_NAMES = JSON.stringify(names);
   if (resultText !== undefined) env.STUB_CODEX_RESULT_TEXT = resultText;
   if (message !== undefined) env.STUB_CODEX_MESSAGE = message;
+  if (otherRunMarks !== undefined) env.STUB_CODEX_OTHER_RUN_MARKS = JSON.stringify(otherRunMarks);
   return new Promise((resolve) => {
     execFile(process.execPath, [RELAY, ...args, "--root", root, "--json"], { env, cwd: root, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => {
       // A stub that made no call leaves no log folder, and a run that stopped early prints no report.
