@@ -1,6 +1,6 @@
 /** Reconcile mode: one read-only call marks the generated components the Klaus plugin wrote. */
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { createFigma, runCode } from "../../tests/fake-figma.mjs";
