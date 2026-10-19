@@ -90,10 +90,15 @@ test("copy removes a file the new copy no longer has, and refuses a folder it di
   assert.deepEqual(copyKlaus({ repo, force: true }).removed, ["old.mjs"]);
   assert.equal(existsSync(stale), false);
 
+  write(path.join(repo, "scripts/klaus/old-layout/deep/gone.mjs"), "export {};\n");
+  assert.deepEqual(copyKlaus({ repo, force: true }).removed, ["old-layout/deep/gone.mjs"]);
+  assert.equal(existsSync(path.join(repo, "scripts/klaus/old-layout")), false, "the emptied folders are removed");
+
   const other = tempDir();
   write(path.join(other, "scripts/klaus/mine.txt"), "mine\n");
   assert.throws(() => copyKlaus({ repo: other }), /Klaus did not put them there/);
   assert.throws(() => copyKlaus({ repo: other, to: "../outside" }), /not inside the repo/);
+  assert.equal(copyKlaus({ repo: tempDir(), to: "..tools/klaus" }).destination.endsWith("..tools/klaus"), true);
 });
 
 test("the installed copy runs: the config check passes on a valid file and fails on a secret", () => {
@@ -128,9 +133,9 @@ test("costs come from the adapters' estimates and follow the cap", async () => {
   // A cap that fits two of the three versions defers the least-used one.
   write(options.config, JSON.stringify({ ...CONFIG, spendingCap: { maxRelayTokens: button.tokens + badge.tokens + 10 } }));
   const [, capped] = await estimateOutputs({ ...options, outputs: ["storybook", "figma"] });
-  assert.deepEqual(capped.allowed, ["Button", "Card"].filter((id) => capped.allowed.includes(id)));
-  assert.equal(capped.allowed.length + capped.deferred.length, 3);
-  assert.ok(capped.deferred.length >= 1);
+  // The cap ranks by usage (Button 3 files, Card 2, Badge 1), so Badge is the one that waits.
+  assert.deepEqual(capped.deferred.map((item) => item.id), ["Badge"]);
+  assert.deepEqual(capped.allowed, ["Button", "Card"]);
 });
 
 test("the cost text has a block for every output and shows the onboarding run", async () => {
@@ -230,4 +235,12 @@ test("a written workflow passes actionlint when it is installed", (t) => {
   if (result.lint.tool !== "actionlint") t.skip(`actionlint is not installed (${result.lint.tool} ran instead)`);
   assert.equal(result.lint.ok, true, result.lint.message);
   assert.equal(lintWorkflow(result.destination).ok, true);
+});
+
+test("a workflow that does not parse is reported as a failure, not as unchecked", (t) => {
+  const file = path.join(tempDir(), "bad.yml");
+  write(file, "on: [\n  push\njobs: {\n");
+  const result = lintWorkflow(file);
+  if (result.ok === null) t.skip("no workflow checker is installed");
+  assert.equal(result.ok, false);
 });

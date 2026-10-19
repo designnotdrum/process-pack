@@ -87,7 +87,7 @@ export function copyKlaus({ repo, to = "scripts/klaus", force = false, source = 
   if (!fs.existsSync(repo) || !fs.statSync(repo).isDirectory()) throw new UserError(`The repo ${repo} does not exist.`);
   const destination = path.resolve(repo, to);
   const inside = path.relative(path.resolve(repo), destination);
-  if (inside === "" || inside.startsWith("..") || path.isAbsolute(inside)) {
+  if (inside === "" || inside === ".." || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) {
     throw new UserError(`The folder ${to} is not inside the repo.`);
   }
 
@@ -124,6 +124,15 @@ export function copyKlaus({ repo, to = "scripts/klaus", force = false, source = 
   const removed = existing.filter((file) => file !== VERSION_FILE && !files.includes(file));
 
   for (const file of removed) fs.rmSync(path.join(destination, file));
+  // Folders the removal emptied go too, deepest first, so an old layout leaves nothing behind.
+  const emptied = new Set(removed.map((file) => path.dirname(file)).filter((directory) => directory !== "."));
+  for (const directory of [...emptied].sort((a, b) => b.length - a.length)) {
+    let current = path.join(destination, directory);
+    while (current !== destination && fs.existsSync(current) && fs.readdirSync(current).length === 0) {
+      fs.rmdirSync(current);
+      current = path.dirname(current);
+    }
+  }
   for (const file of [...added, ...changed]) {
     fs.mkdirSync(path.dirname(path.join(destination, file)), { recursive: true });
     fs.copyFileSync(path.join(source, file), path.join(destination, file));

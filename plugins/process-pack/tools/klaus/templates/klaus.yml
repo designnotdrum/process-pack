@@ -129,6 +129,7 @@ jobs:
           fi
 
           # Releases in the order Klaus counts them: creation date, then version.
+          # Keep this in step with listReleases in install/costs.mjs and frame/cli.mjs.
           releases=$(git tag --list "$TAG_PATTERN" --sort=version:refname --sort=creatordate)
           if [ "$EVENT" = push ]; then target="$TAG"; else target=$(printf '%s\n' "$releases" | tail -n 1); fi
           if [ -z "$target" ]; then
@@ -139,6 +140,9 @@ jobs:
           last=""
           if [ -f "$prev" ]; then
             last=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).versioned?.release ?? "")' "$prev")
+          fi
+          if [ -n "$last" ] && ! printf '%s\n' "$releases" | grep -Fxq "$last"; then
+            echo "::warning::The last versioned release $last is not a tag now, so only $target is picked."
           fi
           covered=$(RELEASES="$releases" LAST="$last" TARGET="$target" node -e '
             const all = process.env.RELEASES.split("\n").filter(Boolean);

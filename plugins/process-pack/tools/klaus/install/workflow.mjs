@@ -138,10 +138,14 @@ export function lintWorkflow(file) {
   if (!actionlint.error) {
     return { tool: "actionlint", ok: actionlint.status === 0, message: (actionlint.stdout + actionlint.stderr).trim() };
   }
+  const parsedOnly = "actionlint is not installed, so the file was parsed as YAML only.";
   const python = run("python3", ["-c", "import sys, yaml; yaml.safe_load(open(sys.argv[1]))", file]);
-  if (!python.error && python.status === 0) return { tool: "python3 yaml parse", ok: true, message: "actionlint is not installed, so the file was parsed as YAML only." };
+  if (!python.error && python.status === 0) return { tool: "python3 yaml parse", ok: true, message: parsedOnly };
+  // A parser that ran and rejected the file is a failure. Only a missing PyYAML falls through.
+  if (!python.error && !/No module named/.test(python.stderr)) return { tool: "python3 yaml parse", ok: false, message: python.stderr.trim() };
   const ruby = run("ruby", ["-ryaml", "-e", "YAML.safe_load(File.read(ARGV[0]))", file]);
-  if (!ruby.error && ruby.status === 0) return { tool: "ruby yaml parse", ok: true, message: "actionlint is not installed, so the file was parsed as YAML only." };
+  if (!ruby.error && ruby.status === 0) return { tool: "ruby yaml parse", ok: true, message: parsedOnly };
+  if (!ruby.error) return { tool: "ruby yaml parse", ok: false, message: ruby.stderr.trim() };
   return { tool: "none", ok: null, message: "Neither actionlint nor a YAML parser is available, so the file was not checked." };
 }
 

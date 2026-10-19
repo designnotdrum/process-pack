@@ -34,7 +34,10 @@ const ROUTES = {
   pencil: "the pen CLI in headless mode (adapter not built, issue #32)",
 };
 
-/** Release tags in the order Klaus counts them. No git, or no tags, gives an empty list. */
+/**
+ * Release tags in the order Klaus counts them. No git, or no tags, gives an empty list.
+ * The sort matches listReleases in frame/cli.mjs and the picker step in templates/klaus.yml.
+ */
 function listReleases(repo, pattern) {
   try {
     const args = ["tag", "--list", pattern, "--sort=version:refname", "--sort=creatordate"];
@@ -61,7 +64,8 @@ export async function estimateOutputs({ repo, config: configFile, inventory: inv
   const release = listReleases(repo, config.trigger.tagPattern).at(-1) ?? "(next release)";
   const results = [];
 
-  // The adapters read the repo from the working directory, as they do in a run.
+  // The adapters read the repo from the working directory, as they do in a run. That makes this
+  // function unsafe to call twice at once in one process. The command line calls it once.
   const here = process.cwd();
   process.chdir(repo);
   try {
@@ -96,6 +100,7 @@ export async function estimateOutputs({ repo, config: configFile, inventory: inv
           adapter: true,
           release,
           cap: config.spendingCap,
+          // indexEstimate has already checked that the estimate has an entry for every planned item.
           items: plan.items.map((item) => ({ id: item.id, kind: item.kind, ...estimate.byId.get(item.id) })),
           overhead: estimate.overhead,
           allowed: capped.allowed.map((item) => item.id),
