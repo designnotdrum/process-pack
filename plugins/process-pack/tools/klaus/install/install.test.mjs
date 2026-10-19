@@ -14,8 +14,9 @@ import { resolveConfig } from "../frame/config.mjs";
 import { checkState } from "../ci/check-state.mjs";
 import { copyKlaus, listFiles, SOURCE_ROOT, versionLine } from "./copy.mjs";
 import { estimateOutputs, formatCosts } from "./costs.mjs";
+import { checkEnvironment, checkSecrets, createEnvironment, DEFAULT_ENVIRONMENT, ENVIRONMENT_DOCS, environmentBody, secretsAdvice } from "./environment.mjs";
 import { assertReleasePattern, assess, checkRuleset, createRuleset, explainRuleset, parseActor, PATTERN_DOCS, protects, rulesetBody, RULESET_NAME } from "./ruleset.mjs";
-import { lintWorkflow, renderWorkflow, requireTagRuleset, writeWorkflow } from "./workflow.mjs";
+import { lintWorkflow, renderWorkflow, requireEnvironment, requireTagRuleset, writeWorkflow } from "./workflow.mjs";
 
 const tempDir = () => mkdtempSync(path.join(tmpdir(), "klaus-install-"));
 const write = (file, text) => {
@@ -278,7 +279,7 @@ test("the template and a workflow rendered with the environment pass actionlint 
     install: "pnpm install --frozen-lockfile",
     storybookBuild: "pnpm build-storybook -o storybook-static",
     checkTags: () => ({ status: "protected", rulesets: [{ id: 1, name: RULESET_NAME }] }),
-    checkEnv: () => ({ status: "ok" }),
+    checkEnv: () => ({ status: "ok", defaultBranch: "main" }),
   });
   assert.match(readFileSync(result.destination, "utf8"), /environment:\n {6}name: "klaus-release"/);
   assert.equal(result.lint.tool, "actionlint");
@@ -851,6 +852,347 @@ esac
   // The names already recorded in klaus.config.json count without the flag.
   write(path.join(repo, "klaus.config.json"), JSON.stringify({ ...CONFIG, trigger: { mode: "release", tagPattern: "v*", approvedTagBypass: [{ type: "RepositoryRole", id: 4, name: "write-role" }] } }));
   assert.equal(run([], { list: summaries, full: loose }).status, 0);
+});
+
+// ---------------------------------------------------------------------------------------------
+// The environment that holds the secrets.
+// ---------------------------------------------------------------------------------------------
+
+const API = "repos/{owner}/{repo}";
+const ENV_URL = `${API}/environments/${DEFAULT_ENVIRONMENT}`;
+const POLICIES_URL = `${ENV_URL}/deployment-branch-policies?per_page=100`;
+const ENV_SECRETS_URL = `${ENV_URL}/secrets?per_page=100`;
+const REPO_SECRETS_URL = `${API}/actions/secrets?per_page=100`;
+const SELECTED = { protected_branches: false, custom_branch_policies: true };
+const MAIN = { name: "main", type: "branch" };
+const RELEASE_TAGS = { name: "v*", type: "tag" };
+const NOT_FOUND = { fail: "gh: Not Found (HTTP 404)" };
+const secretsReply = (...names) => ({ body: { total_count: names.length, secrets: names.map((name) => ({ name })) } });
+
+/**
+ * What GitHub answers for an environment with these rules. Every answer is a GET, keyed "METHOD endpoint".
+ * Shapes checked against the REST API on a scratch private repo on 2026-10-19: the rule list carries a
+ * type of branch or tag, and an environment that does not exist answers HTTP 404.
+ */
+function environmentReplies(policies, { rule = SELECTED, defaultBranch = "main", total = policies.length } = {}) {
+  return {
+    [`GET ${API}`]: { body: { default_branch: defaultBranch } },
+    [`GET ${ENV_URL}`]: { body: { name: DEFAULT_ENVIRONMENT, deployment_branch_policy: rule, protection_rules: [{ type: "branch_policy" }] } },
+    [`GET ${POLICIES_URL}`]: { body: { total_count: total, branch_policies: policies.map((policy, i) => ({ id: i + 1, ...policy })) } },
+  };
+}
+
+/** A stand-in for `gh` inside the process. It answers from a table and records every call. */
+function fakeEnvironmentGh(table) {
+  const calls = [];
+  const run = (command, args, options) => {
+    const method = args.includes("--method") ? args[args.indexOf("--method") + 1] : "GET";
+    const endpoint = args.find((arg) => arg.startsWith("repos/"));
+    calls.push({ method, endpoint, input: options.input, cwd: options.cwd });
+    const answer = table[`${method} ${endpoint}`];
+    if (answer === undefined) return { status: 1, stdout: "", stderr: `gh: nothing is set up to answer ${method} ${endpoint}` };
+    if (answer.fail) return { status: 1, stdout: "", stderr: answer.fail };
+    return { status: 0, stdout: JSON.stringify(answer.body ?? {}), stderr: "" };
+  };
+  return { run, calls };
+}
+
+const checkIn = (table, overrides = {}) => checkEnvironment({ repo: tempDir(), name: DEFAULT_ENVIRONMENT, mode: "release", tagPattern: "v*", run: fakeEnvironmentGh(table).run, ...overrides });
+
+test("an environment that allows the default branch and the release tags, and nothing else, is accepted", () => {
+  const repo = tempDir();
+  const fake = fakeEnvironmentGh(environmentReplies([MAIN, RELEASE_TAGS]));
+  const result = checkEnvironment({ repo, name: DEFAULT_ENVIRONMENT, mode: "release", tagPattern: "v*", run: fake.run });
+  assert.deepEqual(result, { status: "ok", defaultBranch: "main" });
+  assert.deepEqual(fake.calls.map((call) => call.endpoint), [API, ENV_URL, POLICIES_URL]);
+  assert.equal(fake.calls.every((call) => call.method === "GET" && call.cwd === repo), true, "it only reads, inside the repo, so gh fills in {owner} and {repo}");
+  // The rule list may come in any order, and a rule listed without a type is a branch rule.
+  assert.equal(checkIn(environmentReplies([RELEASE_TAGS, MAIN])).status, "ok");
+  assert.equal(checkIn(environmentReplies([{ name: "main" }, RELEASE_TAGS])).status, "ok");
+  // A schedule has no tag trigger, so the environment allows the default branch alone.
+  assert.equal(checkIn(environmentReplies([MAIN]), { mode: "schedule", tagPattern: undefined }).status, "ok");
+  // The branch it allows is the default branch of the repo, whatever it is called.
+  assert.equal(checkIn(environmentReplies([{ name: "trunk", type: "branch" }, RELEASE_TAGS], { defaultBranch: "trunk" })).status, "ok");
+});
+
+test("an environment that does not exist is reported as missing, and an environment that cannot be read as unknown", () => {
+  const missing = checkIn({ ...environmentReplies([]), [`GET ${ENV_URL}`]: NOT_FOUND });
+  assert.deepEqual(missing, { status: "missing", defaultBranch: "main" });
+  const denied = checkIn({ ...environmentReplies([]), [`GET ${ENV_URL}`]: { fail: "gh: Must have admin rights to Repository. (HTTP 403)" } });
+  assert.equal(denied.status, "unknown");
+  assert.match(denied.reason, /HTTP 403/);
+  assert.equal(checkIn({}).status, "unknown", "a repo that cannot be read is not reported as having no environment");
+});
+
+const DRIFT = [
+  ["a branch pattern that takes in every branch", environmentReplies([MAIN, RELEASE_TAGS, { name: "*", type: "branch" }]), /also allows the branch \*/],
+  ["a feature branch pattern", environmentReplies([MAIN, RELEASE_TAGS, { name: "feature/*", type: "branch" }]), /also allows the branch feature\/\*/],
+  ["a second tag pattern", environmentReplies([MAIN, RELEASE_TAGS, { name: "*", type: "tag" }]), /also allows tags matching \*/],
+  ["a different tag pattern", environmentReplies([MAIN, { name: "v1*", type: "tag" }]), /does not allow tags matching v\*[\s\S]*also allows tags matching v1\*/],
+  ["no tag rule in release mode", environmentReplies([MAIN]), /does not allow tags matching v\*/],
+  ["no rule for the default branch", environmentReplies([RELEASE_TAGS]), /does not allow the branch main/],
+  ["a tag rule where a branch rule should be", environmentReplies([{ name: "main", type: "tag" }, RELEASE_TAGS]), /does not allow the branch main[\s\S]*also allows tags matching main/],
+  ["a renamed default branch", environmentReplies([MAIN, RELEASE_TAGS], { defaultBranch: "trunk" }), /does not allow the branch trunk[\s\S]*also allows the branch main/],
+  ["protected branches only", environmentReplies([MAIN, RELEASE_TAGS], { rule: { protected_branches: true, custom_branch_policies: false } }), /protected branches only/],
+  ["no branch rule at all", environmentReplies([], { rule: null }), /no rule on which branches and tags can use it/],
+  ["neither kind of rule on", environmentReplies([MAIN, RELEASE_TAGS], { rule: { protected_branches: false, custom_branch_policies: false } }), /not set to selected branches and tags/],
+  ["more rules than were read", environmentReplies([MAIN, RELEASE_TAGS], { total: 150 }), /150 rules and only 2 were read/],
+];
+
+test("every way the environment's rules can differ from what Klaus set is reported, and none is accepted", () => {
+  for (const [label, table, problem] of DRIFT) {
+    const result = checkIn(table);
+    assert.equal(result.status, "drifted", label);
+    assert.match(result.problems.join("\n"), problem, label);
+  }
+  // In schedule mode the tag rule is itself the difference: nothing makes a tag a safe release there.
+  const scheduled = checkIn(environmentReplies([MAIN, RELEASE_TAGS]), { mode: "schedule", tagPattern: undefined });
+  assert.equal(scheduled.status, "drifted");
+  assert.match(scheduled.problems[0], /also allows tags matching v\*/);
+});
+
+test("no environment is read for a release pattern that a tag ruleset cannot protect, or for a name that is not safe", () => {
+  const fake = fakeEnvironmentGh(environmentReplies([MAIN, RELEASE_TAGS]));
+  assert.throws(() => checkEnvironment({ repo: tempDir(), name: DEFAULT_ENVIRONMENT, mode: "release", tagPattern: "release/**", run: fake.run }), /cannot be protected by a tag ruleset/);
+  for (const name of ["", "a b", "../x", "a/b", "-x"]) {
+    assert.throws(() => checkEnvironment({ repo: tempDir(), name, mode: "release", tagPattern: "v*", run: fake.run }), /is not an environment name Klaus uses/, JSON.stringify(name));
+  }
+  assert.equal(fake.calls.length, 0);
+});
+
+test("createEnvironment turns on selected branches and tags first, then adds one rule for each, and nothing else", () => {
+  const fake = fakeEnvironmentGh({
+    [`PUT ${ENV_URL}`]: { body: { name: DEFAULT_ENVIRONMENT } },
+    [`POST ${ENV_URL}/deployment-branch-policies`]: { body: { id: 1 } },
+  });
+  createEnvironment({ repo: tempDir(), name: DEFAULT_ENVIRONMENT, policies: [MAIN, RELEASE_TAGS], run: fake.run });
+  assert.deepEqual(fake.calls.map((call) => `${call.method} ${call.endpoint}`), [`PUT ${ENV_URL}`, `POST ${ENV_URL}/deployment-branch-policies`, `POST ${ENV_URL}/deployment-branch-policies`]);
+  assert.deepEqual(JSON.parse(fake.calls[0].input), { deployment_branch_policy: { protected_branches: false, custom_branch_policies: true } });
+  assert.deepEqual(JSON.parse(fake.calls[0].input), environmentBody());
+  assert.deepEqual(fake.calls.slice(1).map((call) => JSON.parse(call.input)), [MAIN, RELEASE_TAGS]);
+});
+
+test("the secrets check reads names only, ignores case, and tells the person what is left", () => {
+  const table = {
+    [`GET ${ENV_SECRETS_URL}`]: secretsReply("VERCEL_TOKEN", "OTHER"),
+    [`GET ${REPO_SECRETS_URL}`]: secretsReply("vercel_token", "ONLY_HERE", "UNRELATED"),
+  };
+  const fake = fakeEnvironmentGh(table);
+  const result = checkSecrets({ repo: tempDir(), name: DEFAULT_ENVIRONMENT, secrets: ["VERCEL_TOKEN", "VERCEL_ORG_ID", "ONLY_HERE"], run: fake.run });
+  assert.deepEqual(result.secrets, [
+    { name: "VERCEL_TOKEN", inEnvironment: true, inRepository: true },
+    { name: "VERCEL_ORG_ID", inEnvironment: false, inRepository: false },
+    { name: "ONLY_HERE", inEnvironment: false, inRepository: true },
+  ]);
+  assert.equal(fake.calls.every((call) => call.method === "GET"), true, "no secret is written, and no value is read");
+  const advice = secretsAdvice({ name: DEFAULT_ENVIRONMENT, result });
+  assert.match(advice, /VERCEL_TOKEN: in the environment, and still a repository secret[\s\S]*gh secret delete VERCEL_TOKEN/);
+  assert.match(advice, /VERCEL_ORG_ID: not in the environment[\s\S]*gh secret set VERCEL_ORG_ID --env klaus-release/);
+  assert.match(advice, /GitHub does not show a secret's value, so Klaus cannot copy it/);
+  assert.match(advice, /ONLY_HERE: not in the environment[\s\S]*It is a repository secret now/);
+  assert.match(advice, /Not done yet/);
+
+  const done = secretsAdvice({ name: DEFAULT_ENVIRONMENT, result: { status: "read", secrets: [{ name: "VERCEL_TOKEN", inEnvironment: true, inRepository: false }] } });
+  assert.match(done, /All 1 secrets are in klaus-release and none is left in the repository/);
+  const unread = checkSecrets({ repo: tempDir(), name: DEFAULT_ENVIRONMENT, secrets: ["X"], run: fakeEnvironmentGh({ [`GET ${ENV_SECRETS_URL}`]: { fail: "gh: Forbidden (HTTP 403)" } }).run });
+  assert.equal(unread.status, "unknown");
+  assert.match(secretsAdvice({ name: DEFAULT_ENVIRONMENT, result: unread }), /could not be read/);
+  const partial = checkSecrets({ repo: tempDir(), name: DEFAULT_ENVIRONMENT, secrets: ["X"], run: fakeEnvironmentGh({ [`GET ${ENV_SECRETS_URL}`]: { body: { total_count: 120, secrets: [{ name: "A" }] } } }).run });
+  assert.equal(partial.status, "unknown", "a list that was cut short does not say a secret is missing");
+});
+
+const ENVIRONMENT_CONFIG = { ...CONFIG, trigger: { mode: "release", tagPattern: "v*", secretsEnvironment: DEFAULT_ENVIRONMENT } };
+const WORKFLOW_OPTIONS = { install: "pnpm install --frozen-lockfile", storybookBuild: "pnpm build-storybook" };
+const protectedTags = () => ({ status: "protected", rulesets: [{ id: 1, name: RULESET_NAME }] });
+
+test("the workflow is not rendered when the environment is missing, unreadable or has other rules, and nothing is written", () => {
+  const repo = sampleRepo();
+  write(path.join(repo, "klaus.config.json"), JSON.stringify(ENVIRONMENT_CONFIG));
+  const destination = path.join(repo, ".github/workflows/klaus.yml");
+  const render = (table) => writeWorkflow({ repo, ...WORKFLOW_OPTIONS, checkTags: protectedTags, checkEnv: (args) => checkEnvironment({ ...args, run: fakeEnvironmentGh(table).run }) });
+
+  assert.throws(() => render({ ...environmentReplies([]), [`GET ${ENV_URL}`]: NOT_FOUND }), /The environment klaus-release does not exist\..*install\.mjs environment --repo <repo> --create/);
+  assert.throws(() => render({ [`GET ${API}`]: { fail: "gh: Bad credentials (HTTP 401)" } }), /could not be read \(gh api repos\/\{owner\}\/\{repo\} failed: gh: Bad credentials \(HTTP 401\)\)/);
+  for (const [label, table, problem] of DRIFT) {
+    assert.throws(() => render(table), (error) => problem.test(error.message) && /does not have the rules Klaus set/.test(error.message) && error.message.includes(ENVIRONMENT_DOCS.rules) && /Klaus does not change an environment that already exists/.test(error.message), label);
+  }
+  assert.equal(existsSync(destination), false, "nothing is written when the check fails");
+
+  const written = render(environmentReplies([MAIN, RELEASE_TAGS]));
+  assert.equal(written.environment.name, DEFAULT_ENVIRONMENT);
+  assert.deepEqual(written.environment.policies, [MAIN, RELEASE_TAGS]);
+  assert.match(readFileSync(destination, "utf8"), /environment:\n {6}name: "klaus-release"\n {6}deployment: false/);
+});
+
+test("an environment that loses its rules after onboarding makes the next render refuse and leaves the written workflow alone", () => {
+  const repo = sampleRepo();
+  write(path.join(repo, "klaus.config.json"), JSON.stringify(ENVIRONMENT_CONFIG));
+  const render = (table) => writeWorkflow({ repo, ...WORKFLOW_OPTIONS, checkTags: protectedTags, checkEnv: (args) => checkEnvironment({ ...args, run: fakeEnvironmentGh(table).run }) });
+  const onboarded = render(environmentReplies([MAIN, RELEASE_TAGS]));
+  write(onboarded.destination, `${readFileSync(onboarded.destination, "utf8")}# marker\n`);
+  // Someone opens the environment to every branch.
+  assert.throws(() => render(environmentReplies([MAIN, RELEASE_TAGS, { name: "*", type: "branch" }])), /also allows the branch \*/);
+  // Or turns the rules off.
+  assert.throws(() => render(environmentReplies([], { rule: null })), /no rule on which branches and tags can use it/);
+  assert.match(readFileSync(onboarded.destination, "utf8"), /# marker\n$/, "the refused render wrote nothing");
+});
+
+test("the environment is checked in a schedule too, and not at all when the config sets none", () => {
+  const repo = sampleRepo();
+  write(path.join(repo, "klaus.config.json"), JSON.stringify({ ...CONFIG, trigger: { mode: "schedule", cron: "0 6 * * 1", secretsEnvironment: DEFAULT_ENVIRONMENT } }));
+  const render = (table) => writeWorkflow({ repo, ...WORKFLOW_OPTIONS, checkTags: () => assert.fail("a schedule needs no tag ruleset"), checkEnv: (args) => checkEnvironment({ ...args, run: fakeEnvironmentGh(table).run }) });
+  assert.throws(() => render(environmentReplies([MAIN, RELEASE_TAGS])), /also allows tags matching v\*/, "a schedule never needs a tag to reach the secrets");
+  assert.equal(existsSync(path.join(repo, ".github/workflows/klaus.yml")), false);
+  const written = render(environmentReplies([MAIN]));
+  assert.deepEqual(written.environment.policies, [MAIN]);
+
+  write(path.join(repo, "klaus.config.json"), JSON.stringify(CONFIG));
+  assert.equal(requireEnvironment({ repo, config: resolveConfig(CONFIG), checkEnv: () => assert.fail("no environment was asked for") }), null);
+  assert.equal(writeWorkflow({ repo, ...WORKFLOW_OPTIONS, checkTags: protectedTags, checkEnv: () => assert.fail("no environment was asked for") }).environment, null);
+});
+
+/**
+ * A stand-in `gh` on PATH for the command line. It answers "METHOD endpoint" from a table (GH_TABLE),
+ * and appends every call, with what was sent on standard input, to a log (GH_LOG).
+ */
+function ghOnPath() {
+  const dir = tempDir();
+  const log = path.join(dir, "log");
+  write(path.join(dir, "gh"), `#!${process.execPath}
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const method = args.includes("--method") ? args[args.indexOf("--method") + 1] : "GET";
+const endpoint = args.find((arg) => arg.startsWith("repos/"));
+const input = args.includes("--input") ? fs.readFileSync(0, "utf8") : undefined;
+fs.appendFileSync(process.env.GH_LOG, JSON.stringify({ method, endpoint, input }) + "\\n");
+const answer = JSON.parse(process.env.GH_TABLE)[method + " " + endpoint];
+if (!answer) { console.error("gh: nothing is set up to answer " + method + " " + endpoint); process.exit(1); }
+if (answer.fail) { console.error(answer.fail); process.exit(1); }
+process.stdout.write(JSON.stringify(answer.body ?? {}));
+`);
+  spawnSync("chmod", ["+x", path.join(dir, "gh")]);
+  const calls = () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) : []);
+  const writes = () => calls().filter((call) => call.method !== "GET");
+  const run = (command, repo, args, table) => spawnSync(process.execPath, [path.join(SOURCE_ROOT, "install/install.mjs"), command, "--repo", repo, ...args], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, GH_TABLE: JSON.stringify(table), GH_LOG: log },
+  });
+  return { run, calls, writes, reset: () => rmSync(log, { force: true }) };
+}
+
+test("the environment command shows what it would create, creates it only with --create, and then checks the secrets", () => {
+  const gh = ghOnPath();
+  const repo = sampleRepo();
+  const none = { ...environmentReplies([]), [`GET ${ENV_URL}`]: NOT_FOUND };
+  const created = { ...none, [`PUT ${ENV_URL}`]: { body: { name: DEFAULT_ENVIRONMENT } }, [`POST ${ENV_URL}/deployment-branch-policies`]: { body: { id: 1 } }, [`GET ${ENV_SECRETS_URL}`]: secretsReply(), [`GET ${REPO_SECRETS_URL}`]: secretsReply("VERCEL_TOKEN", "VERCEL_ORG_ID") };
+
+  const shown = gh.run("environment", repo, [], none);
+  assert.equal(shown.status, 0, shown.stderr);
+  assert.match(shown.stdout, /There is no environment klaus-release, so the secrets are repository secrets that a workflow on any branch can read\. Nothing has been created\./);
+  assert.match(shown.stdout, /Why: a repository secret can be read by a workflow run from any branch/);
+  assert.match(shown.stdout, /only when the run is on the branch main and tags matching v\*/);
+  assert.match(shown.stdout, /PUT repos\/\{owner\}\/\{repo\}\/environments\/klaus-release {2}\{"deployment_branch_policy":\{"protected_branches":false,"custom_branch_policies":true\}\}/);
+  assert.match(shown.stdout, /POST .*deployment-branch-policies {2}\{"name":"v\*","type":"tag"\}/);
+  assert.match(shown.stdout, /Klaus will not copy a secret[\s\S]*gh secret set VERCEL_TOKEN --env klaus-release\n {2}gh secret set VERCEL_ORG_ID --env klaus-release/);
+  assert.deepEqual(gh.writes(), [], "nothing was created without --create");
+
+  gh.reset();
+  const made = gh.run("environment", repo, ["--create"], created);
+  assert.equal(made.status, 0, made.stderr);
+  assert.deepEqual(gh.writes().map((call) => `${call.method} ${call.endpoint}`), [`PUT ${ENV_URL}`, `POST ${ENV_URL}/deployment-branch-policies`, `POST ${ENV_URL}/deployment-branch-policies`]);
+  assert.deepEqual(gh.writes().slice(1).map((call) => JSON.parse(call.input)), [MAIN, RELEASE_TAGS]);
+  assert.match(made.stdout, /Created the environment klaus-release\. Only the branch main and tags matching v\* can use it from now on\./);
+  assert.match(made.stdout, /Record this in klaus\.config\.json, under "trigger": "secretsEnvironment": "klaus-release"/);
+  assert.match(made.stdout, /VERCEL_TOKEN: not in the environment[\s\S]*gh secret set VERCEL_TOKEN --env klaus-release/);
+  assert.match(made.stdout, /Not done yet/);
+  assert.equal(JSON.stringify(gh.calls()).includes("\"value\""), false, "no secret value is sent anywhere");
+});
+
+test("the environment command leaves an environment that already has the right rules alone, and reports the secrets", () => {
+  const gh = ghOnPath();
+  const repo = sampleRepo();
+  write(path.join(repo, "klaus.config.json"), JSON.stringify(ENVIRONMENT_CONFIG));
+  const exact = environmentReplies([MAIN, RELEASE_TAGS]);
+
+  const half = gh.run("environment", repo, ["--create"], { ...exact, [`GET ${ENV_SECRETS_URL}`]: secretsReply("VERCEL_TOKEN"), [`GET ${REPO_SECRETS_URL}`]: secretsReply("VERCEL_TOKEN") });
+  assert.equal(half.status, 0, half.stderr);
+  assert.match(half.stdout, /The environment klaus-release allows the branch main and tags matching v\* and nothing else\. Nothing to create\./);
+  assert.doesNotMatch(half.stdout, /Record this in klaus\.config\.json/, "the config already names it");
+  assert.match(half.stdout, /VERCEL_TOKEN: in the environment, and still a repository secret[\s\S]*gh secret delete VERCEL_TOKEN/);
+  assert.match(half.stdout, /VERCEL_ORG_ID: not in the environment/);
+  assert.deepEqual(gh.writes(), [], "an environment that exists is not written to");
+
+  const all = gh.run("environment", repo, [], { ...exact, [`GET ${ENV_SECRETS_URL}`]: secretsReply("VERCEL_TOKEN", "VERCEL_ORG_ID"), [`GET ${REPO_SECRETS_URL}`]: secretsReply() });
+  assert.match(all.stdout, /All 2 secrets are in klaus-release and none is left in the repository\./);
+});
+
+test("the environment command stops, and changes nothing, when the environment has other rules or cannot be read", () => {
+  const gh = ghOnPath();
+  const repo = sampleRepo();
+  const loose = gh.run("environment", repo, ["--create"], environmentReplies([MAIN, RELEASE_TAGS, { name: "*", type: "branch" }]));
+  assert.equal(loose.status, 2);
+  assert.match(loose.stderr, /The environment klaus-release does not have the rules Klaus set/);
+  assert.match(loose.stderr, /also allows the branch \*/);
+  assert.match(loose.stderr, /It must allow the branch main and tags matching v\*, and nothing else/);
+  assert.match(loose.stderr, /Settings, Environments, klaus-release, Deployment branches and tags/);
+  assert.deepEqual(gh.writes(), []);
+
+  const denied = gh.run("environment", repo, ["--create"], { ...environmentReplies([]), [`GET ${ENV_URL}`]: { fail: "gh: Must have admin rights to Repository. (HTTP 403)" } });
+  assert.equal(denied.status, 2);
+  assert.match(denied.stderr, /could not be read.*HTTP 403/);
+  assert.match(denied.stderr, /environments for private repos need GitHub Pro, Team or Enterprise/);
+  assert.deepEqual(gh.writes(), []);
+});
+
+test("the environment command allows only the default branch in a schedule, and reads nothing for a pattern that cannot be protected or an output without secrets", () => {
+  const gh = ghOnPath();
+  const repo = sampleRepo();
+  write(path.join(repo, "klaus.config.json"), JSON.stringify({ ...CONFIG, trigger: { mode: "schedule", cron: "0 6 * * 1" } }));
+  const none = { ...environmentReplies([]), [`GET ${ENV_URL}`]: NOT_FOUND, [`PUT ${ENV_URL}`]: { body: {} }, [`POST ${ENV_URL}/deployment-branch-policies`]: { body: {} }, [`GET ${ENV_SECRETS_URL}`]: secretsReply(), [`GET ${REPO_SECRETS_URL}`]: secretsReply() };
+  const made = gh.run("environment", repo, ["--create"], none);
+  assert.equal(made.status, 0, made.stderr);
+  assert.deepEqual(gh.writes().slice(1).map((call) => JSON.parse(call.input)), [MAIN], "a schedule has no tag rule");
+  assert.match(made.stdout, /Only the branch main can use it from now on/);
+
+  gh.reset();
+  write(path.join(repo, "klaus.config.json"), JSON.stringify({ ...CONFIG, trigger: { mode: "release", tagPattern: "release/**" } }));
+  const bad = gh.run("environment", repo, ["--create"], none);
+  assert.equal(bad.status, 2);
+  assert.match(bad.stderr, /cannot be protected by a tag ruleset/);
+
+  write(path.join(repo, "klaus.config.json"), JSON.stringify({ ...CONFIG, outputs: { figma: CONFIG.outputs.figma } }));
+  const quiet = gh.run("environment", repo, ["--create"], none);
+  assert.equal(quiet.status, 0, quiet.stderr);
+  assert.match(quiet.stdout, /No output that is on reads a secret, so there is nothing to keep in an environment/);
+  assert.deepEqual(gh.calls(), [], "gh was not called");
+});
+
+test("the workflow command names the environment, says what it allows, and refuses when the rules have changed", () => {
+  const gh = ghOnPath();
+  const repo = sampleRepo();
+  write(path.join(repo, "klaus.config.json"), JSON.stringify({ ...CONFIG, trigger: { mode: "schedule", cron: "0 6 * * 1", secretsEnvironment: DEFAULT_ENVIRONMENT } }));
+  const args = ["--install", "pnpm install --frozen-lockfile", "--storybook-build", "pnpm build-storybook"];
+  const destination = path.join(repo, ".github/workflows/klaus.yml");
+
+  const loose = gh.run("workflow", repo, args, environmentReplies([MAIN, { name: "*", type: "branch" }]));
+  assert.equal(loose.status, 2);
+  assert.match(loose.stderr, /also allows the branch \*/);
+  assert.equal(existsSync(destination), false);
+
+  const ok = gh.run("workflow", repo, args, environmentReplies([MAIN]));
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.match(ok.stdout, /the job uses the environment "klaus-release", whose rules allow only the branch main/);
+  assert.match(ok.stdout, /secrets to set in the environment klaus-release: VERCEL_TOKEN, VERCEL_ORG_ID/);
+  assert.match(readFileSync(destination, "utf8"), /environment:\n {6}name: "klaus-release"/);
+
+  // Without the setting, the secrets stay repository secrets, and the command says how to change that.
+  write(path.join(repo, "klaus.config.json"), JSON.stringify({ ...CONFIG, trigger: { mode: "schedule", cron: "0 6 * * 1" } }));
+  gh.reset();
+  const plain = gh.run("workflow", repo, args, {});
+  assert.equal(plain.status, 0, plain.stdout + plain.stderr);
+  assert.match(plain.stdout, /secrets to set in the repo: VERCEL_TOKEN, VERCEL_ORG_ID/);
+  assert.match(plain.stdout, /repository secrets, which a workflow run on any branch can read\. To keep them in an environment instead, run install\.mjs environment/);
+  assert.deepEqual(gh.calls(), [], "no environment is read when the config sets none");
 });
 
 // ---------------------------------------------------------------------------------------------

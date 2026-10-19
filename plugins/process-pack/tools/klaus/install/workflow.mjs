@@ -17,6 +17,7 @@ import { UserError } from "../frame/errors.mjs";
 import { resolveConfig } from "../frame/config.mjs";
 import { readJsonFile } from "../frame/json-file.mjs";
 import { SOURCE_ROOT } from "./copy.mjs";
+import { assertEnvironmentName, checkEnvironment, expectedPolicies, requireMessage, secretsOf } from "./environment.mjs";
 import { assertReleasePattern, checkRuleset, unapprovedMessage } from "./ruleset.mjs";
 import { writePlainFile } from "./safe-write.mjs";
 
@@ -68,7 +69,7 @@ export function renderWorkflow({ template, config, install, installSteps, corepa
   const folders = config.inventory.folders ?? [];
   if (folders.length === 0) throw new UserError("klaus.config.json has no inventory.folders, so the workflow has nothing to build the inventory from.");
 
-  const secrets = [...new Set(Object.values(config.outputs).filter((o) => o.enabled).flatMap((o) => o.secrets))];
+  const secrets = secretsOf(config);
   const keep = {
     release: config.trigger.mode === "release",
     schedule: config.trigger.mode === "schedule",
@@ -173,12 +174,32 @@ export function requireTagRuleset({ repo, config, checkTags = checkRuleset }) {
   throw new UserError(`${why} Release mode runs on a pushed tag, and a pushed tag runs the workflow file from the tagged commit, so only a tag ruleset protects the repo's secrets from a hostile tag. Create one with \`install.mjs ruleset --repo <repo> --tag-pattern ${tagPattern} --create\` after the person agrees, or set trigger.mode to "schedule" in klaus.config.json.`);
 }
 
+/**
+ * When klaus.config.json says the secrets are kept in an environment (trigger.secretsEnvironment),
+ * this refuses to render unless the environment has exactly the rules Klaus sets (see environment.mjs):
+ * the default branch and, in release mode, the release tags. A repository secret can be read from a
+ * workflow on any branch, so a job that names an environment whose rules have loosened would give
+ * the secrets to code Klaus meant to keep out. The rules are read again on every render.
+ * @returns {{ name: string, defaultBranch: string, policies: object[] } | null}  The environment and the rules it has, or null when the config sets none.
+ */
+export function requireEnvironment({ repo, config, checkEnv = checkEnvironment }) {
+  const name = config.trigger.secretsEnvironment;
+  if (!name) return null;
+  assertEnvironmentName(name);
+  const { mode, tagPattern } = config.trigger;
+  if (mode === "release") assertReleasePattern(tagPattern);
+  const found = checkEnv({ repo, name, mode, tagPattern });
+  if (found.status === "ok") return { name, defaultBranch: found.defaultBranch, policies: expectedPolicies({ defaultBranch: found.defaultBranch, mode, tagPattern }) };
+  throw new UserError(requireMessage({ found, name, mode, tagPattern }));
+}
+
 /** Reads the config and the template, renders, writes, and lints. */
-export function writeWorkflow({ repo, config: configFile = path.join(repo, "klaus.config.json"), to = ".github/workflows/klaus.yml", checkTags, ...options }) {
+export function writeWorkflow({ repo, config: configFile = path.join(repo, "klaus.config.json"), to = ".github/workflows/klaus.yml", checkTags, checkEnv, ...options }) {
   const config = resolveConfig(readJsonFile(configFile, "Config"));
   const rulesets = requireTagRuleset({ repo, config, checkTags });
+  const environment = requireEnvironment({ repo, config, checkEnv });
   const template = fs.readFileSync(path.join(SOURCE_ROOT, "templates", "klaus.yml"), "utf8");
   const { text, kept, secrets } = renderWorkflow({ template, config, ...options });
   const destination = writePlainFile(repo, path.resolve(repo, to), text.endsWith("\n") ? text : `${text}\n`);
-  return { destination, kept, secrets, rulesets, lint: lintWorkflow(destination) };
+  return { destination, kept, secrets, rulesets, environment, lint: lintWorkflow(destination) };
 }
