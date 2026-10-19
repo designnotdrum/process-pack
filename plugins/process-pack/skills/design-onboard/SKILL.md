@@ -146,6 +146,7 @@ Run this step after DESIGN.md exists, and run its commands from the repo root. A
 - **Limits come from `klaus-outputs.md`.** Quote the limit with its source and date. A limit older than a month is checked against the platform's own page first, and you say you did.
 - **One output per screen.** Each screen shows the route, the cost lines, the limits and the default, then asks one question.
 - **Secrets stay out.** The config holds names, never values. Never ask for a token and never print one. The person sets the values in the repo's CI secrets.
+- **Nothing that is not on the default branch gets a secret.** The workflow refuses a commit that is not on the default branch, ignores release tags that are not, and gives the Vercel token to one step only. Release mode is not set up without the tag ruleset in 8.5.
 - **This step runs no model and writes nothing to Figma.** It makes no deploy and no Codex call.
 
 ### 8.1 Preflight, read only
@@ -154,9 +155,9 @@ Run this step after DESIGN.md exists, and run its commands from the repo root. A
 2. **The repo's own TypeScript.** The inventory reads components with the repo's `typescript` package. Not installed: stop and say to install it.
 3. **Storybook.** Find a `.storybook` folder (`git ls-files` for `*/.storybook/*`) and the script that runs `storybook build`. Without Storybook, Storybook and Figma cannot be turned on: Figma draws each component from its story. Say that Klaus does not install Storybook.
 4. **Package manager.** From the lockfile and `packageManager` in package.json. Work out the repo's install command: `pnpm install --frozen-lockfile`, `npm ci`, or `yarn install --immutable` (`--frozen-lockfile` before Yarn 2). Look at the repo's own CI workflow too. If it has install steps (a pinned `pnpm/action-setup`, for instance), copy those steps without the checkout into a file in the scratch folder and use them in place of the command.
-5. **CI.** Klaus renders a GitHub Actions workflow and nothing else. Look for `.github/workflows` and a GitHub remote (`git remote -v`). If the repo is not on GitHub Actions, do everything except the workflow, and say so.
+5. **CI.** Klaus renders a GitHub Actions workflow and nothing else. Look for `.github/workflows` and a GitHub remote (`git remote -v`). If the repo is not on GitHub Actions, do everything except the workflow, and say so. Note the default branch (`gh repo view --json defaultBranchRef`): the workflow builds only commits that are on it, and treats a tag as a release only when its commit is on it.
 6. **An earlier install.** If `scripts/klaus/VERSION.txt` or `klaus.config.json` exists, this is an upgrade. Show the version line, keep the existing answers as defaults, and expect `copy` to refuse a hand-edited copy.
-7. Make a scratch folder with `mktemp -d`. Everything until step 8.6 goes there. After each answer in 8.3 and 8.4, update `<scratch>/klaus.config.json` (outputs on or off with their target, the cap, the selection) before you re-run the cost command, because the command reads that file.
+7. Make a scratch folder with `mktemp -d`. Everything until step 8.7 goes there. After each answer in 8.3 and 8.4, update `<scratch>/klaus.config.json` (outputs on or off with their target, the cap, the selection) before you re-run the cost command, because the command reads that file.
 
 ### 8.2 Inventory folders
 
@@ -193,11 +194,23 @@ Ask these three together, each pre-filled.
 
 - **Components.** Default `selection.componentGroups`: every inventory folder marked `shared`, plus any folder the person names as the marketing kit or the icon set. App and local components stay in the inventory and out of the design files. Add `newComponents` with rule `all`, so a new component in a selected group joins on the release that ships it. The other rules are `min-usage` and `none`.
 - **Screens.** The default is every screen the repo's visual checks capture, and only when the same workflow job can produce one PNG per route (named `home.png`, `settings.png`, in `outputs.figma.options.screenshotsDir`, `.klaus/screens` by default). Ask whether visual checks exist and where the screenshots land. If the workflow cannot produce them, set `screens.mode` to `none` and say why. A listed screen with no screenshot fails the run.
-- **Trigger.** Default `release`: CI runs after each release tag, with `tagPattern` taken from the existing tags (`v*` when they look like `v1.4.0`). `schedule` takes a five-field cron in UTC. A one-off run is the third choice: write no workflow, and tell the person to run `node scripts/klaus/frame/cli.mjs run --trigger manual` themselves.
+- **Trigger.** Default `release`: CI runs when a release tag is pushed, with `tagPattern` taken from the existing tags (`v*` when they look like `v1.4.0`). It needs the tag ruleset in 8.5, and the person can decline it. `schedule` takes a five-field cron in UTC and builds the newest tag whose commit is on the default branch. It needs no ruleset, because a scheduled run uses the workflow file from the default branch. A one-off run is the third choice: write no workflow, and tell the person to run `node scripts/klaus/frame/cli.mjs run --trigger manual` themselves.
 
 If a changed selection moves a cost, re-run the cost command and show the new line.
 
-### 8.5 Create the Vercel project
+### 8.5 Protect the release tags (release mode only)
+
+Skip this when the trigger is a schedule or a one-off run.
+
+A pushed tag runs the workflow file from the tagged commit, so a check inside the workflow cannot stop a hostile tag. Anyone who can push a tag matching the pattern could run their own copy of the Klaus workflow with the repo's secrets. Release mode is therefore set up only when a repository ruleset lets just maintainers create or update tags matching the pattern. `install.mjs workflow` refuses to render release mode until it finds one.
+
+1. **Look for one.** This needs `gh` signed in with admin rights on the repo. `install.mjs ruleset --repo <repo> --tag-pattern <pattern>` reads `gh api repos/{owner}/{repo}/rulesets`, and reads each active tag ruleset in full. It says either that a ruleset already protects the tags (go on to 8.6), or what it would create. It creates nothing without `--create`. If it says the rulesets could not be read (no admin rights, or a plan without rulesets), say so, do not render release mode, and offer the schedule or an admin.
+2. **Find who makes release tags today.** Look in `.github/workflows` for `git tag`, `git push --tags`, `gh release create` or a release action, and ask. The ruleset refuses everyone not on its list, including that workflow. Repository admins are always on the list. Add a GitHub App by id with `--bypass-app <id>` (`gh api /apps/<slug> --jq .id` finds it) or a team with `--bypass-team <id>`. Whether a workflow's default `GITHUB_TOKEN` can be put on the list is unverified, so a workflow that cuts the tags needs an App token, or the schedule.
+3. **Show the plan and ask.** Show what the command printed: why it is needed, who can still push release tags, who is blocked, and the ruleset itself. Ask: create it, use the schedule instead, or leave release mode off.
+4. **Create it only after a yes.** Run the same command with `--create` and the same bypass flags. It checks again first and creates nothing if a ruleset now exists. Show the id it prints.
+5. **On no,** set `trigger.mode` to `schedule` (ask for the cron) or to a one-off run, and say plainly that release mode was left off because the tags are unprotected.
+
+### 8.6 Create the Vercel project
 
 Skip this when Storybook is off. The Storybook adapter needs the project to exist before its first run, and onboarding creates it. It is the one platform call in this step, it creates an empty project, and it needs `VERCEL_TOKEN`. Ask first, once. On yes, run the command with the token in the environment of that one command, from the person's secret store, never printed. The adapter passes its token the same way, and pins the same CLI version (`VERCEL_CLI_VERSION` in `adapters/storybook/vercel.mjs`). `vercel project create <name>` and the `VERCEL_TOKEN` variable are in Vercel's CLI docs (read 2026-10-19). The command has not been run against the pinned version:
 
@@ -207,7 +220,7 @@ VERCEL_TOKEN=<from the secret store> npx --yes vercel@<pinned version> project c
 
 Leave deployment protection at Vercel's default. The adapter deploys an empty index first, so the first release is a protected preview. On no, give the command as a next step.
 
-### 8.6 Write the files
+### 8.7 Write the files
 
 All answers are in. Now write to the repo, in this order:
 
@@ -243,19 +256,20 @@ All answers are in. Now write to the repo, in this order:
      [--storybook-build "<command>"] [--playwright "<command>"] [--captures <file>]
    ```
 
-   Pass `--corepack` when package.json has `packageManager` for pnpm or Yarn and you are not using copied install steps. Pass `--node <major>` from `.nvmrc`, `.node-version` or `engines.node` when the repo has one. Leave `--playwright` out unless the default, `npx playwright install --with-deps chromium`, is wrong for the repo's package manager. `--storybook-build` is needed when Figma is on. It is the command that writes a static Storybook to `storybook-static` (or to `outputs.figma.options.storybookDir`, which you then set in the config). Read the script to see where it writes, and in a workspace run it in its package: `pnpm --filter <package> <script>`, `npm run <script> -w <package>` or `yarn workspace <package> <script>`. Do not run the build here. `--captures` names the file the version picker reads when the repo's visual checks write one. The command prints the parts it kept, the secrets to set, and the result of actionlint. When actionlint is not installed it parses the YAML with python3 or ruby instead and says so. Report which check ran. If the check fails, fix the cause and render again.
+   Pass `--corepack` when package.json has `packageManager` for pnpm or Yarn and you are not using copied install steps. Pass `--node <major>` from `.nvmrc`, `.node-version` or `engines.node` when the repo has one. Leave `--playwright` out unless the default, `npx playwright install --with-deps chromium`, is wrong for the repo's package manager. `--storybook-build` is needed when Figma is on. It is the command that writes a static Storybook to `storybook-static` (or to `outputs.figma.options.storybookDir`, which you then set in the config). Read the script to see where it writes, and in a workspace run it in its package: `pnpm --filter <package> <script>`, `npm run <script> -w <package>` or `yarn workspace <package> <script>`. Do not run the build here. `--captures` names the file the version picker reads when the repo's visual checks write one. In release mode it first checks for the tag ruleset and stops without writing if there is none. The command prints the parts it kept, the ruleset that protects the tags, the secrets to set, and the result of actionlint. When actionlint is not installed it parses the YAML with python3 or ruby instead and says so. Report which check ran. If the check fails, fix the cause and render again.
 5. **Housekeeping.** Add `.klaus/` to `.gitignore` unless `git check-ignore .klaus/state.json` says it is already ignored. Look at how the repo treats other copied script folders (`scripts/dieter`, for instance) in its lint, format and test configs, and treat `scripts/klaus` the same.
 
-### 8.7 What the person does next
+### 8.8 What the person does next
 
 Show these as a short list. Do not run them.
 
+- **What the workflow refuses.** It builds only commits on the default branch. A tag whose commit is not on it is ignored, with a warning, and a pushed tag like that fails the run. The Vercel token is on the Run Klaus step alone, and the Storybook build inside it starts without the token.
 - **Push.** The workflow runs only once it is on the default branch of the GitHub repo. Push the commit and open a pull request the way the repo does for other changes.
 - **State.** Each run keeps Klaus's state in the `klaus-state` artifact for up to 90 days (the repo's artifact retention may be shorter). If no release runs for longer than that, the next run starts again from the newest release.
 - **Secrets** to add in the repo's settings, by name: the ones the command printed. Their values come from the person's own secret store.
 - **Figma, when on.** (1) Once, in the Figma desktop app: open the target file, then Plugins, Development, Import plugin from manifest, and pick `scripts/klaus/adapters/figma/plugin/manifest.json` in the repo. (2) On the machine that will run the relay, install the Codex CLI and sign it in to Figma: the steps are in `scripts/klaus/adapters/figma/relay/README.md`. (3) After the onboarding run has written the Figma data files, apply them with the plugin ("Klaus: apply a release"), then run `relay.mjs --reconcile` once so the relay does not send what the plugin wrote.
 
-### 8.8 The onboarding run: show the estimate and stop
+### 8.9 The onboarding run: show the estimate and stop
 
 Print the one-time estimate for the outputs that are on:
 
@@ -265,10 +279,10 @@ node <klaus-src>/install/install.mjs costs --repo <repo> --config klaus.config.j
 
 Commit `scripts/klaus/`, `klaus.config.json`, the workflow and `.gitignore` (when it changed) in one commit, apart from the design commits.
 
-The onboarding run builds the baseline (process-pack issue #30). Ask the person to approve the estimate. On yes, continue with the onboarding run, which is that issue's step. When this skill has no such step yet, say so and end here: the estimate and the commit are the result, and 8.7 lists what is left.
+The onboarding run builds the baseline (process-pack issue #30). Ask the person to approve the estimate. On yes, continue with the onboarding run, which is that issue's step. When this skill has no such step yet, say so and end here: the estimate and the commit are the result, and 8.8 lists what is left.
 
 ## Report
 
 End with: the path taken, the direction or branch the user picked, the references, the Jev results with their sources, the checks installed and whether they pass, each UI Skill with its pinned commit, and anything left open.
 
-For Klaus, say whether it was skipped. If it was set up, give each output as on or off with its cost lines as `install.mjs costs` printed them, the spending cap, the trigger, the version line from `scripts/klaus/VERSION.txt`, the secrets still to set, the steps left for the person, which workflow check ran, and the onboarding run's one-time estimate.
+For Klaus, say whether it was skipped. If it was set up, give each output as on or off with its cost lines as `install.mjs costs` printed them, the spending cap, the trigger (in release mode, the tag ruleset that protects it, or why release mode was left off), the version line from `scripts/klaus/VERSION.txt`, the secrets still to set, the steps left for the person, which workflow check ran, and the onboarding run's one-time estimate.
