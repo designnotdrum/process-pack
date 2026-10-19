@@ -19,6 +19,10 @@
 # A scheduled run uses this file from the default branch, so 1 and 2 hold there. A pushed
 # tag runs the file from the tagged commit, so a hostile tag can leave the check out. What
 # protects release mode is a tag ruleset (see the push trigger below).
+# A repository secret is readable from a workflow on any branch, so a branch that carries its
+# own workflow can read it. Setting trigger.secretsEnvironment in klaus.config.json keeps the
+# secrets in an environment that only the default branch and the protected release tags can
+# use. The job below names it when that is set.
 #
 # Which trigger starts a run follows klaus.config.json (trigger.mode). The
 # renderer keeps one of the two trigger blocks. The manual trigger always stays.
@@ -68,6 +72,17 @@ concurrency:
 jobs:
   klaus:
     runs-on: ubuntu-latest
+    # klaus:begin environment
+    # The secrets are kept in this environment, whose deployment rules allow only the default
+    # branch and, in release mode, the protected release tags. GitHub checks the rules before the
+    # job starts, so a run from any other branch or tag is refused and never sees the secrets.
+    # deployment: false uses the environment's secrets and rules without adding an entry to the
+    # repo's deployments list. Each render checks the environment's rules and refuses if they
+    # have changed (install/environment.mjs).
+    environment:
+      name: "klaus-release" # klaus:value environment
+      deployment: false
+    # klaus:end environment
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

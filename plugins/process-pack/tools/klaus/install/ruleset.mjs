@@ -211,14 +211,19 @@ export function unapprovedMessage(result, tagPattern) {
   ].join("\n");
 }
 
-/** Runs `gh api` from inside the repo. Returns the parsed JSON, or throws a UserError with gh's own words. */
+/**
+ * Runs `gh api` from inside the repo. Returns the parsed JSON, or throws a UserError with gh's own words.
+ * When gh printed an HTTP status, the error carries it as `httpStatus`.
+ */
 export function gh(repo, args, { input, run = spawnSync } = {}) {
   const result = run("gh", ["api", ...args], { cwd: repo, encoding: "utf8", input });
-  if (result.error?.code === "ENOENT") throw new UserError("The gh command is not installed, so the repo's rulesets cannot be read. Install it from https://cli.github.com and sign in.");
+  if (result.error?.code === "ENOENT") throw new UserError("The gh command is not installed, so the repo cannot be read. Install it from https://cli.github.com and sign in.");
   if (result.error) throw result.error;
   if (result.status !== 0) {
     const said = String(result.stderr || result.stdout).trim().split("\n")[0];
-    throw new UserError(`gh api ${args[0]} failed${said ? `: ${said}` : ""}`);
+    const error = new UserError(`gh api ${args.find((arg) => arg.startsWith("repos/")) ?? args[0]} failed${said ? `: ${said}` : ""}`);
+    error.httpStatus = Number(/HTTP (\d{3})/.exec(said)?.[1]) || undefined;
+    throw error;
   }
   return result.stdout.trim() === "" ? null : JSON.parse(result.stdout);
 }

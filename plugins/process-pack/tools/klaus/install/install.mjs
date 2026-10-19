@@ -38,6 +38,20 @@
  *       refuses to render release mode until the check passes, and again if a later render finds an
  *       actor that is not on the list.
  *
+ *   node install/install.mjs environment --repo <dir> [--config <file>] [--name <environment>] [--create]
+ *       A repository secret can be read from a workflow run on any branch. This keeps Klaus's secrets
+ *       (those of every output that is on in klaus.config.json) in a GitHub environment whose
+ *       deployment rules allow only the default branch and, in release mode, the release tag pattern.
+ *       Without --create this only reads: it reads the default branch and the environment, and says
+ *       whether the environment has exactly those rules. If it has none it shows what it would create and
+ *       why. If it exists with other rules it lists the differences and stops, because it never changes an
+ *       environment that exists. With --create it creates the environment after the person's yes. It never
+ *       moves a secret: it prints which secrets to add to the environment and how, then reads the secret
+ *       names with `gh api` to see whether they are there and whether a repository secret of the same name
+ *       is left. The name is --name, else trigger.secretsEnvironment, else klaus-release. When
+ *       trigger.secretsEnvironment is set, the workflow command names the environment in the job and
+ *       refuses to render if its rules are no longer these.
+ *
  * Exit 0 on success, 1 when a checked workflow has errors, 2 on an error the person running it can fix,
  * 3 on any other error. No dependencies.
  */
@@ -45,9 +59,11 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { UserError } from "../frame/errors.mjs";
+import { resolveConfig } from "../frame/config.mjs";
 import { readJsonFile } from "../frame/json-file.mjs";
 import { copyKlaus } from "./copy.mjs";
 import { estimateOutputs, formatCosts, OUTPUTS } from "./costs.mjs";
+import { checkEnvironment, checkSecrets, createEnvironment, DEFAULT_ENVIRONMENT, describePolicy, driftMessage, ENVIRONMENT_DOCS, environmentBody, expectedPolicies, explainEnvironment, assertEnvironmentName, secretsAdvice, secretsOf, secretsPlan } from "./environment.mjs";
 import { approvalsInUse, assertReleasePattern, checkRuleset, createRuleset, explainRuleset, parseActor, rulesetBody, SHAPE_NOTE, unapprovedMessage } from "./ruleset.mjs";
 import { writeWorkflow } from "./workflow.mjs";
 
@@ -72,9 +88,10 @@ const OPTIONS = {
   "bypass-app": { type: "string", multiple: true },
   "bypass-team": { type: "string", multiple: true },
   create: { type: "boolean" },
+  name: { type: "string" },
 };
 
-const USAGE = "Usage: install.mjs costs|copy|workflow|ruleset --repo <dir> [options]. See the top of this file.";
+const USAGE = "Usage: install.mjs costs|copy|workflow|ruleset|environment --repo <dir> [options]. See the top of this file.";
 
 function repoOf(values) {
   if (!values.repo) throw new UserError(`--repo <dir> is needed.\n${USAGE}`);
@@ -153,6 +170,55 @@ function rulesetCommand(values) {
   return 0;
 }
 
+/** The line to put in klaus.config.json once the environment exists. */
+const recordEnvironmentLine = (name) => `Record this in klaus.config.json, under "trigger": "secretsEnvironment": ${JSON.stringify(name)}`;
+
+function environmentCommand(values) {
+  const repo = repoOf(values);
+  const file = values.config ? path.resolve(values.config) : path.join(repo, "klaus.config.json");
+  const config = resolveConfig(readJsonFile(file, "Config"));
+  const secrets = secretsOf(config);
+  if (secrets.length === 0) {
+    console.log("No output that is on reads a secret, so there is nothing to keep in an environment. Nothing to create.");
+    return 0;
+  }
+  const { mode, tagPattern } = config.trigger;
+  if (mode === "release") assertReleasePattern(tagPattern);
+  const name = values.name ?? config.trigger.secretsEnvironment ?? DEFAULT_ENVIRONMENT;
+  assertEnvironmentName(name);
+  const record = config.trigger.secretsEnvironment === name ? [] : [recordEnvironmentLine(name)];
+
+  const found = checkEnvironment({ repo, name, mode, tagPattern });
+  if (found.status === "unknown") {
+    throw new UserError(`The environment ${name} could not be read, so it is not known whether the secrets are limited to the default branch and the release tags (${found.reason}). Reading and creating an environment needs admin rights on the repo, and environments for private repos need GitHub Pro, Team or Enterprise (${ENVIRONMENT_DOCS.manage}). Without one the secrets stay repository secrets, which a workflow on any branch can read.`);
+  }
+  if (found.status === "drifted") throw new UserError(driftMessage({ name, problems: found.problems, mode, tagPattern, defaultBranch: found.defaultBranch }));
+
+  const policies = expectedPolicies({ defaultBranch: found.defaultBranch, mode, tagPattern });
+  if (found.status === "missing") {
+    if (!values.create) {
+      console.log([
+        `There is no environment ${name}, so the secrets are repository secrets that a workflow on any branch can read. Nothing has been created. This is what would be:`,
+        "",
+        explainEnvironment({ name, policies, secrets }),
+        "",
+        `Rules (${ENVIRONMENT_DOCS.manage}): ${policies.map(describePolicy).join(", ")}; every other branch and tag is refused. The calls:`,
+        `  PUT repos/{owner}/{repo}/environments/${name}  ${JSON.stringify(environmentBody())}`,
+        ...policies.map((policy) => `  POST repos/{owner}/{repo}/environments/${name}/deployment-branch-policies  ${JSON.stringify({ name: policy.name, type: policy.type })}`),
+        "",
+        secretsPlan({ name, secrets }),
+      ].join("\n"));
+      return 0;
+    }
+    createEnvironment({ repo, name, policies });
+    console.log([`Created the environment ${name}. Only ${policies.map(describePolicy).join(" and ")} can use it from now on.`, ...record].join("\n"));
+  } else {
+    console.log([`The environment ${name} allows ${policies.map(describePolicy).join(" and ")} and nothing else. Nothing to create.`, ...record].join("\n"));
+  }
+  console.log(secretsAdvice({ name, result: checkSecrets({ repo, name, secrets }) }));
+  return 0;
+}
+
 function workflowCommand(values) {
   const repo = repoOf(values);
   const result = writeWorkflow({
@@ -171,7 +237,9 @@ function workflowCommand(values) {
     `Workflow written to ${path.relative(process.cwd(), result.destination)}`,
     `  parts kept: ${result.kept.join(", ") || "none"}`,
     ...(result.rulesets ? [`  release tags are protected by ${result.rulesets.map((r) => `"${r.name}" (id ${r.id})`).join(", ")}`] : []),
-    `  secrets to set in the repo: ${result.secrets.join(", ") || "none"}`,
+    ...(result.environment ? [`  the job uses the environment "${result.environment.name}", whose rules allow only ${result.environment.policies.map(describePolicy).join(" and ")}`] : []),
+    `  secrets to set in ${result.environment ? `the environment ${result.environment.name}` : "the repo"}: ${result.secrets.join(", ") || "none"}`,
+    ...(!result.environment && result.secrets.length > 0 ? ["  they are repository secrets, which a workflow run on any branch can read. To keep them in an environment instead, run install.mjs environment."] : []),
     `  ${result.lint.tool}: ${result.lint.ok === null ? "not checked" : result.lint.ok ? "ok" : "errors"}`,
     ...(result.lint.message ? [`  ${result.lint.message.split("\n").join("\n  ")}`] : []),
   ].join("\n"));
@@ -187,6 +255,7 @@ async function main(argv) {
     if (command === "copy") return copyCommand(values);
     if (command === "workflow") return workflowCommand(values);
     if (command === "ruleset") return rulesetCommand(values);
+    if (command === "environment") return environmentCommand(values);
     throw new UserError(USAGE);
   } catch (error) {
     if (error instanceof UserError || (typeof error?.code === "string" && error.code.startsWith("ERR_PARSE_ARGS"))) {

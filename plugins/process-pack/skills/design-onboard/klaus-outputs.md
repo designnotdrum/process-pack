@@ -8,6 +8,7 @@ When a limit here is older than a month, or the person asks, check the platform'
 
 - **Route:** the Vercel CLI, run in CI. One deployment for each release, kept under its own address, plus an index page.
 - **Credential:** `VERCEL_TOKEN` as a CI secret. `VERCEL_ORG_ID` too when a Vercel team owns the project. The config holds the names only.
+- **Where the credential lives:** a repository secret is readable from a workflow run on any branch. Klaus offers to keep it in a GitHub environment that only the default branch and the release tags can use (step 8.6 of the skill). A private repo needs GitHub Pro, Team or Enterprise for that, and a public repo needs any current plan. Source: GitHub's "Managing environments for deployment", read 2026-10-19.
 - **Needs first:** the Vercel project must exist (`vercel project create <name>`), and the repo's own install must run before Klaus. Storybook must already be in the repo. Klaus does not install it.
 - **Who can open it:** with Vercel's default protection the release addresses ask for a Vercel login, and the index page at the project address opens for anyone. It lists release names, short commit ids and dates. Source: the Storybook adapter's README, checked 2026-10-18.
 - **Limits:** none published for this use. Vercel keeps every release, so storage grows with each one. Source: the Storybook adapter's README.
