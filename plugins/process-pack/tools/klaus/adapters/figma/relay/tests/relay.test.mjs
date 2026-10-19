@@ -74,6 +74,7 @@ test("the code reaches Codex unchanged on stdin, and the prompt carries no code"
   assert.equal(args[args.indexOf("-m") + 1], DEFAULT_MODEL);
   assert.ok(args.includes('mcp_servers.figma.enabled_tools=["use_figma"]'), "Codex sees use_figma and no other tool");
   assert.ok(args.includes('mcp_servers.figma.url="https://mcp.figma.com/mcp"'));
+  assert.ok(args.includes("mcp_servers.figma.startup_timeout_sec=60"), "Figma gets time to sign in and list its tools");
 });
 
 test("--keep-codex-config leaves the user's Codex config in place", async () => {
@@ -175,11 +176,15 @@ test("code sent to another Figma file is not trusted", async () => {
   assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "generated" }, Card: { "1.0.0": "generated" } });
 });
 
-test("a reply without a use_figma call is a failure, with what Codex said", async () => {
+test("a reply without a use_figma call is a failure, with what Codex said and what to check", async () => {
   const { root, folder } = await generatedRepo({ perFile: 10 });
+  // Recorded on 2026-10-18: the figma server's tools never reached the model.
   const run = await relay(root, [folder], { scenarios: "no-call" });
   assert.equal(run.code, 1);
-  assert.match(outputOf(run.report).failed[0].error, /Codex did not call use_figma\. It replied: I cannot find a use_figma tool\./);
+  const { error } = outputOf(run.report).failed[0];
+  assert.match(error, /Codex did not call use_figma\. It replied: I can’t access the `use_figma` tool in this session\./);
+  assert.match(error, /sign-in may need renewing \(codex mcp login figma\), or it did not start within 60 seconds/);
+  assert.equal(outputOf(run.report).adapter.details.files[0].tokens, 27045 + 148, "the call still counts its tokens");
   assert.equal(run.calls.length, 1);
   assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "generated" }, Card: { "1.0.0": "generated" } }, "nothing is marked sent");
 });

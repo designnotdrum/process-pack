@@ -82,6 +82,9 @@ export const DEFAULT_TIMEOUT_SECONDS = 600;
 export const DEFAULT_ARTIFACT = "klaus-figma";
 export const DEFAULT_FIGMA_URL = "https://mcp.figma.com/mcp";
 
+/** How long Codex waits for Figma's MCP server to sign in and list its tools. */
+export const MCP_STARTUP_TIMEOUT_SECONDS = 60;
+
 /** codex mcp list reads local config only, so a hang means something is wrong. */
 const MCP_LIST_TIMEOUT_MS = 30000;
 
@@ -129,6 +132,8 @@ export function codexArgs({ model, effort, workdir, figmaUrl, keepCodexConfig, p
     "-c", 'approval_policy="never"',
     "-c", "features.hooks=false",
     "-c", `mcp_servers.${FIGMA_SERVER}.enabled_tools=["${FIGMA_TOOL}"]`,
+    // A server that has not listed its tools by then is dropped, and the model runs without use_figma.
+    "-c", `mcp_servers.${FIGMA_SERVER}.startup_timeout_sec=${MCP_STARTUP_TIMEOUT_SECONDS}`,
     "-c", `mcp_servers.${FIGMA_SERVER}.tools.${FIGMA_TOOL}.approval_mode="approve"`,
     prompt,
   );
@@ -424,7 +429,11 @@ async function sendFile({ codex, args, code, workdir, timeoutMs, fileKey, events
     else if (run.exitCode !== 0) errors.push(`Codex exited with ${run.exitCode ?? run.signal}: ${lastLine(run.stderr) || "no message"}`);
     else {
       const said = summary.message ? ` It replied: ${summary.message.replace(/\s+/g, " ").slice(0, 200)}` : "";
-      errors.push(`Codex did not call ${FIGMA_TOOL}.${said}`);
+      // A model with use_figma in front of it calls it. One that calls nothing most likely never had it.
+      const why = summary.otherTools.length === 0
+        ? ` The ${FIGMA_SERVER} server's tools most likely did not reach the model: its sign-in may need renewing (codex mcp login ${FIGMA_SERVER}), or it did not start within ${MCP_STARTUP_TIMEOUT_SECONDS} seconds.`
+        : "";
+      errors.push(`Codex did not call ${FIGMA_TOOL}.${said}${why}`);
     }
   } else if (run.error) {
     warnings.push(`Codex reported an error after the call: ${run.error.message}`);

@@ -21,8 +21,9 @@
  * success.jsonl is the event stream of a real relay call (2026-10-18, gpt-6-luna), with
  * three placeholders: "__CODE__" (the code use_figma received), "__FILE_KEY__" and
  * "__RESULT_TEXT__" (what the code returned, as Figma's server wraps it). tool-error.jsonl
- * has the same shape with an error in place of the result. no-call.jsonl and crash.jsonl
- * follow Codex's documented event shapes; no real run has produced them yet.
+ * has the same shape with an error in place of the result. no-call.jsonl is a real call
+ * (2026-10-18, gpt-5.6-terra) whose model never had use_figma. crash.jsonl follows Codex's
+ * documented event shapes; no real run has produced it yet.
  */
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";

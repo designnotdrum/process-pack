@@ -37,6 +37,8 @@ For Meridian, the Fedora box runs it, because it is always on and keeps one Figm
    codex mcp list
    ```
 
+   That row shows only that a sign-in is stored, not that it still works. If a run fails with "Codex did not call use_figma" and the model says it has no such tool, run `codex mcp login figma` again. The relay gives Figma's server 60 seconds to sign in and list its tools.
+
 The sign-in lives in that machine's Codex home (`~/.codex`). Nothing about it goes into `klaus.config.json`.
 
 The relay also needs the repo's `klaus.config.json`, because the Figma file it writes comes from `outputs.figma.target` there and nowhere else.
@@ -98,7 +100,7 @@ A call's relay tokens are Codex's `input_tokens` plus `output_tokens`. Cached in
 
 ## What the real runs measured
 
-On 2026-10-18 the relay ran five times on the laptop, at low effort, into the Klaus prototype file. Each call carried one component version. Calls 1 to 4 ran before the relay built the code itself, when the artifact held the code.
+On 2026-10-18 the relay ran six times on the laptop, at low effort, into the Klaus prototype file. Each call carried one component version. Calls 1 to 4 ran before the relay built the code itself, when the artifact held the code.
 
 | Call | Code file (calls 1 to 3 on `gpt-6-luna`) | Characters | Relay tokens (input, cached input, output) | Seconds | Outcome |
 |---|---|---|---|---|---|
@@ -107,11 +109,13 @@ On 2026-10-18 the relay ran five times on the laptop, at low effort, into the Kl
 | 3 | Button 1.1.0, retry | 20,582 | 99,687 (92,508, 56,064, 7,179) | 45 | refused: Codex had added a primary fill to a secondary button; Figma reported `exists` |
 | 4 | Button 1.1.0, on `gpt-5.6-terra` | 20,582 | 70,639 (62,657, 33,280, 7,982) | 130 | sent: the code arrived exactly, apart from the final newline; Figma reported `exists` |
 | 5 | Button 1.1.0 with icons, on `gpt-5.6-terra`, built from data | 20,208 | 72,533 (63,262, 33,280, 9,271) | 51 | refused: Codex dropped every backslash (46 in the SVG markup, 7 in the runtime), so `use_figma` could not parse the code and nothing was drawn |
+| 6 | the same, after the backslash fix | 20,329 | 27,193 (27,045, 5,888, 148) | 10 | failed: the model had no `use_figma` tool and said so; nothing reached Figma |
 
 What follows from it:
 
 - **A call costs about 70,000 to 100,000 relay tokens.** The prototype's estimate was 1,200 a component. A call is two model requests, and each one reads Codex's instructions, the tool's definition and the code.
 - **Most of a file is the shared runtime.** The runtime is 14,821 characters in every file. The Button's own data is 3,929 characters for 18 variants and 5,761 for 30, about 155 a variant.
+- **A call can run without the tool.** In call 6 the model said it could not access `use_figma`, and the call cost 27,193 tokens. The cause is unverified: either the stored Figma sign-in needed renewing, or the server did not list its tools within Codex's startup timeout. The relay now gives the server 60 seconds and names both causes in the error.
 - **A model drops backslashes.** In call 5 terra turned every `\"` in the SVG markup into `"`, every `\d` into `d`, and `"\n"` into a line break. The code built from data now holds no backslash where it can avoid one: the runtime is written without them, and SVG markup goes into template literals. The Button with icons now comes to 20,329 characters and no backslash. This has not been run in Figma yet.
 - **`gpt-6-luna` at low effort did not copy the 20,582-character file exactly in two tries. `gpt-5.6-terra` did, in one.** Both dropped only the final newline, which the relay allows. Terra took about two minutes against luna's 45 seconds. The relay caught luna's changes, so nothing wrong was recorded as sent. One terra call is one sample.
 
@@ -138,4 +142,4 @@ Exit code 1 means a unit failed. Exit code 2 means something to fix before a run
 node --test "plugins/process-pack/tools/klaus/adapters/figma/relay/**/*.test.mjs"
 ```
 
-The tests put a stub `codex` and a stub `gh` first on `PATH` (`tests/stub/`). The stub `gh` answers the run, repo and compare reads and the download. The stub `codex` keeps what it was given, so a test can check the code that would have reached Figma. The stub replays the event output in `tests/fixtures/`. `success.jsonl` is the event stream of real call 1, with the code, file key and result replaced by placeholders. The stub also covers a tool error, a crash, a reply with no call, and code changed on the way. The no-call and crash fixtures follow Codex's documented event shapes, because no real run has produced them.
+The tests put a stub `codex` and a stub `gh` first on `PATH` (`tests/stub/`). The stub `gh` answers the run, repo and compare reads and the download. The stub `codex` keeps what it was given, so a test can check the code that would have reached Figma. The stub replays the event output in `tests/fixtures/`. `success.jsonl` is the event stream of real call 1, with the code, file key and result replaced by placeholders. The stub also covers a tool error, a crash, a reply with no call, and code changed on the way. `no-call.jsonl` is the real call 6. The crash fixture follows Codex's documented event shapes, because no real run has produced one.
