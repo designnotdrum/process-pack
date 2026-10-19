@@ -256,6 +256,50 @@ async function composeSheet(storybook, columns) {
 /** A picture entry for a pair that could not be drawn at all, with the plain reason. */
 const undrawn = (reason, notDrawn = [null, null]) => ({ file: null, bytes: null, drawn: [false, false], notDrawn, difference: null, reason })
 
+const firstLine = (error) => String(error?.message ?? error).split('\n')[0].replace(/\.$/, '')
+
+/** Draws one decision: each side from its story, then both in one image. Left is the side that would be replaced, right the side that would stay. */
+async function drawPair({ storybook, pair, number, imports, build, root }) {
+  const sides = sidesOf(pair)
+  const drawn = []
+  for (const side of [sides.drop, sides.keep]) {
+    const files = imports.get(toPosix(path.join(root, side.entry.file))) ?? []
+    const candidates = candidatesFor({ entries: storybook.entries, files, buildDir: build, root, name: side.entry.name })
+    if (candidates.length === 0) {
+      drawn.push({ reason: `${side.text} has no story` })
+      continue
+    }
+    let result = null
+    let failure = ''
+    for (const candidate of candidates.slice(0, 3)) {
+      try {
+        result = await drawStory(storybook, candidate.id)
+        break
+      } catch (error) {
+        failure = firstLine(error)
+      }
+    }
+    drawn.push(result ?? { reason: `${side.text} has a story that did not draw (${failure})` })
+  }
+  // One story that draws both sides cannot tell them apart.
+  if (drawn[0].story && drawn[0].story === drawn[1].story) return undrawn(null, [`${sides.drop.text} and ${sides.keep.text} are drawn only together, by the one story ${drawn[0].story}`, null])
+  const [left, right] = drawn
+  const notDrawn = [left.reason ?? null, right.reason ?? null]
+  if (!left.png && !right.png) return undrawn(null, notDrawn)
+  const bytes = await composeSheet(storybook, [
+    { caption: `Left, would be replaced: ${sides.drop.label}`, png: left.png },
+    { caption: `Right, would stay: ${sides.keep.label}`, png: right.png },
+  ])
+  return {
+    file: `decisions/${decisionPictureName(pair, number)}`,
+    bytes,
+    drawn: [Boolean(left.png), Boolean(right.png)],
+    notDrawn,
+    difference: left.png && right.png ? describeMeasuredDifference(left.look, right.look, sides.drop.text, sides.keep.text) : null,
+    reason: null,
+  }
+}
+
 /**
  * Draws a picture for each decision and returns them by pair id.
  *
@@ -286,58 +330,24 @@ export async function attachDecisionPictures({ plan, storybookDir, open = openSt
   try {
     storybook = await open({ root, directory: build, globals: '' })
   } catch (error) {
-    return none(`the browser could not be started: ${String(error.message).split('\n')[0].replace(/\.$/, '')}`)
+    return none(`the browser could not be started: ${firstLine(error)}`)
   }
   try {
-    const imports = storyImports({ ts: plan.ts, root, tsconfigs: plan.tsconfigs })
+    let imports
+    try {
+      imports = storyImports({ ts: plan.ts, root, tsconfigs: plan.tsconfigs })
+    } catch (error) {
+      return none(`the stories could not be read (${firstLine(error)})`)
+    }
     for (const [index, pair] of pairs.entries()) {
-      const sides = sidesOf(pair)
-      const drawn = []
-      // Left is the side that would be replaced, right the side that would stay.
-      for (const side of [sides.drop, sides.keep]) {
-        const files = imports.get(toPosix(path.join(root, side.entry.file))) ?? []
-        const candidates = candidatesFor({ entries: storybook.entries, files, buildDir: build, root, name: side.entry.name })
-        if (candidates.length === 0) {
-          drawn.push({ reason: `${side.text} has no story` })
-          continue
-        }
-        let result = null
-        let failure = ''
-        for (const candidate of candidates.slice(0, 3)) {
-          try {
-            result = await drawStory(storybook, candidate.id)
-            break
-          } catch (error) {
-            failure = String(error.message).split('\n')[0].replace(/\.$/, '')
-          }
-        }
-        drawn.push(result ?? { reason: `${side.text} has a story that did not draw (${failure})` })
+      try {
+        const picture = await drawPair({ storybook, pair, number: index + 1, imports, build, root })
+        pictures.set(pair.id, picture)
+        if (picture.file) log(`Picture ${index + 1} of ${pairs.length}: ${sidesOf(pair).drop.text} and ${sidesOf(pair).keep.text}.`)
+      } catch (error) {
+        // One picture that cannot be made must not stop the run or the other pictures.
+        pictures.set(pair.id, undrawn(`the picture could not be made (${firstLine(error)})`))
       }
-      // One story that draws both sides cannot tell them apart.
-      if (drawn[0].story && drawn[0].story === drawn[1].story) {
-        const together = `${sides.drop.text} and ${sides.keep.text} are drawn only together, by the one story ${drawn[0].story}`
-        pictures.set(pair.id, undrawn(null, [together, null]))
-        continue
-      }
-      const [left, right] = drawn
-      const notDrawn = [left.reason ?? null, right.reason ?? null]
-      if (!left.png && !right.png) {
-        pictures.set(pair.id, undrawn(null, notDrawn))
-        continue
-      }
-      const bytes = await composeSheet(storybook, [
-        { caption: `Left, would be replaced: ${sides.drop.label}`, png: left.png },
-        { caption: `Right, would stay: ${sides.keep.label}`, png: right.png },
-      ])
-      pictures.set(pair.id, {
-        file: `decisions/${decisionPictureName(pair, index + 1)}`,
-        bytes,
-        drawn: [Boolean(left.png), Boolean(right.png)],
-        notDrawn,
-        difference: left.png && right.png ? describeMeasuredDifference(left.look, right.look, sides.drop.text, sides.keep.text) : null,
-        reason: null,
-      })
-      log(`Picture ${index + 1} of ${pairs.length}: ${sides.drop.text} and ${sides.keep.text}.`)
     }
   } finally {
     await storybook.close()

@@ -99,6 +99,25 @@ test('a story that fails to draw leaves that side undrawn with the reason, and t
   assert.equal(byName(map, 'Switch').drawn[1], true)
 })
 
+test('a picture that cannot be put together leaves that decision without one, and the others carry on', async () => {
+  const { open } = fakeBrowser()
+  let sheets = 0
+  const flaky = async (args) => {
+    const storybook = await open(args)
+    const setContent = storybook.page.setContent
+    storybook.page.setContent = async (html) => {
+      sheets += 1
+      if (sheets === 1) throw new Error('the page crashed')
+      return setContent(html)
+    }
+    return storybook
+  }
+  const map = await pictures.attachDecisionPictures({ plan, storybookDir: 'storybook-static', open: flaky })
+  const reasons = [...map.values()].map((p) => p.reason)
+  assert.equal(reasons.filter((r) => r === 'the picture could not be made (the page crashed)').length, 1)
+  assert.equal([...map.values()].filter((p) => p.file).length, 1)
+})
+
 test('with no built Storybook nothing is drawn, and each item says why', async () => {
   let opened = 0
   const map = await pictures.attachDecisionPictures({ plan, storybookDir: 'nowhere', open: async () => (opened += 1) })
