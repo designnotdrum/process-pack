@@ -218,7 +218,7 @@ export function secretsAdvice({ name, result }) {
     if (secret.inEnvironment && !secret.inRepository) {
       lines.push(`  ${secret.name}: in the environment, and not a repository secret. Done.`);
     } else if (secret.inEnvironment) {
-      lines.push(`  ${secret.name}: in the environment, and still a repository secret. A repository secret can be read from a workflow on any branch, so the environment does not protect it yet. Once the run has used the environment copy, delete the repository one: gh secret delete ${secret.name}`);
+      lines.push(`  ${secret.name}: in the environment, and still a repository secret. A repository secret can be read from a workflow on any branch, so the environment does not protect it yet. When you are sure the environment copy has the right value, delete the repository one: gh secret delete ${secret.name}`);
     } else {
       lines.push(`  ${secret.name}: not in the environment. Add it from your own secret store; GitHub does not show a secret's value, so Klaus cannot copy it. gh asks for the value and does not echo it: gh secret set ${secret.name} --env ${name}${secret.inRepository ? "\n    It is a repository secret now. Klaus leaves that one alone until the environment copy is there." : ""}`);
     }
@@ -226,7 +226,7 @@ export function secretsAdvice({ name, result }) {
   const done = result.secrets.every((secret) => secret.inEnvironment && !secret.inRepository);
   return [
     ...lines,
-    done ? `All ${result.secrets.length} secrets are in ${name} and none is left in the repository.` : "Not done yet. Run this command again after the steps above; it reads the names again.",
+    done ? `${result.secrets.length === 1 ? "The secret is" : `All ${result.secrets.length} secrets are`} in ${name} and none is left in the repository.` : "Not done yet. Run this command again after the steps above; it reads the names again.",
   ].join("\n");
 }
 

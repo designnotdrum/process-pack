@@ -993,7 +993,7 @@ test("the secrets check reads names only, ignores case, and tells the person wha
   assert.match(advice, /Not done yet/);
 
   const done = secretsAdvice({ name: DEFAULT_ENVIRONMENT, result: { status: "read", secrets: [{ name: "VERCEL_TOKEN", inEnvironment: true, inRepository: false }] } });
-  assert.match(done, /All 1 secrets are in klaus-release and none is left in the repository/);
+  assert.match(done, /The secret is in klaus-release and none is left in the repository/);
   const unread = checkSecrets({ repo: tempDir(), name: DEFAULT_ENVIRONMENT, secrets: ["X"], run: fakeEnvironmentGh({ [`GET ${ENV_SECRETS_URL}`]: { fail: "gh: Forbidden (HTTP 403)" } }).run });
   assert.equal(unread.status, "unknown");
   assert.match(secretsAdvice({ name: DEFAULT_ENVIRONMENT, result: unread }), /could not be read/);
