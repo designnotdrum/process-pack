@@ -139,7 +139,9 @@ function readWriterBranch({ ctx, state, items, pending, ref }) {
   const { repo, plan, base, log } = ctx
   const commit = git(repo, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { allowFail: true })?.trim()
   if (!commit) throw new UserError(`--writer-branch ${ref} is not a branch or commit in this repo. Fetch it first.`)
-  const changed = git(repo, ['diff', '--name-only', '-z', base, commit]).split('\0').filter(Boolean)
+  // Only what the writer's branch changed since it was cut: main may have moved since, for example
+  // when the first pull request of a run that stopped merged, and none of that is the writer's.
+  const changed = git(repo, ['diff', '--name-only', '-z', `${base}...${commit}`]).split('\0').filter(Boolean)
   const everything = new Set(plan.calls.flatMap((c) => c.files.map((f) => f.file)))
   const outside = changed.filter((p) => !everything.has(p))
   log(`Writer branch ${ref}: ${plural(changed.length, 'file')} changed, ${plural(outside.length, 'file')} outside the plan`)

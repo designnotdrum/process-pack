@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
@@ -259,4 +260,32 @@ test('the list compares as the same when it was made at an earlier commit of thi
   assert.match(contentDifference({ repo: sample.repo, rel: 'inventory.json', expected, actual: list('0123456789abcdef0123456789abcdef01234567') }), /^at versioned\.commit the plan writes/)
   assert.match(contentDifference({ repo: sample.repo, rel: 'inventory.json', expected, actual: list(first, { entries: [{ name: 'X' }] }) }), /^at entries \(a list of 0, and it has 1\)/)
   assert.equal(contentDifference({ repo: sample.repo, rel: 'docs/a.md', expected: '# A\n\n| a | b |\n', actual: '# A  \n\n\n| a | b |' }), null)
+})
+
+test('with an external writer, a run that continues after the first pull request merged still reads the writer branch cut before it', async () => {
+  const config = path.join(sample.repo, 'klaus.config.json')
+  fs.writeFileSync(config, JSON.stringify({ ...JSON.parse(fs.readFileSync(config, 'utf8')), onboarding: { writer: { route: 'external', agent: 'Codex cloud (Terra)' }, checker: { route: 'external', agent: 'a Cyrus session on GLM' } } }, null, 2))
+  sample.git('commit', '-qam', 'hand the work to other agents')
+  sample.git('push', '-q', 'origin', 'main')
+  const estimated = await estimate()
+  assert.equal((await run(estimated)).waiting, 'writer')
+  // The writer's branch, cut from main as it was before any pull request.
+  const briefs = path.join(workFolder(sample.repo), 'briefs')
+  sample.git('checkout', '-q', '-b', 'cloud')
+  for (const brief of fs.readdirSync(briefs).filter((f) => f.startsWith('writer-'))) execFileSync(path.join(STUBS, 'codex'), ['exec', '-C', sample.repo, '-'], { input: fs.readFileSync(path.join(briefs, brief)), env: process.env })
+  sample.git('add', '-A')
+  sample.git('commit', '-qm', 'purposes')
+  sample.git('checkout', '-q', 'main')
+  assert.equal((await run(estimated, { writerBranch: 'cloud' })).waiting, 'checker')
+  const template = JSON.parse(fs.readFileSync(path.join(briefs, 'checks.template.json'), 'utf8'))
+  const checksFile = path.join(sample.base, 'checks.json')
+  fs.writeFileSync(checksFile, JSON.stringify({ checks: template.checks.map((c) => ({ ...c, verdict: 'pass', reason: 'fits' })) }))
+  const restore = ghThatStopsAfter(1)
+  await assert.rejects(() => run(estimated, { writerBranch: 'cloud', checksFile }), /failed/)
+  restore()
+  mergeWithFormatting(BRANCHES[0], [1])
+
+  const { report } = await run(estimated, { writerBranch: 'cloud', checksFile })
+  assert.equal(report.continuedAt, 2)
+  assert.deepEqual(report.purposes.map((p) => [p.name, p.status]).sort(), [['ActivityFeed', 'kept'], ['Hero', 'kept'], ['LinkButton', 'kept'], ['PrimaryButton', 'kept']])
 })
