@@ -1,7 +1,8 @@
 /** Reading Codex's JSON events and the code's result out of use_figma's reply. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseEvents, readCodeResult, relayTokens, summarizeEvents } from "../events.mjs";
+import { encodeText } from "../../codegen.mjs";
+import { decodeResult, keyIn, parseEvents, readCodeResult, relayTokens, summarizeEvents } from "../events.mjs";
 
 const returned = { tokens: { made: [], updated: [] }, units: [{ id: "Button", status: "written" }], warnings: [] };
 const call = (status, extra = {}) => ({
@@ -61,4 +62,21 @@ test("the code's result is found in plain text, in text around it, in a JSON str
 test("a unit list without an id and a status on every unit is not the code's result", () => {
   assert.equal(readCodeResult({ content: [{ type: "text", text: '{"units":[{"id":1}]}' }] }), null);
   assert.equal(readCodeResult({ content: [{ type: "text", text: '{"units":[{"id":"Button"}]}' }] }), null);
+});
+
+const KEY = Array.from({ length: 32 }, (_, i) => (i * 11 + 5) % 256);
+
+test("decodeResult decodes every string except a status, and leaves numbers, booleans and null", () => {
+  const e = (text) => encodeText(text, KEY);
+  const encoded = { tokens: { made: [e("Brand")], updated: [] }, units: [{ id: e("Button"), status: "written", name: e("Button 1.0.0 \u65e5\u672c"), variants: 18, movedToOlder: [e("Button 0.9.0")], error: null }], warnings: [e("A warning")], ok: true };
+  assert.deepEqual(decodeResult(encoded, KEY), { tokens: { made: ["Brand"], updated: [] }, units: [{ id: "Button", status: "written", name: "Button 1.0.0 \u65e5\u672c", variants: 18, movedToOlder: ["Button 0.9.0"], error: null }], warnings: ["A warning"], ok: true });
+});
+
+test("keyIn reads the key line of a piece of code, and nothing else", () => {
+  assert.deepEqual(keyIn(`// x\nconst KEY = [${KEY.join(",")}];\nconst CONFIG = {};`), KEY);
+  assert.equal(keyIn("const KEY = null;"), null);
+  assert.equal(keyIn("const KEY = [1,2,3];"), null, "a key is 32 bytes");
+  assert.equal(keyIn(`const KEY = [${KEY.map((b) => b + 300).join(",")}];`), null, "a byte is 0 to 255");
+  assert.equal(keyIn("no key here"), null);
+  assert.equal(keyIn(undefined), null);
 });

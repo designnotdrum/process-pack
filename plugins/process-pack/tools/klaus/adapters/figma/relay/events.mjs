@@ -14,6 +14,8 @@
  * A tool result whose is_error is set arrives as status "failed" with the result kept.
  */
 
+import { decodeText, KEY_BYTES } from "../codegen.mjs";
+
 export const FIGMA_SERVER = "figma";
 export const FIGMA_TOOL = "use_figma";
 
@@ -123,41 +125,94 @@ function jsonIn(text) {
 const isUnitList = (value) =>
   Array.isArray(value) && value.every((unit) => unit && typeof unit.id === "string" && typeof unit.status === "string");
 
-function findUnits(value, depth) {
+function findObject(value, depth, accept) {
   if (depth > 5 || value === null || value === undefined) return null;
   if (typeof value === "string") {
     for (const parsed of jsonIn(value)) {
-      const found = findUnits(parsed, depth + 1);
+      const found = findObject(parsed, depth + 1, accept);
       if (found) return found;
     }
     return null;
   }
   if (typeof value !== "object") return null;
-  if (isUnitList(value.units)) return value;
+  if (accept(value)) return value;
   for (const child of Object.values(value)) {
-    const found = findUnits(child, depth + 1);
+    const found = findObject(child, depth + 1, accept);
     if (found) return found;
   }
   return null;
 }
 
 /**
- * What the generated code returned, out of a use_figma result: { units: [{ id, status, error? }] }.
- * The code returns that object. Figma's server wraps it in text, so this looks through the
- * structured content and every text block, and through JSON held in a string.
- * @returns {object | null}  null when the result does not hold a unit list.
+ * The first object that accept approves, out of a use_figma result. Figma's server wraps what the
+ * code returned in text, so this looks through the structured content and every text block, and
+ * through JSON held in a string. Only the tool's result is read, never the model's reply.
  */
-export function readCodeResult(result) {
+function searchResult(result, accept) {
   if (!result || typeof result !== "object") return null;
-  const found = findUnits(result.structured_content ?? null, 0);
+  const found = findObject(result.structured_content ?? null, 0, accept);
   if (found) return found;
   for (const block of Array.isArray(result.content) ? result.content : []) {
     if (block?.type === "text" && typeof block.text === "string") {
-      const inText = findUnits(block.text, 0);
+      const inText = findObject(block.text, 0, accept);
       if (inText) return inText;
     }
   }
   return null;
+}
+
+/**
+ * What the generated code returned, out of a use_figma result: { units: [{ id, status, error? }] }.
+ * @returns {object | null}  null when the result does not hold a unit list.
+ */
+export function readCodeResult(result) {
+  return searchResult(result, (value) => isUnitList(value.units));
+}
+
+/**
+ * What the reconcile code returned: exactly its own return shape, an object whose only key is
+ * found and holds a list. The entries of the list are not checked here. An object with other keys
+ * is some other part of the result, so it is not taken for the code's. A result with no such
+ * object is a reply to refuse.
+ * @returns {object | null}  null when the result holds no such object.
+ */
+export function readFoundResult(result) {
+  return searchResult(result, (value) => Array.isArray(value.found) && Object.keys(value).length === 1);
+}
+
+/**
+ * The result fields that stay plain when the runtime encodes its result: a status is one of the
+ * fixed words written, exists and failed. The runtime keeps the same list (RESULT_PLAIN_FIELDS).
+ */
+export const RESULT_PLAIN_FIELDS = Object.freeze(["status"]);
+
+/**
+ * A result from code that has a KEY, with every string decoded except those under a plain field.
+ * The runtime encodes them so the model that relays the call reads no name from the file. What
+ * comes out is text from the Figma file or the data, so it goes into the report and nowhere else.
+ */
+export function decodeResult(value, key, field = "") {
+  if (typeof value === "string") return RESULT_PLAIN_FIELDS.includes(field) ? value : decodeText(value, key);
+  if (Array.isArray(value)) return value.map((item) => decodeResult(item, key, field));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, decodeResult(item, key, name)]));
+  }
+  return value;
+}
+
+/**
+ * The key a piece of code carries, from its `const KEY = [...]` line, or null. Used when Codex
+ * changed the code: the runtime encodes its result with whatever key it was given.
+ */
+export function keyIn(code) {
+  const line = /^const KEY = (\[[0-9, ]*\]);$/m.exec(String(code));
+  if (!line) return null;
+  try {
+    const key = JSON.parse(line[1]);
+    return key.length === KEY_BYTES && key.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255) ? key : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The text of a result, for an error message. */

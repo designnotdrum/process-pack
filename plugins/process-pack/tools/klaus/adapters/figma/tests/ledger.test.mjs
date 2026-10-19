@@ -13,9 +13,13 @@ import {
   entrySent,
   entryStatus,
   GENERATED,
+  generatedComponents,
+  markGeneratedAsSent,
   readLedger,
+  recordScreen,
   recordComponent,
   recordEntry,
+  screenCount,
   screenSent,
   SENT,
 } from "../ledger.mjs";
@@ -109,4 +113,35 @@ test("a component named __proto__ is recorded, written and read back as its own 
   assert.equal(componentSent(read, "__proto__", "1.0.0"), true);
   const old = readLedger(ledgerFile({ version: 1, components: JSON.parse('{"__proto__":["1.0.0"]}'), screens: {} }));
   assert.equal(entryStatus(old, { kind: "component", name: "__proto__", version: "1.0.0" }), GENERATED);
+});
+
+test("generatedComponents lists only the versions that are generated", () => {
+  const ledger = emptyLedger();
+  recordComponent(ledger, "Button", "1.0.0", GENERATED);
+  recordComponent(ledger, "Button", "1.1.0", SENT);
+  recordComponent(ledger, "Card", "2.0.0", CHANGED);
+  recordComponent(ledger, "Card", "2.1.0", GENERATED);
+  recordScreen(ledger, "/settings", "v1.0.0", GENERATED);
+  recordScreen(ledger, "/settings", "v2.0.0", CHANGED);
+  assert.deepEqual(generatedComponents(ledger), [
+    { kind: "component", name: "Button", version: "1.0.0" },
+    { kind: "component", name: "Card", version: "2.1.0" },
+  ]);
+  assert.equal(screenCount(ledger, GENERATED), 1);
+  assert.equal(screenCount(ledger, CHANGED), 1);
+  assert.equal(screenCount(ledger, SENT), 0);
+  assert.deepEqual(generatedComponents(emptyLedger()), []);
+});
+
+test("markGeneratedAsSent sends a generated unit and never touches a changed or sent one", () => {
+  const ledger = emptyLedger();
+  recordComponent(ledger, "Button", "1.0.0", GENERATED);
+  recordComponent(ledger, "Button", "1.1.0", CHANGED);
+  recordComponent(ledger, "Button", "1.2.0", SENT);
+  const of = (version) => ({ kind: "component", name: "Button", version });
+  assert.equal(markGeneratedAsSent(ledger, of("1.0.0")), true);
+  assert.equal(markGeneratedAsSent(ledger, of("1.1.0")), false);
+  assert.equal(markGeneratedAsSent(ledger, of("1.2.0")), false);
+  assert.equal(markGeneratedAsSent(ledger, of("9.9.9")), false, "a version the ledger does not hold is not added");
+  assert.deepEqual(ledger.components.Button, { "1.0.0": SENT, "1.1.0": CHANGED, "1.2.0": SENT });
 });

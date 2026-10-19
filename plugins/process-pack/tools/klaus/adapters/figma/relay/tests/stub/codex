@@ -13,10 +13,18 @@
  *   unit-failed   use_figma ran and the code reported its last unit failed
  *   tool-error    use_figma returned an error
  *   changed-code  Codex sent different code to use_figma, and Figma wrote it
+ *   changed-key   the same, but the KEY line is what Codex changed, so the result is encoded with another key
  *   changed-code-failed   Codex sent different code, and use_figma returned an error
  *   wrong-file-key  Codex sent the code to another Figma file
  *   no-call       Codex replied without calling use_figma
  *   crash         Codex died before the call, with exit code 1
+ *
+ * For the reconcile code (a "const LABELS = " line) the result is { found }, one true or false for
+ * each label, true when the label is in STUB_CODEX_NAMES (a JSON list of the names in the Figma file).
+ * For a send, the result is encoded with the call's key as the runtime encodes it: every string except
+ * the values of a status field. STUB_CODEX_WARNINGS (a JSON list) fills its warnings.
+ * STUB_CODEX_RESULT_TEXT replaces the whole result text, for a reply that is not what the code
+ * returns. STUB_CODEX_MESSAGE replaces the model's closing message.
  *
  * success.jsonl is the event stream of a real relay call (2026-10-18, gpt-6-luna), with
  * three placeholders: "__CODE__" (the code use_figma received), "__FILE_KEY__" and
@@ -59,6 +67,10 @@ if (process.env.STUB_CODEX_OTHER_RUN_LEDGER) {
   const file = process.env.STUB_CODEX_OTHER_RUN_LEDGER;
   const ledger = JSON.parse(readFileSync(file, "utf8"));
   ledger.components.Other = { "1.0.0": "sent" };
+  // Marks a test wants the other run to have written, by component and version.
+  for (const [name, versions] of Object.entries(JSON.parse(process.env.STUB_CODEX_OTHER_RUN_MARKS ?? "{}"))) {
+    ledger.components[name] = { ...ledger.components[name], ...versions };
+  }
   writeFileSync(file, JSON.stringify(ledger));
 }
 const scenarios = (process.env.STUB_CODEX_SCENARIOS ?? "success").split(",");
@@ -96,12 +108,47 @@ const results = units.map((unit) => ({ id: unit.id, status, name: `${unit.name} 
 if (scenario === "unit-failed" && results.length > 0) {
   results[results.length - 1] = { id: results.at(-1).id, status: "failed", error: "The font DM Sans Medium could not be loaded." };
 }
-const returned = { tokens: { made: [], updated: [] }, units: results, warnings: [] };
+// The reconcile code is read-only. It is told the labels it should look for and returns one true or
+// false for each: true when the label is among STUB_CODEX_NAMES, the names in the Figma file.
+// These env values apply to every call the stub answers, which is one call for a reconcile.
+const reconcile = lines.some((l) => l.startsWith("const LABELS = "));
+const jsonEnv = (name, fallback) => {
+  try {
+    return JSON.parse(process.env[name] ?? fallback);
+  } catch (error) {
+    return fail(`${name} is not JSON: ${error.message}`);
+  }
+};
+const names = jsonEnv("STUB_CODEX_NAMES", "[]");
+const labelsLine = lines.find((l) => l.startsWith("const LABELS = "));
+const labels = labelsLine ? JSON.parse(labelsLine.slice("const LABELS = ".length, -1)).map(plain) : [];
+// The runtime encodes every string of its result with the call's key, except the values of a status field.
+// With changed-key, Codex sent code with another KEY, so the runtime encodes with that one.
+const resultKey = key && scenario === "changed-key" ? key.map((byte) => (byte + 1) % 256) : key;
+const encodeText = (text) => {
+  const bytes = Buffer.from(text, "utf8");
+  for (let i = 0; i < bytes.length; i++) bytes[i] ^= resultKey[i % resultKey.length];
+  return bytes.toString("base64");
+};
+const encodeResult = (value, field = "") => {
+  if (!key) return value;
+  if (typeof value === "string") return field === "status" ? value : encodeText(value);
+  if (Array.isArray(value)) return value.map((item) => encodeResult(item, field));
+  if (value !== null && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, encodeResult(item, name)]));
+  return value;
+};
+const returned = reconcile
+  ? { found: labels.map((label) => names.includes(label)) }
+  : encodeResult({ tokens: { made: [], updated: [] }, units: results, warnings: jsonEnv("STUB_CODEX_WARNINGS", "[]") });
+const resultText = process.env.STUB_CODEX_RESULT_TEXT ?? JSON.stringify(returned);
 
-const fixture = { success: "success", exists: "success", "unit-failed": "success", "changed-code": "success", "changed-code-failed": "tool-error", "wrong-file-key": "success", "tool-error": "tool-error", "no-call": "no-call", crash: "crash" }[scenario];
+const fixture = { success: "success", exists: "success", "unit-failed": "success", "changed-code": "success", "changed-key": "success", "changed-code-failed": "tool-error", "wrong-file-key": "success", "tool-error": "tool-error", "no-call": "no-call", crash: "crash" }[scenario];
 if (!fixture) fail(`unknown scenario ${scenario}`);
-const sent = scenario.startsWith("changed-code") ? code.replace("const CONFIG", "const  CONFIG") : code;
-if (scenario.startsWith("changed-code") && sent === code) fail("the changed-code scenario found no \"const CONFIG\" to change in the code");
+const anchor = reconcile ? "const PAGES" : "const CONFIG";
+const sent = scenario === "changed-key"
+  ? code.replace(keyLine, `const KEY = ${JSON.stringify(resultKey)};`)
+  : scenario.startsWith("changed-code") ? code.replace(anchor, `${anchor.slice(0, 5)} ${anchor.slice(5)}`) : code;
+if ((scenario.startsWith("changed-code") || scenario === "changed-key") && sent === code) fail(`the changed-code scenario found no "${anchor}" to change in the code`);
 const sentKey = scenario === "wrong-file-key" ? "SomeOtherFigmaFileKey000" : fileKey;
 let template = "";
 try {
@@ -109,11 +156,24 @@ try {
 } catch (error) {
   fail(`cannot read the ${fixture} fixture: ${error.message}`);
 }
+// The model's own closing message, when a test wants it to differ from the tool's result.
+const withMessage = (text) => {
+  if (process.env.STUB_CODEX_MESSAGE === undefined) return text;
+  return text
+    .split("\n")
+    .map((line) => {
+      if (!line.includes('"agent_message"')) return line;
+      const event = JSON.parse(line);
+      event.item.text = process.env.STUB_CODEX_MESSAGE;
+      return JSON.stringify(event);
+    })
+    .join("\n");
+};
 process.stdout.write(
-  template
+  withMessage(template
     .replaceAll('"__CODE__"', () => JSON.stringify(sent))
     .replaceAll('"__FILE_KEY__"', () => JSON.stringify(sentKey))
-    .replaceAll('"__RESULT_TEXT__"', () => JSON.stringify(JSON.stringify(returned))),
+    .replaceAll('"__RESULT_TEXT__"', () => JSON.stringify(resultText))),
 );
 if (scenario === "crash") {
   process.stderr.write("Error: stream disconnected before completion: error sending request\n");

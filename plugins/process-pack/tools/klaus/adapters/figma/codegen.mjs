@@ -162,6 +162,11 @@ function checkKey(key) {
  * Text in a data file (a description, a button's words, SVG markup, a name) could be written to
  * steer the model that copies the code into use_figma. Encoded, the model sees base64 noise.
  * The header is fixed, because a file's header lists its units by name.
+ *
+ * The result goes back the same way. With a KEY the runtime encodes every string it returns (unit
+ * names, the names of sets moved to Older versions, warnings, error messages) with the same key,
+ * except the values of a status field, and the relay decodes it (relay/events.mjs decodeResult).
+ * The model keeps the result in its context, and a name in the Figma file could steer it.
  */
 function encodedCode(data, key) {
   checkKey(key);
