@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { isInside, toPosix } from './files.mjs'
+import { BUILD_OUTPUT_DIRS, isInside, toPosix } from './files.mjs'
 
 /**
  * A type as TypeScript prints it, with no absolute path in it.
@@ -15,6 +15,14 @@ import { isInside, toPosix } from './files.mjs'
  *   `node_modules`, so it goes with the rest.
  * - a file inside one of `roots` becomes relative to that root: `packages/ui/src/types`.
  * - any other file keeps only its name.
+ * - a file inside a build folder (`dist`, `build`, `out`, `.next` and the other folders in
+ *   `BUILD_OUTPUT_DIRS`) is named by the folder that holds the build folder, and the folders and
+ *   file name inside it are dropped: `packages/ui/dist/alignment-utils-N1JdL0Og` becomes
+ *   `packages/ui`. A bundler puts a hash of the content in such a file name, so the name changes
+ *   on every rebuild with no change in the source. This rule is applied after the ones above, so
+ *   a dependency's `foo/dist/index` becomes `foo`, and a file outside every root and outside
+ *   `node_modules` is named by the folder above its nearest build folder. It reads no file, so two
+ *   checkouts and a rebuild give the same text.
  *
  * A specifier that is not an absolute path, such as `import("react")` for a module declared with
  * `declare module`, is left as it is. Everything else in the text is left as it is too.
@@ -44,7 +52,29 @@ const NODE_MODULES = '/node_modules/'
 
 function portableSpecifier(file, bases) {
   const at = file.lastIndexOf(NODE_MODULES)
-  if (at >= 0) return file.slice(at + NODE_MODULES.length)
+  if (at >= 0) {
+    const specifier = file.slice(at + NODE_MODULES.length)
+    // The package name is one folder, or two for a scoped package, and a package can be called `build` or `out`.
+    return folderAboveBuildOutput(specifier, specifier.startsWith('@') ? 2 : 1) ?? specifier
+  }
   const base = bases.find((b) => isInside(file, b))
-  return base ? path.posix.relative(base, file) : path.posix.basename(file)
+  if (base) {
+    const relative = path.posix.relative(base, file)
+    return folderAboveBuildOutput(relative, 0) ?? relative
+  }
+  // Without a root there is no telling the checkout's own folders from build folders, so the nearest build folder wins.
+  const folders = file.split('/').slice(0, -1)
+  const nearest = folders.findLastIndex((name) => BUILD_OUTPUT_DIRS.has(name))
+  return (nearest > 0 && folders[nearest - 1]) || path.posix.basename(file)
+}
+
+/**
+ * The folders above the first build folder in `specifier`, which is a path without the extension
+ * the compiler leaves off, or `.` when that is the root itself. Only folders count, because
+ * `src/build` is a file, and the first `firstFolder` folders are skipped. Null when there is no build folder.
+ */
+function folderAboveBuildOutput(specifier, firstFolder) {
+  const folders = specifier.split('/').slice(0, -1)
+  const at = folders.findIndex((name, i) => i >= firstFolder && BUILD_OUTPUT_DIRS.has(name))
+  return at < 0 ? null : folders.slice(0, at).join('/') || '.'
 }

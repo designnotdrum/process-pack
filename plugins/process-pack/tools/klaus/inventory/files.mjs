@@ -2,11 +2,18 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 /**
+ * Folders a build writes into. A file in one is generated, and a bundler may put a hash of its
+ * content in the file's name. `.next` is hidden, so `walk` skips it with the other hidden folders,
+ * but it is listed here because a type can be declared in it.
+ */
+export const BUILD_OUTPUT_DIRS = new Set(['dist', 'build', 'out', 'coverage', 'storybook-static', '.next'])
+
+/**
  * Directories that never hold shipped components. Hidden directories and Jest-style folders such
  * as `__tests__` and `__mocks__` are skipped too, so what imports a component in a test does not
  * count as using it.
  */
-const SKIPPED_DIRS = new Set(['node_modules', 'dist', 'build', 'out', 'coverage', 'storybook-static', 'stories'])
+const SKIPPED_DIRS = new Set(['node_modules', 'stories', ...BUILD_OUTPUT_DIRS])
 
 /** Declaration files, tests and stories are not part of what a repo ships. */
 const NOT_SHIPPED = /(?:\.d\.[cm]?ts|\.(?:test|spec|stories|story)\.[cm]?[jt]sx?)$/
