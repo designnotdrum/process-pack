@@ -50,6 +50,8 @@ describe('a type declared in a package\'s build output', () => {
     assert.equal(print('/home/me/other/ui/dist/alignment-utils-N1JdL0Og'), 'import("ui").Thing')
     assert.equal(print('/tmp/dist/chunk-1a2b3c'), 'import("tmp").Thing')
     assert.equal(print('/dist/chunk-1a2b3c'), 'import(".").Thing')
+    assert.equal(print('/home/me/other/ui/dist/build/chunk-1a2b3c'), 'import("ui").Thing')
+    assert.equal(print('/home/me/other/ui/.next/build/chunk-1a2b3c'), 'import("ui").Thing')
   })
 
   test('is named the same way from a Windows path, in any of several roots', () => {

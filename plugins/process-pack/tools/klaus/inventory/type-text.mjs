@@ -64,11 +64,15 @@ function portableSpecifier(file, bases) {
     const relative = path.posix.relative(base, file)
     return folderAboveBuildOutput(relative, 0) ?? relative
   }
-  // Without a root there is no telling the checkout's own folders from build folders, so the nearest build folder wins.
-  // A build folder directly under the file system root has no folder above it, so it is named ".".
+  // Without a root there is no telling the checkout's own folders from build folders, so the build folder
+  // nearest the file wins. Build folders inside one another count as one, as in `ui/dist/build/chunk`.
+  // A build folder directly under the file system root has no folder above it, so it is named ".",
+  // which prints as `import(".")`.
   const folders = file.split('/').slice(0, -1)
-  const nearest = folders.findLastIndex((name) => BUILD_OUTPUT_DIRS.has(name))
-  return nearest < 0 ? path.posix.basename(file) : folders[nearest - 1] || '.'
+  let build = folders.findLastIndex((name) => BUILD_OUTPUT_DIRS.has(name))
+  if (build < 0) return path.posix.basename(file)
+  while (build > 0 && BUILD_OUTPUT_DIRS.has(folders[build - 1])) build -= 1
+  return folders[build - 1] || '.'
 }
 
 /**
