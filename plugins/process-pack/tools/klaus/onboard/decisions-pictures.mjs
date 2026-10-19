@@ -311,6 +311,21 @@ export async function attachDecisionPictures({ plan, storybookDir, open = openSt
 }
 
 /**
+ * The pictures a merged first pull request's decisions list refers to, as files that have only to
+ * be there. A run that continues past a merged first pull request cannot draw them again to compare,
+ * but it can see that each one the merged list shows is still on the branch.
+ *
+ * @param {{ repo: string, docs: string }} options
+ * @returns {{ rel: string, text: string, volatile: true }[]}
+ */
+export function mergedPictureFiles({ repo, docs }) {
+  const list = path.join(repo, docs, 'decisions.md')
+  if (!fs.existsSync(list)) return []
+  const found = [...fs.readFileSync(list, 'utf8').matchAll(/\]\((decisions\/[^)\s]+\.png)\)/g)].map((m) => m[1])
+  return [...new Set(found)].map((file) => ({ rel: `${docs}/${file}`, text: '', volatile: true }))
+}
+
+/**
  * Every file the decisions add to the first pull request, besides the list of all pairs: the
  * decisions list, a ticket for each pair the data settled, and the pictures. A picture's `text` is
  * the PNG as a Buffer, which the run writes as it writes any file.

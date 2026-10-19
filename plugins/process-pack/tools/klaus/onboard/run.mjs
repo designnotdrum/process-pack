@@ -31,7 +31,7 @@ import { renderMarkdown } from '../inventory/markdown.mjs'
 import { pickVersions, readCaptures } from '../version/version.mjs'
 import { listBody, purposesBody, renderPurposesView, renderStoriesView, renderSummary, storiesBody } from './bodies.mjs'
 import { readOnboardingConfig } from './config.mjs'
-import { attachDecisionPictures, decisionFiles } from './decisions-pictures.mjs'
+import { attachDecisionPictures, decisionFiles, mergedPictureFiles } from './decisions-pictures.mjs'
 import { renderDuplicatesList } from './duplicates.mjs'
 import { compareToEstimate, comparisonNotes } from './estimate.mjs'
 import { changedFiles, closePullRequest, commit, createPullRequest, currentBranch, editPullRequest, git, gitDir, listPullRequests, pushBranch, remoteTip, resetPaths, run as runProgram, topLevel } from './git.mjs'
@@ -173,7 +173,9 @@ function checkModelRoutes({ onboarding, env, codex, writer, checker }) {
 export async function earlierRuns({ repo, plan, onboarding, captures, base = currentBranch(repo) }) {
   const caps = captures ? readCaptures(path.resolve(repo, captures)) : undefined
   const listed = (await pickVersions({ root: repo, inventory: plan.inventory, baseline: true, captures: caps, ts: plan.ts, dryRun: true })).inventory
-  return { listed, ...findMerged({ repo, base, docs: onboarding.docsDir, listFiles: listFiles(plan, listed, onboarding.docsDir) }) }
+  // The pictures are not drawn here, so the ones the merged decisions list shows are the ones that have to be there.
+  const expected = [...listFiles(plan, listed, onboarding.docsDir), ...mergedPictureFiles({ repo, docs: onboarding.docsDir })]
+  return { listed, ...findMerged({ repo, base, docs: onboarding.docsDir, listFiles: expected }) }
 }
 
 const sumOf = (list, field) => list.reduce((total, item) => total + (item[field] ?? 0), 0)

@@ -12,6 +12,7 @@ import { readOnboardingConfig } from '../config.mjs'
 import { buildEstimate } from '../estimate.mjs'
 import { buildPlan } from '../plan.mjs'
 import { BRANCHES, runOnboarding, workFolder } from '../run.mjs'
+import { mergedPictureFiles } from '../decisions-pictures.mjs'
 import { findMerged } from '../stages.mjs'
 import { makeGitSample, STUBS } from './helpers.mjs'
 
@@ -120,4 +121,20 @@ test('a merged first pull request is still found when its list and pictures diff
   assert.equal(found.start, 2)
   const strict = findMerged({ repo, base: 'main', docs, listFiles: listFiles.map(({ rel, text }) => ({ rel, text })) })
   assert.match(strict.refusal, /decisions\.md/)
+})
+
+test('a merged first pull request must still hold the pictures its decisions list shows', () => {
+  const docs = 'docs/klaus'
+  const repo = path.join(sample.base, 'merged-pictures')
+  fs.mkdirSync(path.join(repo, docs, 'decisions'), { recursive: true })
+  fs.writeFileSync(path.join(repo, docs, 'duplicates.md'), 'same')
+  fs.writeFileSync(path.join(repo, docs, 'decisions.md'), '## 1. A?\n\n![a](decisions/01-a-vs-b.png)\n\n## 2. B?\n\n![b](decisions/02-b-vs-c.png)\n')
+  fs.writeFileSync(path.join(repo, docs, 'decisions/01-a-vs-b.png'), PNG)
+  const expected = [{ rel: `${docs}/duplicates.md`, text: 'same' }, { rel: `${docs}/decisions.md`, text: 'a list', volatile: true }, ...mergedPictureFiles({ repo, docs })]
+  assert.deepEqual(mergedPictureFiles({ repo, docs }).map((f) => f.rel), [`${docs}/decisions/01-a-vs-b.png`, `${docs}/decisions/02-b-vs-c.png`])
+  const missing = findMerged({ repo, base: 'main', docs, listFiles: expected })
+  assert.match(missing.refusal, /decisions\/02-b-vs-c\.png is not there/)
+  fs.writeFileSync(path.join(repo, docs, 'decisions/02-b-vs-c.png'), PNG)
+  assert.equal(findMerged({ repo, base: 'main', docs, listFiles: expected }).start, 2)
+  assert.deepEqual(mergedPictureFiles({ repo: path.join(sample.base, 'nowhere'), docs }), [])
 })

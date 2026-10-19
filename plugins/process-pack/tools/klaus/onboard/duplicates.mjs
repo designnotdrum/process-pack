@@ -13,7 +13,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { toPosix, walk } from '../inventory/files.mjs'
 import { createTsconfigLoader } from '../inventory/tsconfig.mjs'
-import { declaringFile } from './barrels.mjs'
+import { declaringFile, reExportedFiles } from './barrels.mjs'
 import { describeClassDifference, READABLE_CLASS_COUNT } from './decisions-look.mjs'
 import { isVariantName, keepReason, removalFileName, renderDecisions, renderRemovalTicket, sidesOf } from './decisions.mjs'
 import { classTokens, importsOf, parseSource } from './source.mjs'
@@ -103,33 +103,38 @@ export function findDuplicates({ ts, root, inventory, setAside: setAsideOn = tru
   const propNames = (entry) => new Set(entry.props.map((p) => p.name))
   const tsconfigs = createTsconfigLoader(ts, root)
   const imported = new Map()
-  /** The names of the packages in this repo. TypeScript resolves an import of one to its built files, not to the source. */
-  const workspaceNames = new Set(
+  /** The packages in this repo, by name, with the folder each is in. TypeScript resolves an import of one to its built files, not to the source. */
+  const workspaces = new Map(
     walk(root, (name) => name === 'package.json').flatMap((file) => {
       try {
         const name = JSON.parse(fs.readFileSync(file, 'utf8')).name
-        return typeof name === 'string' ? [name] : []
+        return typeof name === 'string' ? [[name, toPosix(path.relative(root, path.dirname(file)))]] : []
       } catch {
         return []
       }
     }),
   )
+  const isIn = (file, folder) => folder === '' || file.startsWith(`${folder}/`)
   const packageOf = (spec) => (spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0])
   /**
    * True when the file of `entry` imports `other`, so `entry` is built on `other`. An import is
    * followed to the file it names, through barrel files, and counts when that is the file `other` is
    * in, whatever the import calls it. An import of a package in this repo cannot be followed to its
-   * source, so it counts when it takes a name that `other` has.
+   * source, so it counts when it takes a name that `other` has and `other` is in that package. A
+   * namespace import counts when the file uses `Namespace.Name` and the barrel reaches `other`.
    */
   const builtOn = (entry, other) => {
     const file = path.join(root, entry.file)
     if (!imported.has(entry.file)) imported.set(entry.file, importsOf(ts, parseSource(ts, file)))
     const target = toPosix(path.join(root, other.file))
+    const text = fs.readFileSync(file, 'utf8')
     return imported.get(entry.file).some((item) => {
-      if (workspaceNames.has(packageOf(item.module))) return item.defaultName === other.name || item.names.some((n) => n.imported === other.name)
+      const folder = workspaces.get(packageOf(item.module))
+      if (folder !== undefined) return isIn(other.file, folder) && (item.defaultName === other.name || item.names.some((n) => n.imported === other.name))
       const resolved = ts.resolveModuleName(item.module, file, tsconfigs.optionsFor(file), ts.sys).resolvedModule?.resolvedFileName
       if (!resolved) return false
       const module = toPosix(resolved)
+      if (item.namespace && text.includes(`${item.namespace}.${other.name}`) && (module === target || reExportedFiles({ ts, tsconfigs, file: module }).includes(target))) return true
       return module === target || [...item.names.map((n) => n.imported), ...(item.defaultName ? ['default'] : [])].some((name) => declaringFile({ ts, tsconfigs, file: module, name }) === target)
     })
   }

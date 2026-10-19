@@ -388,3 +388,46 @@ test('an import from a package outside this repo that has the same name is not a
     second.cleanup()
   }
 })
+
+test('an import from another package of this repo does not make a wrapper of a same-named component', async () => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const second = makeDecisionsSample()
+  try {
+    const components = path.join(second.repo, 'apps/web/src/components')
+    const body = (name, inner) => `export function ${name}({ data, selected }: { data: string; selected?: boolean }) {\n  return ${inner}\n}\n`
+    fs.writeFileSync(path.join(components, 'Crate.tsx'), body('Crate', '<div className="rounded border bg-white">{data}</div>'))
+    // The wrapper takes a Crate from the shared package, not the app's own.
+    fs.writeFileSync(path.join(components, 'WideCrate.tsx'), `import { Crate } from '@sample/ui'\n\n${body('WideCrate', '<div className="shadow-lg"><Crate /></div>')}`)
+    fs.mkdirSync(path.join(second.repo, 'apps/web/src/app/crates'))
+    fs.writeFileSync(path.join(second.repo, 'apps/web/src/app/crates/page.tsx'), "import { Crate } from '@/components/Crate'\nimport { WideCrate } from '@/components/WideCrate'\n\nexport default function CratesPage() {\n  return [Crate, WideCrate]\n}\n")
+    const found = planOf(second.repo).duplicates
+    assert.equal(found.dismissed.some((d) => d.reason.includes('built on')), false)
+    assert.ok(found.some((p) => [p.keep.name, p.drop.name].sort().join('+') === 'Crate+WideCrate' && p.verdict === 'decide'))
+  } finally {
+    second.cleanup()
+  }
+})
+
+test('a namespace import of a barrel makes a wrapper when the file uses the component through it', async () => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const second = makeDecisionsSample()
+  try {
+    const components = path.join(second.repo, 'apps/web/src/components')
+    const body = (name, inner) => `export function ${name}({ data, selected }: { data: string; selected?: boolean }) {\n  return ${inner}\n}\n`
+    fs.writeFileSync(path.join(components, 'Slab.tsx'), body('Slab', '<div className="rounded border bg-white">{data}</div>'))
+    fs.writeFileSync(path.join(components, 'index.ts'), "export * from './Slab'\n")
+    fs.writeFileSync(path.join(components, 'WideSlab.tsx'), `import * as UI from './index'\n\n${body('WideSlab', '<div className="rounded border bg-white"><UI.Slab data={data} selected={selected} /></div>')}`)
+    fs.writeFileSync(path.join(components, 'OtherSlab.tsx'), `import * as UI from './index'\n\n${body('OtherSlab', '<div className="rounded border bg-white">{String(UI)}</div>')}`)
+    fs.mkdirSync(path.join(second.repo, 'apps/web/src/app/slabs'))
+    fs.writeFileSync(path.join(second.repo, 'apps/web/src/app/slabs/page.tsx'), "import { Slab } from '@/components/Slab'\nimport { WideSlab } from '@/components/WideSlab'\nimport { OtherSlab } from '@/components/OtherSlab'\n\nexport default function SlabsPage() {\n  return [Slab, WideSlab, OtherSlab]\n}\n")
+    const found = planOf(second.repo).duplicates
+    const reasons = found.dismissed.map((d) => d.reason)
+    assert.ok(reasons.includes("the web app's WideSlab is built on Slab"), reasons.join(' | '))
+    assert.equal(reasons.includes("the web app's OtherSlab is built on Slab"), false, 'it imports the barrel but never uses Slab')
+    assert.ok(found.some((p) => [p.keep.name, p.drop.name].sort().join('+') === 'OtherSlab+Slab' && p.ticket === 'merge'))
+  } finally {
+    second.cleanup()
+  }
+})
