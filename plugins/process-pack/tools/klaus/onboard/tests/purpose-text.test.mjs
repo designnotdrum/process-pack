@@ -28,7 +28,7 @@ test('text that could change a file or a markdown view is refused', () => {
     'markdown link': 'click [here](x) to continue now',
     mention: 'ask @someone about it please',
     pipe: 'one | two in a table cell',
-    'non-ascii': 'a label with an em — dash in it',
+    'non-ascii': 'a label with an em \u2014 dash in it',
     'comment marker': 'ends the comment */ early on purpose',
     markup: 'an <img src=x> tag in the text',
     long: 'x'.repeat(201),

@@ -28,9 +28,9 @@ test('a verdict is read from the first JSON object, and only pass or fail count'
 })
 
 test('a reason is cleaned so it cannot carry markdown, links or a long text into a file', () => {
-  const dirty = 'see [x](http://evil) `code` | <b>bold</b> @me — ' + 'y'.repeat(400)
+  const dirty = 'see [x](http://evil) `code` | <b>bold</b> @me \u2014 ' + 'y'.repeat(400)
   const clean = cleanReason(dirty)
-  assert.doesNotMatch(clean, /[\[\]()`|<>@—]/)
+  assert.doesNotMatch(clean, /[\[\]()`|<>@\u2014]/)
   assert.ok(clean.length <= 220)
 })
 

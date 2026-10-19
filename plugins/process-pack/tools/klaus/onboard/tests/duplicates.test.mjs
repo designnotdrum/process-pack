@@ -71,7 +71,7 @@ test('the decisions list holds only pairs that need a ruling, each with a choice
 
 test('nothing the run writes uses an em dash', () => {
   const merge = pairs.find((p) => p.verdict === 'merge')
-  for (const text of [renderDuplicatesList(pairs), renderDecisions(pairs), renderTicket(merge)]) assert.equal(text.includes('—'), false)
+  for (const text of [renderDuplicatesList(pairs), renderDecisions(pairs), renderTicket(merge)]) assert.equal(text.includes('\u2014'), false)
 })
 
 test('an empty result still reads as a result', () => {

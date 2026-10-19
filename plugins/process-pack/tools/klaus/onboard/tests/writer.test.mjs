@@ -39,7 +39,7 @@ test('the prompt marks repo text as data between two boundary lines, lists the c
   assert.match(prompt, /^- PrimaryButton, in PrimaryButton\.tsx\./m)
   assert.match(prompt, /File LinkButton\.tsx, exactly as it is now:\n-----\nimport type/)
   assert.match(prompt, /^PrimaryButton: apps\/web\/src\/app\/page\.tsx:5: <PrimaryButton onClick=\{\(\) => \{\}\}>$/m)
-  assert.equal(prompt.includes('—'), false)
+  assert.equal(prompt.includes('\u2014'), false)
 })
 
 test('the boundary is new for each call, so text in a file cannot close the block', () => {

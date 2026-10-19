@@ -57,7 +57,7 @@ test('the text names who does what, what leaves the machine, the margins, and ne
   assert.match(text, /Your code leaves this machine/)
   assert.match(text, /Tokens must land within 30%, and dollars within 100% or USD 0\.0010/)
   assert.doesNotMatch(text, /\bfree\b/i)
-  assert.equal(text.includes('—'), false)
+  assert.equal(text.includes('\u2014'), false)
 })
 
 test('external routes get briefs and no estimate of what they bill', async () => {
