@@ -6,8 +6,8 @@
  * tokens at the price OpenRouter's models list gives on the day of the estimate. The writer has no
  * dollar figure: Codex use is billed to the ChatGPT plan's quota, not per token.
  */
-import { checkerPrompt, readPrice } from './checker.mjs'
-import { snippetsFor } from './source.mjs'
+import { checkerPrompt, isCheckable, readPrice } from './checker.mjs'
+import { checkerContext } from './source.mjs'
 import { writerPrompt } from './writer.mjs'
 
 /**
@@ -71,11 +71,11 @@ export async function buildEstimate({ plan, onboarding, fetchImpl }) {
   if (writerTokens) calls.forEach((c, i) => { c.tokens = writerTokens[i] })
 
   const checks = components.map((component) => {
-    const snippets = snippetsFor({ ts: plan.ts, root: plan.root, usage: plan.usage, entry: component.entry, limit: checker.usageSnippets })
-    const chars = checkerPrompt({ name: component.name, entry: component.entry, useWhen: PLACEHOLDER_SENTENCE, notFor: PLACEHOLDER_SENTENCE, snippets }, 'DATA-0000000000000000').length
-    return { id: component.id, snippets: snippets.length, promptChars: chars }
+    const context = checkerContext({ ts: plan.ts, root: plan.root, usage: plan.usage, entry: component.entry, limit: checker.usageSnippets })
+    const chars = checkerPrompt({ name: component.name, entry: component.entry, useWhen: PLACEHOLDER_SENTENCE, notFor: PLACEHOLDER_SENTENCE, ...context }, 'DATA-0000000000000000').length
+    return { id: component.id, checkable: isCheckable(context), promptChars: chars }
   })
-  const checkable = checks.filter((c) => c.snippets > 0)
+  const checkable = checks.filter((c) => c.checkable)
   const checkerTokens = checker.route === 'external' ? null : checkable.map((c) => predictCheckerTokens(c.promptChars))
 
   const price = checker.route === 'openrouter' ? await readPrice(checker.model, fetchImpl) : null
@@ -130,21 +130,22 @@ export function renderEstimate(estimate) {
   const { writer, checker } = settings
   const lines = [`Onboarding run: the one-time estimate (plan ${estimate.id})`]
   lines.push(`  The list: ${plural(list.entries, 'entry', 'entries')} (${list.shared} shared, ${list.app} app, ${list.local} local, ${plural(list.iconSets, 'icon set')}) in ${plural(list.folders.length, 'folder')}. No model. Every entry starts at 1.0.0.`)
-  lines.push(`  Purposes: ${plural(purposes.components, 'component')} need one (${purposes.missing} with no comment, ${purposes.unformatted} with a comment not in the Use when and Not for form).${purposes.skipped.length ? ` ${plural(purposes.skipped.length, 'more is', 'more are')} left for a person: ${purposes.skipped.map((s) => `${s.name} (${s.reason})`).join('; ')}.` : ''}`)
+  lines.push(`  Purposes: ${plural(purposes.components, 'component')} need one (${purposes.missing} with no doc comment, ${purposes.unformatted} with a doc comment not in the Use when and Not for form, which keeps all of its text and gets the two lines added).${purposes.skipped.length ? ` ${plural(purposes.skipped.length, 'more is', 'more are')} left for a person: ${purposes.skipped.map((s) => `${s.name} (${s.reason})`).join('; ')}.` : ''}`)
   if (writer.route === 'external') {
     lines.push(`    Writer: ${writer.agent}. ${plural(purposes.writerCalls, 'brief')}, one for each folder, handed over by hand. No estimate: ${writer.agent} bills on its own plan.`)
   } else {
     lines.push(`    Writer: the local Codex CLI, ${writer.model} at ${writer.effort} effort. ${plural(purposes.writerCalls, 'call')}, one for each folder, about ${approx(purposes.writerTokens)} tokens. Codex use counts against the ChatGPT plan's Codex quota and has no price for each token (unverified: the plan's limits were not read).`)
   }
   if (checker.route === 'external') {
-    lines.push(`    Checker: ${checker.agent}. ${plural(purposes.checkerCalls, 'brief')}, one for each component that is used somewhere. No estimate: ${checker.agent} bills on its own plan.`)
+    lines.push(`    Checker: ${checker.agent}. ${plural(purposes.checkerCalls, 'brief')}, one for each component that is used somewhere or that a comment talks about. No estimate: ${checker.agent} bills on its own plan.`)
   } else {
     const cost = price
       ? ` Billed for each token through OpenRouter, at ${perMillion(price.prompt)} for a million input tokens and ${perMillion(price.completion)} for a million output tokens (OpenRouter's models list, read ${price.readAt}), times ${CHECKER_RATES.priceFactor} because OpenRouter routes to providers that charge more than its list shows (measured on 4 calls), so about ${dollars(estimate.purposes.checkerUsd)}.`
       : ' No dollar figure: the model list could not be read, so the price is unknown. It is billed for each token.'
-    lines.push(`    Checker: OpenRouter, ${checker.model}, a different model family from the writer. ${plural(purposes.checkerCalls, 'call')}, one for each component that is used somewhere, about ${approx(purposes.checkerTokens)} tokens.${cost}`)
+    lines.push(`    Checker: OpenRouter, ${checker.model}, a different model family from the writer. ${plural(purposes.checkerCalls, 'call')}, one for each component that is used somewhere or that a comment talks about, about ${approx(purposes.checkerTokens)} tokens.${cost}`)
   }
-  if (purposes.unchecked > 0) lines.push(`    ${plural(purposes.unchecked, 'component')} ${purposes.unchecked === 1 ? 'is' : 'are'} not used anywhere, so there is no usage to check against. Their purposes are kept and listed as unchecked.`)
+  lines.push('    The checker is shown the places a component is used, its own comment and the comments elsewhere that name it, and fails a purpose that any of them contradicts.')
+  if (purposes.unchecked > 0) lines.push(`    ${plural(purposes.unchecked, 'component')} ${purposes.unchecked === 1 ? 'is' : 'are'} not used anywhere and no comment names ${purposes.unchecked === 1 ? 'it' : 'them'}, so there is nothing to check against. Their purposes are kept and listed as unchecked.`)
   lines.push('    A purpose the writer gets wrong is rejected before the check and is not checked. The report counts those with the checker calls and says how many.')
   lines.push(`  Stories: ${stories.write} written with no model. ${stories.dataBound} listed with the screens they appear on instead, because they show live data. ${stories.exists} already had a story. ${stories.skipped} left for a person${storyCheck ? ` (${storyCheck.noStorybook} in folders no Storybook loads, ${storyCheck.needsValue} with a required prop Klaus cannot fill in, ${storyCheck.storybookMissing + storyCheck.didNotCompile} whose story did not compile)` : ''}.`)
   if (storyCheck) lines.push(`    Each story is type-checked with the repo's own TypeScript and the tsconfig of its package, and written only if a Storybook config in the repo loads its path (${plural(storyCheck.typeChecked, 'story', 'stories')} checked). Nothing is written to check them.`)
@@ -157,7 +158,33 @@ export function renderEstimate(estimate) {
   const kept = writer.route !== 'external' || checker.route !== 'external' ? ' Each result the run gets from a model is kept in the git folder as it arrives, and a later run of this plan uses it again instead of calling the model.' : ''
   lines.push(`  Before any model call, the run tries the repo's pre-commit hook on the files of each pull request, so a hook that would refuse a commit stops the run before anything is spent.${kept}`)
   lines.push(`  The report sets these numbers beside what the run did. Calls and counts must match exactly. Tokens must land within ${Math.round(margins.tokens * 100)}%, and dollars within ${Math.round(margins.usd * 100)}% or ${dollars(margins.usdFloor)}, whichever is more.`)
+  if (estimate.earlier) lines.push(...renderEarlier(estimate))
   return lines.join('\n')
+}
+
+/** What an earlier run left, and so what this run will do: where it continues, and what it does not pay for again. */
+function renderEarlier(estimate) {
+  const { earlier, purposes, settings } = estimate
+  const nothingEarlier = earlier.start === 1 && !earlier.refusal && earlier.savedWriterCalls.length === 0 && earlier.savedChecks === 0 && (earlier.otherPlans ?? []).length === 0
+  if (nothingEarlier) return []
+  const lines = ['  Earlier runs:']
+  if (earlier.refusal) {
+    lines.push(`    The run would refuse to start. ${earlier.refusal.split('\n').join('\n    ')}`)
+    return lines
+  }
+  lines.push(`    ${earlier.note ?? 'No pull request of an earlier run is merged, so the run makes all three. One that is still open is closed and replaced.'}`)
+  if (earlier.start > 3) return lines
+  if (earlier.start > 2) {
+    lines.push('    The purposes are merged, so the run makes no model call. The model numbers above are not compared.')
+    return lines
+  }
+  if (earlier.start === 2) lines.push('    The first pull request is not made again. The second and third are, and an open one is closed and replaced by a new one that says which it replaces.')
+  const reused = new Set(earlier.savedWriterCalls)
+  const toMake = purposes.writerCalls - reused.size
+  const tokens = (purposes.writerCallDetails ?? []).filter((c) => !reused.has(c.id)).reduce((sum, c) => sum + (c.tokens ?? 0), 0)
+  lines.push(`    Model results saved for this plan: ${plural(reused.size, 'writer call')} of ${whole(purposes.writerCalls)} and ${plural(earlier.savedChecks, 'check')}. The run uses them again instead of calling the model, so it makes ${plural(toMake, 'writer call')}${settings.writer.route === 'external' || toMake === 0 ? '' : `, about ${approx(tokens)} tokens`}, and at most ${plural(Math.max(0, purposes.checkerCalls - earlier.savedChecks), 'check')}.`)
+  for (const other of earlier.otherPlans ?? []) lines.push(`    Results saved for another plan, ${other.planId} (${plural(other.writer, 'writer call')} and ${plural(other.checker, 'check')}), are not used: a saved result is used only by the plan it was made for, and the plan changes when a component file, a call, a story or a duplicate pair does.`)
+  return lines
 }
 
 /**
@@ -208,8 +235,10 @@ export function compareToEstimate(estimate, actual) {
   }
   exact('Entries in the list', estimate.list.entries, actual.entries)
   exact('Components needing a purpose', estimate.purposes.components, actual.purposes)
-  exact('Writer calls', estimate.purposes.writerCalls, actual.writerCalls + count(actual.writerReused))
-  exact('Checker calls', estimate.purposes.checkerCalls, actual.checkerCalls + count(actual.checkerReused) + count(actual.checksNotReached))
+  // A run that made no model work (the purposes were merged before it) has no call counts to compare.
+  const plus = (value, ...lists) => (value === null || value === undefined ? null : value + lists.reduce((sum, list) => sum + count(list), 0))
+  exact('Writer calls', estimate.purposes.writerCalls, plus(actual.writerCalls, actual.writerReused))
+  exact('Checker calls', estimate.purposes.checkerCalls, plus(actual.checkerCalls, actual.checkerReused, actual.checksNotReached))
   relative('Writer tokens', forWorkDone.writerTokens, actual.writerTokens, margins.tokens)
   relative('Checker tokens', forWorkDone.checkerTokens, actual.checkerTokens, margins.tokens)
   relative('Checker dollars', forWorkDone.checkerUsd, actual.checkerUsd, margins.usd, margins.usdFloor)

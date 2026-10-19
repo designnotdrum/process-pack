@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// A stand-in for gh that records pull request calls in STUB_GH_LOG.
+// A stand-in for gh that records pull request calls in STUB_GH_LOG. The log is also its state: a
+// pull request is open from its create until a close, and merged when STUB_GH_MERGED lists its number.
 import fs from 'node:fs'
 
 const args = process.argv.slice(2)
@@ -15,6 +16,20 @@ if (args[0] === 'pr' && args[1] === 'create') {
   const number = (log && fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter((l) => l.includes('"create"')).length : 0) + 1
   record({ action: 'create', base: value('--base'), head: value('--head'), title: value('--title'), body: fs.readFileSync(value('--body-file'), 'utf8'), number })
   console.log(`https://github.com/acme/sample/pull/${number}`)
+  process.exit(0)
+}
+const entries = () => (log && fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [])
+const merged = new Set(String(process.env.STUB_GH_MERGED ?? '').split(',').filter(Boolean).map(Number))
+if (args[0] === 'pr' && args[1] === 'list') {
+  record({ action: 'list', head: value('--head'), state: value('--state') })
+  const closed = new Set(entries().filter((e) => e.action === 'close').map((e) => e.number))
+  const state = (n) => (merged.has(n) ? 'merged' : closed.has(n) ? 'closed' : 'open')
+  const found = entries().filter((e) => e.action === 'create' && e.head === value('--head') && state(e.number) === value('--state'))
+  console.log(JSON.stringify(found.map((e) => ({ number: e.number, url: `https://github.com/acme/sample/pull/${e.number}` }))))
+  process.exit(0)
+}
+if (args[0] === 'pr' && args[1] === 'close') {
+  record({ action: 'close', number: Number(args[2]), comment: value('--comment') })
   process.exit(0)
 }
 if (args[0] === 'pr' && args[1] === 'edit') {

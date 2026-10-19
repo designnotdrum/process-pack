@@ -38,9 +38,32 @@ export function planPurposes({ root, ts, inventory }) {
       continue
     }
     const doc = docCommentOf(ts, sourceFile, found.statement)
-    components.push({ id, name: entry.name, file: entry.file, dir: path.posix.dirname(entry.file), kind: entry.purpose ? 'unformatted' : 'missing', existing: doc?.text ?? null, entry })
+    // Half a purpose is a person's to finish: a second label would make the comment read as the first.
+    // Only the text before the first tag counts, as that is all the inventory reads.
+    if (doc && PURPOSE_LABEL.test(ts.getTextOfJSDocComment(doc.node.comment) ?? '')) {
+      skipped.push({ id, name: entry.name, file: entry.file, reason: 'its doc comment already has a Use when or a Not for line, but not both where the inventory reads them' })
+      continue
+    }
+    // The two lines go before the first tag, the only place the inventory reads them. A tag after
+    // text on its line, such as `@repo/ui` in a sentence, would put them in the middle of that line.
+    if (doc && tagAfterText(sourceFile.text, doc)) {
+      skipped.push({ id, name: entry.name, file: entry.file, reason: 'its doc comment has an @ after text on a line, which TypeScript reads as the start of a tag, so the two lines could only go in the middle of that line' })
+      continue
+    }
+    // A doc comment with only tags gives the inventory no purpose text, and it is kept all the same.
+    components.push({ id, name: entry.name, file: entry.file, dir: path.posix.dirname(entry.file), kind: doc ? 'unformatted' : 'missing', existing: doc?.text ?? null, entry })
   }
   return { components, skipped }
+}
+
+const PURPOSE_LABEL = /\b(use when|not for)\s*:/i
+
+/** Whether a doc comment's first tag starts after text on its line, as `@repo/ui` does in `Lives in @repo/ui`. */
+function tagAfterText(text, doc) {
+  const tag = doc.node.tags?.[0]
+  if (!tag) return false
+  const lineStart = Math.max(text.lastIndexOf('\n', tag.pos - 1) + 1, doc.start)
+  return /[^\s*]/.test(text.slice(lineStart, tag.pos).replace(/^\s*\/\*\*/, ''))
 }
 
 const hashText = (text) => crypto.createHash('sha256').update(text).digest('hex')

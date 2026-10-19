@@ -27,6 +27,28 @@ import { writerPrompt } from './writer.mjs'
 
 export const RESULTS_SCHEMA = 1
 
+/**
+ * The plans with results in the work folder, and how many of each part: [{ planId, writer, checker }].
+ * A run uses only its own plan's, so the others are listed for a person to see, not used.
+ */
+export function savedPlans(work) {
+  const dir = path.join(work, 'results')
+  const count = (part) => {
+    try {
+      return fs.readdirSync(part).filter((name) => name.endsWith('.json')).length
+    } catch {
+      return 0
+    }
+  }
+  let ids = []
+  try {
+    ids = fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort()
+  } catch {
+    return []
+  }
+  return ids.map((planId) => ({ planId, writer: count(path.join(dir, planId, 'writer')), checker: count(path.join(dir, planId, 'checker')) }))
+}
+
 /** The prompts are hashed with this in place of their random boundary, so the same input hashes the same. */
 const FIXED_BOUNDARY = 'DATA-0000000000000000'
 
@@ -34,7 +56,7 @@ export const sha256 = (text) => crypto.createHash('sha256').update(text).digest(
 const fileName = (id) => `${sha256(id).slice(0, 32)}.json`
 
 /** What a check was asked, without the boundary. */
-export const checkInput = (item) => sha256(checkerPrompt({ name: item.component.name, entry: item.component.entry, useWhen: item.useWhen, notFor: item.notFor, snippets: item.snippets }, FIXED_BOUNDARY))
+export const checkInput = (item) => sha256(checkerPrompt({ name: item.component.name, entry: item.component.entry, useWhen: item.useWhen, notFor: item.notFor, snippets: item.snippets, own: item.own, mentions: item.mentions }, FIXED_BOUNDARY))
 
 /**
  * @param {object} options

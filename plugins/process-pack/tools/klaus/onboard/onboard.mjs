@@ -2,16 +2,19 @@
 /**
  * Klaus's onboarding run: builds a repo's baseline in three pull requests.
  *
- *   node onboard/onboard.mjs estimate --repo <dir> [--json]
+ *   node onboard/onboard.mjs estimate --repo <dir> [--captures <file>] [--json]
  *       Works out what the run would do and cost, from the repo and its klaus.config.json. Calls no
  *       model and writes nothing to the working tree. It prints the estimate and a plan id, and keeps
- *       the estimate in the repo's git folder.
+ *       the estimate in the repo's git folder. After an earlier run it also says which pull requests
+ *       are merged, where the run would continue, and which model results it would use again. Give
+ *       it the --captures the run will get, since the list it compares with the merged one uses them.
  *
  *   node onboard/onboard.mjs run --repo <dir> --approve <plan id> [options]
  *       Runs the three steps: the list at 1.0.0 with the duplicates, the purposes (written, then
  *       checked), and the stories. Each is a branch and a pull request, stacked on the one before.
  *       It refuses unless the plan id is the one the estimate printed and the repo still gives that
- *       plan. Nothing is merged.
+ *       plan. Nothing is merged. Run again after a stop, it continues from the first pull request
+ *       that is not merged, and closes and replaces an open one it makes again.
  *         --captures <file>           Dieter's captures for the baseline versions, as version.mjs reads them.
  *         --codex <path>              The Codex executable. Default: found on PATH.
          --writer-branch <ref>       With an external writer: the branch that holds its edits. Without it the run
@@ -37,7 +40,9 @@ import { readOnboardingConfig } from './config.mjs'
 import { buildEstimate, renderEstimate } from './estimate.mjs'
 import { topLevel } from './git.mjs'
 import { buildPlan } from './plan.mjs'
-import { runOnboarding, workFolder } from './run.mjs'
+import { savedWork } from './purposes-stage.mjs'
+import { createResultStore, savedPlans } from './results.mjs'
+import { earlierRuns, runOnboarding, workFolder } from './run.mjs'
 
 const OPTIONS = {
   repo: { type: 'string' },
@@ -59,6 +64,9 @@ async function estimateCommand(values, { fetchImpl } = {}) {
   const plan = buildPlan({ root: repo, folders, onboarding })
   const estimate = await buildEstimate({ plan, onboarding, fetchImpl })
   const dir = workFolder(repo)
+  const found = await earlierRuns({ repo, plan, onboarding, captures: values.captures })
+  const saved = savedWork({ plan, onboarding, store: createResultStore({ repo, work: dir, planId: plan.id }) })
+  estimate.earlier = { start: found.start, merged: found.merged, refusal: found.refusal, note: found.note, savedWriterCalls: saved.writerCalls, savedChecks: saved.checks, otherPlans: savedPlans(dir).filter((p) => p.planId !== plan.id) }
   fs.mkdirSync(dir, { recursive: true })
   writeJsonFile(path.join(dir, 'estimate.json'), estimate)
   if (values.json) console.log(JSON.stringify(estimate, null, 2))

@@ -19,24 +19,35 @@ function table(header, rows) {
 }
 
 function stack(state, step) {
+  const merged = (n) => state.merged?.find((m) => m.step === n)
   const link = (n) => {
-    const pr = state.prs.find((p) => p.step === n)
-    return pr ? `#${pr.number}` : `pull request ${n}`
+    const pr = merged(n) ?? state.prs.find((p) => p.step === n)
+    return pr?.number ? `#${pr.number}` : `pull request ${n}`
   }
+  const done = (n) => (merged(n) ? ' Merged.' : '')
   return [
     '## The three pull requests',
     '',
-    `1. ${link(1)}: the list of components at 1.0.0, and the duplicates.`,
-    `2. ${link(2)}: the missing purposes, written and then checked against where each component is used.`,
-    `3. ${link(3)}: stories for components that have none, and the screens that show the data-bound ones.`,
+    `1. ${link(1)}: the list of components at 1.0.0, and the duplicates.${done(1)}`,
+    `2. ${link(2)}: the missing purposes, written and then checked against where each component is used.${done(2)}`,
+    `3. ${link(3)}: stories for components that have none, and the screens that show the data-bound ones.${done(3)}`,
     '',
     `This is ${step} of 3. Each is stacked on the one before it. Merge them in order, and merge each without deleting its branch: GitHub closes a pull request whose base branch is deleted. After a merge, change the next pull request's base to the default branch.`,
   ].join('\n')
 }
 
+/** The line that opens a pull request made in place of one an earlier run opened. */
+function replaces(state, step) {
+  const old = state.replaced?.[step] ?? []
+  if (old.length === 0) return []
+  const which = old.map((p) => `#${p.number}`).join(' and ')
+  return [`It replaces ${which}, which an earlier run of this plan opened. The run closed ${old.length === 1 ? 'it' : 'them'} and made this branch again from the plan.`, '']
+}
+
 export function listBody(state) {
   const { plan, estimate } = state
   const lines = [
+    ...replaces(state, 1),
     '## What this is',
     '',
     'The first of three pull requests that give this repo its Klaus baseline. This one is the list: every component the repo ships, read by a script from the TypeScript compiler and the imports. No model ran. Every entry starts at version 1.0.0.',
@@ -70,15 +81,16 @@ export function purposesBody(state) {
   const kept = purposes.items.filter((i) => i.status === 'kept' || i.status === 'unchecked')
   const unchecked = purposes.items.filter((i) => i.status === 'unchecked')
   const lines = [
+    ...replaces(state, 2),
     '## What this is',
     '',
-    'The second of three pull requests. It writes a purpose comment above each component that had none, or had one not in the "Use when" and "Not for" form. Each purpose was then checked against the places the component is used.',
+    'The second of three pull requests. It writes a purpose comment above each component that had none. A component that had a doc comment not in the "Use when" and "Not for" form keeps all of its text, and the two lines are added to it. Each purpose was then checked against the places the component is used, its own comment and the comments elsewhere that name it.',
     '',
     '## Who did it',
     '',
     `- Writer: ${state.writerLabel}.`,
     `- Checker: ${state.checkerLabel}.`,
-    '- A writer edits the files of its folder. The run then compares each file with the plan: only the doc comments of the listed components may differ. It reads the two sentences out of each comment and writes the comment itself in one fixed form, so nothing else the model produced reaches a file.',
+    '- A writer edits the files of its folder. The run then compares each file with the plan: only the doc comments of the listed components may differ, and a comment that was there may only gain the two lines. It reads the two sentences out of each comment and writes the two lines itself in one fixed form, so nothing else the model produced reaches a file and no text of a comment is removed.',
     '',
     '## Result',
     '',
@@ -86,7 +98,7 @@ export function purposesBody(state) {
     `- ${purposes.items.filter((i) => i.status === 'kept').length} written and passed the check.`,
     ...(unchecked.length > 0 ? [`- ${unchecked.length} written and not checked (${unchecked.map((i) => `${i.name}: ${i.reason}`).join('; ')}). They are in this pull request.`] : []),
     `- ${purposes.items.filter((i) => i.status === 'dropped').length} failed the check and are not in this pull request. Their proposed text and the checker's reason are in ${code(`${state.docsDir}/purposes.md`)}.`,
-    `- ${purposes.items.filter((i) => i.status === 'rejected').length} were rejected because the writer changed more than the comment, or the text was not acceptable.`,
+    `- ${purposes.items.filter((i) => i.status === 'rejected').length} were rejected because the writer changed more than the comment, removed text from a comment that was there, or wrote text that was not acceptable.`,
     '',
     table(['Component', 'File', 'Status', 'Check', 'Use when'], purposes.items.map((i) => [code(i.name), code(i.file), i.status, i.reason ? `${i.verdict ?? ''} ${i.reason}`.trim() : i.verdict ?? '', i.useWhen ?? ''])),
     '',
@@ -103,6 +115,7 @@ export function storiesBody(state) {
   const bound = stories.items.filter((i) => i.status === 'data-bound')
   const skipped = stories.items.filter((i) => i.status === 'skipped')
   const lines = [
+    ...replaces(state, 3),
     '## What this is',
     '',
     'The third of three pull requests. It adds a story for each component that had none and shows no live data. A component that shows live data is not drawn alone, because it would need a signed-in user and a server. It is listed with the screens it appears on instead. No model wrote these stories.',
@@ -169,14 +182,15 @@ export function renderPurposesView(state) {
   section('Written and checked', 'kept', 'These are in the code.')
   section('Written and not checked', 'unchecked', 'These are in the code. There was nothing to check them against, or the checker could not answer.')
   section('Failed the check', 'dropped', 'These are not in the code. The text is the writer\'s proposal. A person can edit it and add it.')
-  section('Rejected', 'rejected', 'The writer changed more than the comment, or the text was not acceptable. Nothing was written.')
+  section('Rejected', 'rejected', 'The writer changed more than the comment, removed text from a comment that was there, or wrote text that was not acceptable. Nothing was written.')
   return lines.join('\n')
 }
 
 /** What the run prints at the end. */
 export function renderSummary(state) {
   const lines = ['Onboarding run finished.', '']
-  for (const pr of state.prs) lines.push(`  Pull request ${pr.step} of 3: ${pr.url}`)
+  for (const pr of state.merged ?? []) lines.push(`  Pull request ${pr.step} of 3: already merged${pr.url ? `, ${pr.url}` : ''}`)
+  for (const pr of state.prs) lines.push(`  Pull request ${pr.step} of 3: ${pr.url}${state.replaced?.[pr.step]?.length ? `, in place of ${state.replaced[pr.step].map((p) => `#${p.number}`).join(', ')}` : ''}`)
   lines.push('', renderComparison(state.rows))
   for (const note of state.notes ?? []) lines.push('', note)
   const out = state.rows.filter((r) => r.within === false)
