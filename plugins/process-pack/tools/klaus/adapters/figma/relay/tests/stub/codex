@@ -14,6 +14,7 @@
  *   tool-error    use_figma returned an error
  *   changed-code  Codex sent different code to use_figma, and Figma wrote it
  *   changed-code-failed   Codex sent different code, and use_figma returned an error
+ *   wrong-file-key  Codex sent the code to another Figma file
  *   no-call       Codex replied without calling use_figma
  *   crash         Codex died before the call, with exit code 1
  *
@@ -85,9 +86,11 @@ if (scenario === "unit-failed" && results.length > 0) {
 }
 const returned = { tokens: { made: [], updated: [] }, units: results, warnings: [] };
 
-const fixture = { success: "success", exists: "success", "unit-failed": "success", "changed-code": "success", "changed-code-failed": "tool-error", "tool-error": "tool-error", "no-call": "no-call", crash: "crash" }[scenario];
+const fixture = { success: "success", exists: "success", "unit-failed": "success", "changed-code": "success", "changed-code-failed": "tool-error", "wrong-file-key": "success", "tool-error": "tool-error", "no-call": "no-call", crash: "crash" }[scenario];
 if (!fixture) fail(`unknown scenario ${scenario}`);
 const sent = scenario.startsWith("changed-code") ? code.replace("const CONFIG", "const  CONFIG") : code;
+if (scenario.startsWith("changed-code") && sent === code) fail("the changed-code scenario found no \"const CONFIG\" to change in the code");
+const sentKey = scenario === "wrong-file-key" ? "SomeOtherFigmaFileKey000" : fileKey;
 let template = "";
 try {
   template = readFileSync(path.join(here, "..", "fixtures", `${fixture}.jsonl`), "utf8");
@@ -97,7 +100,7 @@ try {
 process.stdout.write(
   template
     .replaceAll('"__CODE__"', () => JSON.stringify(sent))
-    .replaceAll('"__FILE_KEY__"', () => JSON.stringify(fileKey))
+    .replaceAll('"__FILE_KEY__"', () => JSON.stringify(sentKey))
     .replaceAll('"__RESULT_TEXT__"', () => JSON.stringify(JSON.stringify(returned))),
 );
 if (scenario === "crash") {

@@ -98,3 +98,15 @@ test("a component named like an object property does not reach the prototype", (
   assert.equal(componentSent(ledger, "constructor", "1.0.0"), true);
   assert.deepEqual(Object.getOwnPropertyDescriptor(ledger.components, "constructor").value, { "1.0.0": SENT }, "the entry is the ledger's own");
 });
+
+test("a component named __proto__ is recorded, written and read back as its own entry", () => {
+  const ledger = emptyLedger();
+  recordComponent(ledger, "__proto__", "1.0.0", SENT);
+  assert.equal(componentSent(ledger, "__proto__", "1.0.0"), true);
+  assert.ok(Object.hasOwn(ledger.components, "__proto__"));
+  assert.equal(Object.getPrototypeOf(ledger.components), Object.prototype, "the table's prototype is untouched");
+  const read = readLedger(ledgerFile(ledger));
+  assert.equal(componentSent(read, "__proto__", "1.0.0"), true);
+  const old = readLedger(ledgerFile({ version: 1, components: JSON.parse('{"__proto__":["1.0.0"]}'), screens: {} }));
+  assert.equal(entryStatus(old, { kind: "component", name: "__proto__", version: "1.0.0" }), GENERATED);
+});

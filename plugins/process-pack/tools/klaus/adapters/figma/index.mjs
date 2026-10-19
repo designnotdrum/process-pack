@@ -6,9 +6,11 @@
  * signed-in agent, because Figma's MCP server refuses a plain script.
  *
  *   plan      components whose current version is not written yet, and the screens to write
- *   estimate  calls and relay tokens: about 1,200 tokens a component version
+ *   estimate  calls and relay tokens, at the measured relay rate: 71,000 tokens a call plus
+ *             1.4 a character of code, about 100,000 for a Button-sized component version
  *   write     read computed styles from a static Storybook build, build the code, pack it into
- *             files of at most 50,000 characters, and list the screenshots to upload
+ *             files of one component each by default and at most 50,000 characters, and list
+ *             the screenshots to upload
  *   report    where the files are, and a link to the Figma file
  *
  * Settings are under outputs.figma.options. See settings.mjs.
@@ -19,18 +21,22 @@ import { selectComponents } from "../../frame/components.mjs";
 import { writeJsonFile } from "../../frame/json-file.mjs";
 import { packUnits } from "./batch.mjs";
 import { captureComponent, captureScreen, openStorybook, readStoryIndex, storyCandidates } from "./capture.mjs";
-import { anyVersionSent, componentSent, entryOf, readLedger, recordComponent, recordScreen, screenSent } from "./ledger.mjs";
+import { anyVersionSent, componentSent, entryOf, GENERATED, readLedger, recordEntry, screenSent } from "./ledger.mjs";
 import { screenRoutes, uploadFor } from "./screens.mjs";
+import { RUNTIME_CODE } from "./codegen.mjs";
 import {
-  CHARS_PER_TOKEN,
+  CALL_BASE_TOKENS,
+  DATA_CHARS_PER_COMPONENT,
+  DATA_CHARS_PER_VARIANT,
   MAX_CODE_CHARS,
   MODE_NAME,
   SCREENS_PAGE,
-  TOKENS_PER_COMPONENT,
+  TOKENS_PER_CODE_CHAR,
   TOKENS_PER_EDITABLE_SCREEN,
   TOKENS_PER_SCREEN_IMAGE,
   pageFor,
   readOptions,
+  relayCallTokens,
 } from "./settings.mjs";
 import { buildComponentUnit, buildScreenUnit, describe } from "./spec.mjs";
 
@@ -121,10 +127,17 @@ export function createAdapter(browser = {}) {
 
     estimate(plan, ctx) {
       const options = readOptions(ctx.settings);
-      const perCall = Math.round((1 / options.componentsPerCall) * 10000) / 10000;
+      const per = options.componentsPerCall;
+      const perCall = Math.round((1 / per) * 10000) / 10000;
+      // A call's fixed cost and the runtime it carries are shared by the components in its file.
+      const shared = (CALL_BASE_TOKENS + RUNTIME_CODE.length * TOKENS_PER_CODE_CHAR) / per;
       return {
         items: plan.items.map((item) => {
-          if (item.kind === "component") return { id: item.id, calls: perCall, tokens: TOKENS_PER_COMPONENT, usd: 0 };
+          if (item.kind === "component") {
+            const variants = item.axes.reduce((n, axis) => n * axis.values.length, 1) * (1 + options.states.length);
+            const data = DATA_CHARS_PER_COMPONENT + DATA_CHARS_PER_VARIANT * variants;
+            return { id: item.id, calls: perCall, tokens: Math.ceil(shared + data * TOKENS_PER_CODE_CHAR), usd: 0 };
+          }
           const tokens = item.editable ? TOKENS_PER_EDITABLE_SCREEN : TOKENS_PER_SCREEN_IMAGE;
           return { id: item.id, calls: 1, tokens, usd: 0 };
         }),
@@ -215,10 +228,10 @@ export function createAdapter(browser = {}) {
       const everyFile = afterUploads ? [...files, afterUploads] : files;
       for (const file of everyFile) fs.writeFileSync(path.join(directory, file.name), file.code);
 
-      const chars = everyFile.reduce((sum, file) => sum + file.code.length, 0);
+      // What relaying these files will cost. No relay has run yet, so this is the measured rate.
       const actual = {
         calls: everyFile.length + (uploads.length > 0 ? Math.ceil(uploads.length / 60) : 0),
-        tokens: Math.ceil(chars / CHARS_PER_TOKEN) + uploads.length * TOKENS_PER_SCREEN_IMAGE,
+        tokens: everyFile.reduce((sum, file) => sum + relayCallTokens(file.code.length), 0) + uploads.length * TOKENS_PER_SCREEN_IMAGE,
         usd: 0,
       };
       const sendable = units.filter((u) => packed.has(u.id));
@@ -241,12 +254,9 @@ export function createAdapter(browser = {}) {
       writeJsonFile(path.join(directory, "manifest.json"), manifest);
 
       // Generated, not sent: only the relay records a unit as sent, after use_figma confirms it.
+      // The same entries the manifest gives the relay, so the two cannot drift apart.
       const ledger = readLedger(ledgerFile(root, options));
-      for (const unit of sendable) {
-        if (unit.kind === "component") recordComponent(ledger, unit.name, unit.version);
-        else if (unit.kind === "screen") recordScreen(ledger, unit.route, unit.release);
-      }
-      for (const upload of uploads) recordScreen(ledger, upload.screen, upload.release);
+      for (const entry of Object.values(manifest.ledgerEntries)) recordEntry(ledger, entry, GENERATED);
       writeJsonFile(ledgerFile(root, options), ledger);
 
       runs.set(ctx, { directory: path.relative(root, directory).split(path.sep).join("/"), manifest });

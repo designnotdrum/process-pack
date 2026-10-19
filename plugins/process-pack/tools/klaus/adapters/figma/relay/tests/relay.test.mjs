@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { CALL_BASE_TOKENS, DEFAULT_MODEL, predictTokens } from "../relay.mjs";
+import { CALL_BASE_TOKENS } from "../../settings.mjs";
+import { DEFAULT_MODEL, predictTokens } from "../relay.mjs";
 import { generatedRepo, KEY, ledgerOf, outputOf, relay } from "./helpers.mjs";
 
 // The recorded success call's usage: 86,388 input and 6,274 output tokens.
@@ -28,8 +29,8 @@ test("a successful call marks its units sent, and the generator stops planning t
   const [first] = output.adapter.details.files;
   assert.equal(first.status, "sent");
   assert.equal(first.calls, 1);
+  assert.equal(first.tokens, first.usage.input_tokens + first.usage.output_tokens, "relay tokens are input plus output");
   assert.equal(first.tokens, SUCCESS_TOKENS);
-  assert.deepEqual(first.usage, { input_tokens: 86388, cached_input_tokens: 53120, output_tokens: 6274, reasoning_output_tokens: 0 });
   assert.deepEqual(
     output.adapter.details.units.map((u) => [u.id, u.status, u.figma, u.calls, u.tokens]),
     [["Button", "sent", "written", 1, SUCCESS_TOKENS], ["Card", "sent", "written", 1, SUCCESS_TOKENS]],
@@ -156,6 +157,14 @@ test("an exists from an exact copy marks a unit sent", async () => {
   const run = await relay(root, [folder], { scenarios: "exists" });
   assert.equal(run.code, 0);
   assert.deepEqual(outputOf(run.report).adapter.details.units.map((u) => [u.id, u.status, u.figma]), [["Button", "sent", "exists"], ["Card", "sent", "exists"]]);
+});
+
+test("code sent to another Figma file is not trusted", async () => {
+  const { root, folder } = await generatedRepo({ perFile: 10 });
+  const run = await relay(root, [folder], { scenarios: "wrong-file-key" });
+  assert.equal(run.code, 1);
+  assert.match(outputOf(run.report).failed[0].error, new RegExp(`Codex sent the code to file "SomeOtherFigmaFileKey000", not ${KEY}`));
+  assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "generated" }, Card: { "1.0.0": "generated" } });
 });
 
 test("a reply without a use_figma call is a failure, with what Codex said", async () => {

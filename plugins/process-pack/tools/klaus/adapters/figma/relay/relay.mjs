@@ -29,7 +29,7 @@
  *   --ledger <file>        Default <outputDir>/ledger.json, as the generator keeps it.
  *   --report-dir <dir>     Default .klaus/reports.
  *   --file-key <key>       Write to this Figma file instead of the manifest's.
- *   --model <id>           The relaying model. Default gpt-6-luna.
+ *   --model <id>           The relaying model. Default gpt-5.6-terra.
  *   --effort <level>       Its reasoning effort. Default low.
  *   --max-calls <n>        Make at most n calls in this run.
  *   --timeout <seconds>    For one call. Default 600.
@@ -59,26 +59,22 @@ import { readJsonFile, writeJsonFile } from "../../../frame/json-file.mjs";
 import { buildReport, writeReport } from "../../../frame/report.mjs";
 import { MANIFEST_VERSION } from "../index.mjs";
 import { CHANGED, entrySent, entryStatus, readLedger, recordEntry, SENT } from "../ledger.mjs";
-import { DEFAULT_OPTIONS, readOptions } from "../settings.mjs";
+import { DEFAULT_OPTIONS, readOptions, relayCallTokens } from "../settings.mjs";
 import { FIGMA_SERVER, FIGMA_TOOL, parseEvents, readCodeResult, relayTokens, resultText, summarizeEvents } from "./events.mjs";
 
-export const DEFAULT_MODEL = "gpt-6-luna";
+/**
+ * The relaying model. On 2026-10-18 gpt-6-luna at low effort changed a 20,582-character file on
+ * the way in two of two tries, and gpt-5.6-terra at low effort copied it exactly in one try
+ * (apart from the final newline), at 70,639 relay tokens and about two minutes.
+ */
+export const DEFAULT_MODEL = "gpt-5.6-terra";
 export const DEFAULT_EFFORT = "low";
 export const DEFAULT_TIMEOUT_SECONDS = 600;
 export const DEFAULT_ARTIFACT = "klaus-figma";
 export const DEFAULT_FIGMA_URL = "https://mcp.figma.com/mcp";
 
-/**
- * What a call costs, measured on 2026-10-18 with gpt-6-luna at low effort: three calls with
- * 18,750, 20,582 and 20,582 characters of code cost 92,662, 68,817 and 99,687 relay tokens.
- * A call is two model requests, one that writes the use_figma call and one after its result,
- * and each request reads Codex's instructions, the tool's definition and the code again.
- * Output ran at about 0.35 tokens a character, and the code is read about three times and
- * written once, so 1.4 tokens a character. The fixed part is set from the dearest call, so a
- * prediction is not lower than what that call cost.
- */
-export const CALL_BASE_TOKENS = 71000;
-export const TOKENS_PER_CODE_CHAR = 1.4;
+/** codex mcp list reads local config only, so a hang means something is wrong. */
+const MCP_LIST_TIMEOUT_MS = 30000;
 
 /** The output name in the run report, so a relay run is not counted as another generator run. */
 export const REPORT_OUTPUT = "figma-relay";
@@ -89,10 +85,12 @@ const MODEL = /^[A-Za-z0-9._-]{1,100}$/;
 const EFFORT = /^[a-z]{1,20}$/;
 const SENT_STATUSES = new Set(["written", "exists"]);
 
-/** The tokens a file's call is expected to cost. Calls measured in this run raise it, never lower it. */
+/**
+ * The tokens a file's call is expected to cost: the generator's measured rate (settings.mjs).
+ * Calls measured in this run raise it, never lower it.
+ */
 export function predictTokens(chars, ratios = []) {
-  const base = CALL_BASE_TOKENS + chars * TOKENS_PER_CODE_CHAR;
-  return Math.ceil(base * Math.max(1, ...ratios));
+  return Math.ceil(relayCallTokens(chars) * Math.max(1, ...ratios));
 }
 
 /** The prompt. It holds no code: the code arrives on stdin, which Codex appends as a <stdin> block. */
@@ -208,9 +206,10 @@ function downloadArtifact({ gh, run, repo, artifact }) {
 function checkCodex(codex) {
   let text;
   try {
-    text = execFileSync(codex, ["mcp", "list", "--json"], { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8" });
+    text = execFileSync(codex, ["mcp", "list", "--json"], { stdio: ["ignore", "pipe", "pipe"], encoding: "utf8", timeout: MCP_LIST_TIMEOUT_MS });
   } catch (error) {
     if (error.code === "ENOENT") throw new UserError(`The Codex CLI (${codex}) is not installed. See relay/README.md.`);
+    if (error.code === "ETIMEDOUT") throw new UserError(`codex mcp list did not answer within ${MCP_LIST_TIMEOUT_MS / 1000} seconds.`);
     throw new UserError(`codex mcp list failed: ${String(error.stderr ?? error.message).trim().slice(0, 300)}`);
   }
   let servers;

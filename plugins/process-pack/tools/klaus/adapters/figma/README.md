@@ -9,8 +9,8 @@ The values come from the browser's computed styles, not from the CSS files. On M
 | Step | What the adapter does |
 |---|---|
 | `plan` | Lists the components whose current version is not written yet, and the screens to write for this release. A component with no story in the Storybook build is left out. |
-| `estimate` | Costs a component version at 1,200 relay tokens and a tenth of a call, as the prototype measured. A screenshot upload and an editable screen are costed apart (unverified, there is no measurement). |
-| `write` | Reads each story in a static Storybook build, builds the code, packs it into files of at most 50,000 characters, and lists the screenshots to upload. It sends nothing. |
+| `estimate` | Costs a component version at the relay's measured rate: 71,000 relay tokens a call plus 1.4 a character of code, about 100,000 for a Button-sized version, and one call. The code's size is the runtime plus about 1,200 characters and 155 a variant. A screenshot upload and an editable screen are costed apart (unverified, there is no measurement). |
+| `write` | Reads each story in a static Storybook build, builds the code, packs it into files of one component version each (`componentsPerCall`) and at most 50,000 characters, and lists the screenshots to upload. It sends nothing. |
 | `report` | Says where the files are and links the Figma file. |
 
 ## What the relay finds
@@ -19,7 +19,7 @@ The values come from the browser's computed styles, not from the CSS files. On M
 
 | File | Holds |
 |---|---|
-| `figma-001.js`, `figma-002.js`, ... | Plugin API code. Each file is one `use_figma` call and holds about ten components. |
+| `figma-001.js`, `figma-002.js`, ... | Plugin API code. Each file is one `use_figma` call and holds one component version, unless `componentsPerCall` says more. |
 | `manifest.json` | The file key, each code file with its character count and units, the ledger entry of each unit, the uploads, the retention file, and warnings. |
 | `figma-retention.js` | Present when there are screenshots. Run it after the uploads. It keeps the last N versions of each screen. |
 
@@ -53,7 +53,7 @@ All of them sit under `outputs.figma.options` in `klaus.config.json` and all hav
 | `icons` | `false` | Adds a hidden icon layer behind a `Show icon` property, from the icon a story draws. |
 | `label` | `true` | Puts the component's name in the text layer. |
 | `stories` | `{}` | Story ids by component name, when the automatic pick is wrong. |
-| `componentsPerCall` | `10` | Components in one code file. A file is also cut at 50,000 characters. |
+| `componentsPerCall` | `1` | Components in one code file, and so in one relay call. A bulk load can set up to 50. A file is also cut at 50,000 characters. |
 | `editableScreens` | `false` | Write screens as editable layers. Needs `screensBaseUrl`. |
 | `screensBaseUrl`, `screensStorageState` | empty | The running app, and a Playwright storage state for a signed-in app. |
 | `screenshotsDir` | `.klaus/screens` | Where Dieter leaves the screenshots. |

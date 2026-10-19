@@ -8,6 +8,7 @@ import { resolveConfig, runKlaus, validateConfig } from "../../../frame/index.mj
 import adapter, { createAdapter, DEFAULT_VERSION, fileKeyOf } from "../index.mjs";
 import { readLedger, recordComponent, SENT } from "../ledger.mjs";
 import { MAX_CODE_CHARS, TOKENS_PER_EDITABLE_SCREEN, TOKENS_PER_SCREEN_IMAGE } from "../settings.mjs";
+import { RUNTIME_CODE } from "../codegen.mjs";
 import { runCode } from "./fake-figma.mjs";
 import { buttonCapture, newFigma } from "./helpers.mjs";
 
@@ -133,18 +134,45 @@ test("screens are planned for each listed route and each release", async () => {
   ]);
 });
 
-test("estimate: about 1,200 relay tokens and a tenth of a call for each component version", async () => {
+test("estimate: one relay call for each component version, at the measured relay rate", async () => {
   const root = tempRepo();
   const ctx = context(root, { entries: [entry("Button"), entry("Card")] });
   const plan = await adapter.plan(ctx);
   const estimate = await adapter.estimate(plan, ctx);
 
+  // 6 variants by 3 sizes: the runtime plus 1,200 + 155 x 18 characters of data, at 71,000 a call and 1.4 a character.
+  const tokens = Math.ceil(71000 + (RUNTIME_CODE.length + 1200 + 155 * 18) * 1.4);
+  assert.ok(tokens > 90000 && tokens < 100000, `a Button-sized version is about 100,000 relay tokens, got ${tokens}`);
   assert.deepEqual(estimate.items, [
-    { id: "Button", calls: 0.1, tokens: 1200, usd: 0 },
-    { id: "Card", calls: 0.1, tokens: 1200, usd: 0 },
+    { id: "Button", calls: 1, tokens, usd: 0 },
+    { id: "Card", calls: 1, tokens, usd: 0 },
   ]);
+
+  // Five to a call share the call's fixed cost and the runtime.
   const five = context(root, { entries: [entry("Button")], options: { componentsPerCall: 5 } });
-  assert.equal((await adapter.estimate(await adapter.plan(five), five)).items[0].calls, 0.2);
+  const [shared] = (await adapter.estimate(await adapter.plan(five), five)).items;
+  assert.equal(shared.calls, 0.2);
+  assert.equal(shared.tokens, Math.ceil((71000 + RUNTIME_CODE.length * 1.4) / 5 + (1200 + 155 * 18) * 1.4));
+});
+
+test("estimate: a State property multiplies the variants a version carries", async () => {
+  const root = tempRepo();
+  const plain = context(root);
+  const states = context(root, { options: { states: ["loading", "disabled"] } });
+  const [one] = (await adapter.estimate(await adapter.plan(plain), plain)).items;
+  const [three] = (await adapter.estimate(await adapter.plan(states), states)).items;
+  // 18 variants become 54: each one is drawn default, loading and disabled.
+  assert.equal(three.tokens, Math.ceil(71000 + (RUNTIME_CODE.length + 1200 + 155 * 54) * 1.4));
+  assert.ok(three.tokens > one.tokens);
+});
+
+test("write puts one component version in each code file by default", async () => {
+  const root = tempRepo();
+  const figma = createAdapter(fakeBrowser().browser);
+  const ctx = context(root, { entries: [entry("Button"), entry("Card")] });
+  await figma.write(await figma.plan(ctx), ctx);
+  const manifest = JSON.parse(readFileSync(path.join(outputOf(root), "manifest.json"), "utf8"));
+  assert.deepEqual(manifest.files.map((f) => [f.name, f.units]), [["figma-001.js", ["Button"]], ["figma-002.js", ["Card"]]]);
 });
 
 test("estimate: a screenshot upload and an editable screen are costed apart from a component", async () => {
@@ -161,7 +189,7 @@ test("write leaves code files, a manifest and a ledger that says generated, and 
   const root = tempRepo();
   const { browser, seen } = fakeBrowser();
   const figma = createAdapter(browser);
-  const ctx = context(root, { entries: [entry("Button"), entry("Card")], options: { page: "Generator test" } });
+  const ctx = context(root, { entries: [entry("Button"), entry("Card")], options: { page: "Generator test", componentsPerCall: 10 } });
   const plan = await figma.plan(ctx);
 
   const result = await figma.write(plan, ctx);
@@ -187,8 +215,8 @@ test("write leaves code files, a manifest and a ledger that says generated, and 
   assert.deepEqual(manifest.uploads, []);
   assert.equal(manifest.afterUploads, null);
 
-  // The cost is the code's size in relay tokens: about 3.75 characters a token.
-  assert.deepEqual(result.actual, { calls: 1, tokens: Math.ceil(code.length / 3.75), usd: 0 });
+  // What relaying the file will cost, at the measured rate: 71,000 a call and 1.4 a character.
+  assert.deepEqual(result.actual, { calls: 1, tokens: Math.ceil(71000 + code.length * 1.4), usd: 0 });
 
   const ledgerPath = path.join(root, ".klaus/figma/ledger.json");
   const ledger = readLedger(ledgerPath);
@@ -374,7 +402,8 @@ test("the frame can run it: a dry run shows the estimate, and a run writes throu
   try {
     const dry = await runKlaus({ ...args, dryRun: true, env: {} });
     assert.equal(dry.report.status, "ok");
-    assert.deepEqual(dry.report.outputs[0].estimated, { calls: 0.2, tokens: 2400, usd: 0 });
+    const perVersion = Math.ceil(71000 + (RUNTIME_CODE.length + 1200 + 155 * 18) * 1.4);
+    assert.deepEqual(dry.report.outputs[0].estimated, { calls: 2, tokens: 2 * perVersion, usd: 0 }, "two versions fit the default cap of 500,000");
     assert.equal(existsSync(path.join(root, ".klaus/figma")), false, "a dry run writes nothing");
 
     const real = await runKlaus({ ...args, env: {} });

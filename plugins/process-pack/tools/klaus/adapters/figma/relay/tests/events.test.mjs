@@ -54,6 +54,7 @@ test("the code's result is found in plain text, in text around it, in a JSON str
   assert.deepEqual(readCodeResult({ content: [{ type: "text", text: `Result: ${text}\n` }] }), returned);
   assert.deepEqual(readCodeResult({ content: [{ type: "text", text: JSON.stringify({ result: text }) }] }), returned);
   assert.deepEqual(readCodeResult({ content: [], structured_content: { result: returned } }), returned);
+  assert.deepEqual(readCodeResult({ content: [], structured_content: { body: text } }), returned, "a JSON string straight in the structured content");
   assert.equal(readCodeResult({ content: [{ type: "text", text: "Done" }] }), null);
 });
 

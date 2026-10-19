@@ -2,6 +2,8 @@
 
 The Figma generator (`../`) writes Plugin API code and makes no Figma call. Figma's MCP server refuses a plain script, so the relay sends each code file through a signed-in Codex CLI. Codex calls `use_figma` once per file with the file's code unchanged. It makes no design decisions.
 
+The relay carries the small updates after each release: one component version per call, by default. The first, large load of a repo's components goes through a Klaus Figma plugin instead (a separate ticket), because a relay call costs about 70,000 to 100,000 relay tokens.
+
 ## Which machine runs it
 
 For Meridian, the Fedora box runs it, because it is always on and keeps one Figma sign-in. A one-off run works from any machine where Codex is signed in to Figma, such as a laptop.
@@ -60,7 +62,7 @@ node scripts/klaus/adapters/figma/relay/relay.mjs --run 1234567890 --repo acme/a
 3. For each code file in order, skips it when every unit in it is already sent. Otherwise it checks the spending cap, then runs `codex exec` once:
    - The code goes to Codex on stdin, byte for byte. The prompt holds no code. It tells Codex to call `use_figma` exactly once with that code, report the result, and do nothing else.
    - Codex runs with a clean config: only the `figma` server, only its `use_figma` tool, no plugins, no hooks, a read-only sandbox, in an empty folder. `--keep-codex-config` uses `~/.codex/config.toml` instead.
-   - The default model is `gpt-6-luna` at low effort, because the job is copying. `--model` and `--effort` change it. See "What the first real run measured" below before relying on it.
+   - The default model is `gpt-5.6-terra` at low effort. It copied the code exactly where `gpt-6-luna` did not (see "What the real runs measured" below). `--model` and `--effort` change it.
 4. Reads Codex's JSON events. A unit is marked `sent` in the ledger only when all of these hold:
    - `use_figma` finished without an error.
    - The code it received, by Codex's own events, is the file's code. Whitespace at either end is ignored.
@@ -73,24 +75,30 @@ When Codex changed the code and Figma still wrote a unit from it, the set in Fig
 
 ## The spending cap
 
-The cap comes from `spendingCap` in `klaus.config.json`, or the frame's defaults (50 component writes, 100,000 relay tokens). Before each call the relay adds the file's components and its predicted tokens to what the run has used. If either would pass its limit, the call is not made. That file and every file after it are reported as deferred, and they stay `generated`. A file that alone needs more tokens than the whole limit is deferred as `larger-than-token-cap`, with a warning that it will never fit. `--max-calls <n>` adds a limit on calls. Going over the cap is not a failure.
+The cap comes from `spendingCap` in `klaus.config.json`. A repo picks it at onboarding, with the cost shown first. Without one, the frame's defaults apply: 50 component writes and 500,000 relay tokens a run.
 
-A call's relay tokens are Codex's `input_tokens` plus `output_tokens`. Cached input is part of input, and reasoning output is part of output. The prediction is 71,000 tokens plus 1.4 tokens per character of code, from the first real run. A call measured during the run raises the prediction for the next ones, never lowers it. A call that ends without a token count is left out of the report's actual tokens, and the cap counts its prediction.
+500,000 relay tokens is about six Button-sized component versions at the measured average of about 83,000 a call. The cap counts the prediction, about 100,000 for such a version, so a run sends five. A version with more variants costs more, and the rest wait for the next run.
 
-## What the first real run measured
+ Before each call the relay adds the file's components and its predicted tokens to what the run has used. If either would pass its limit, the call is not made. That file and every file after it are reported as deferred, and they stay `generated`. A file that alone needs more tokens than the whole limit is deferred as `larger-than-token-cap`, with a warning that it will never fit. `--max-calls <n>` adds a limit on calls. Going over the cap is not a failure.
 
-On 2026-10-18 the relay ran three times on the laptop, with `gpt-6-luna` at low effort, into the Klaus prototype file:
+A call's relay tokens are Codex's `input_tokens` plus `output_tokens`. Cached input is part of input, and reasoning output is part of output. The prediction is 71,000 tokens plus 1.4 tokens per character of code, from the real runs. The generator's `estimate` uses the same rate (`relayCallTokens` in `../settings.mjs`), so the frame's cap and the relay's cap count the same thing. A call measured during the run raises the prediction for the next ones, never lowers it. A call that ends without a token count is left out of the report's actual tokens, and the cap counts its prediction.
 
-| Call | Code file | Characters | Relay tokens (input, cached input, output) | Seconds | Outcome |
+## What the real runs measured
+
+On 2026-10-18 the relay ran four times on the laptop, at low effort, into the Klaus prototype file. Each code file held one component version.
+
+| Call | Code file (calls 1 to 3 on `gpt-6-luna`) | Characters | Relay tokens (input, cached input, output) | Seconds | Outcome |
 |---|---|---|---|---|---|
 | 1 | Button 1.0.0 | 18,750 | 92,662 (86,388, 53,120, 6,274) | 39 | sent: Figma reported `exists`, a set of that name from an earlier test |
 | 2 | Button 1.1.0 | 20,582 | 68,817 (61,694, 27,136, 7,123) | 44 | Figma drew the set; the relay refused it: Codex had added a duplicate `"pa":"C"` key |
 | 3 | Button 1.1.0, retry | 20,582 | 99,687 (92,508, 56,064, 7,179) | 45 | refused: Codex had added a primary fill to a secondary button; Figma reported `exists` |
+| 4 | Button 1.1.0, on `gpt-5.6-terra` | 20,582 | 70,639 (62,657, 33,280, 7,982) | 130 | sent: the code arrived exactly, apart from the final newline; Figma reported `exists` |
 
-Two things follow:
+What follows from it:
 
-- **A call costs about 70,000 to 100,000 relay tokens, not 1,200 a component.** A call is two model requests, and each one reads Codex's instructions, the tool's definition and the code. At the frame's default cap of 100,000 tokens a run makes one call, and a file over about 20,000 characters never fits. The cap and the generator's estimate need new numbers before Klaus relies on the relay.
-- **`gpt-6-luna` at low effort did not copy a 20,582-character file exactly in two tries.** Call 1 dropped only the final newline, which the relay allows. The relay caught both changes, so nothing wrong was recorded as sent. Whether a stronger model copies exactly is unverified.
+- **A call costs about 70,000 to 100,000 relay tokens.** The prototype's estimate was 1,200 a component. A call is two model requests, and each one reads Codex's instructions, the tool's definition and the code.
+- **Most of a file is the shared runtime.** The runtime is 14,821 characters in every file. The Button's own data is 3,929 characters for 18 variants and 5,761 for 30, about 155 a variant.
+- **`gpt-6-luna` at low effort did not copy the 20,582-character file exactly in two tries. `gpt-5.6-terra` did, in one.** Both dropped only the final newline, which the relay allows. Terra took about two minutes against luna's 45 seconds. The relay caught luna's changes, so nothing wrong was recorded as sent. One terra call is one sample.
 
 ## The report
 

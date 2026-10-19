@@ -41,13 +41,21 @@ export function emptyLedger() {
 
 const isTable = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
+/**
+ * Sets an own property. A plain assignment to "__proto__" would set the object's
+ * prototype instead, and the entry would be lost.
+ */
+function setOwn(object, key, value) {
+  Object.defineProperty(object, key, { value, writable: true, enumerable: true, configurable: true });
+}
+
 /** Keeps the entries that have a known status and drops the rest. */
 function cleanTable(table) {
   const out = {};
   for (const [key, entry] of Object.entries(table)) {
     if (!isTable(entry)) continue;
     const kept = Object.entries(entry).filter(([, status]) => STATUSES.has(status));
-    if (kept.length > 0) out[key] = Object.fromEntries(kept);
+    if (kept.length > 0) setOwn(out, key, Object.fromEntries(kept));
   }
   return out;
 }
@@ -61,7 +69,7 @@ function fromVersion1(table) {
   for (const [key, list] of Object.entries(table)) {
     if (!Array.isArray(list)) continue;
     const versions = list.filter((value) => typeof value === "string");
-    if (versions.length > 0) out[key] = Object.fromEntries(versions.map((value) => [value, GENERATED]));
+    if (versions.length > 0) setOwn(out, key, Object.fromEntries(versions.map((value) => [value, GENERATED])));
   }
   return out;
 }
@@ -81,9 +89,10 @@ const ownEntry = (table, key) => (Object.hasOwn(table, key) ? table[key] : undef
 
 function mark(table, key, value, status) {
   const entry = ownEntry(table, key) ?? {};
+  const now = ownEntry(entry, value);
   // Generating the code again does not take a sent set out of Figma, or fix a changed one.
-  if (!(status === GENERATED && (entry[value] === SENT || entry[value] === CHANGED))) entry[value] = status;
-  table[key] = entry;
+  if (!(status === GENERATED && (now === SENT || now === CHANGED))) setOwn(entry, value, status);
+  setOwn(table, key, entry);
 }
 
 /** Records a component version. write records it generated; the relay records it sent. */
