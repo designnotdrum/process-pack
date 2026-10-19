@@ -2,7 +2,8 @@
  * A small stand-in for the Figma Plugin API, enough to run the generated code
  * in a test. It keeps a tree of nodes, pages and variables, and it refuses the
  * same things Figma refuses that the generated code could trip on: text
- * written before its font is loaded, and a second current-page switch.
+ * written before its font is loaded, and a second current-page switch. As in
+ * Figma, every new node starts on the current page.
  */
 
 let counter = 0;
@@ -93,6 +94,10 @@ export function createFigma({ pages = ["Button"], fonts = { "DM Sans": ["Regular
   };
   pages.forEach(makePage);
 
+  const onPage = (node) => {
+    figma.currentPage.appendChild(node);
+    return node;
+  };
   const figma = {
     root,
     currentPage: root.children[0],
@@ -101,14 +106,10 @@ export function createFigma({ pages = ["Button"], fonts = { "DM Sans": ["Regular
       figma.calls.createPage += 1;
       return makePage("Page");
     },
-    createFrame: () => new Node("FRAME", { clipsContent: true }),
-    createComponent: () => {
-      const component = new Node("COMPONENT");
-      figma.currentPage.appendChild(component);
-      return component;
-    },
+    createFrame: () => onPage(new Node("FRAME", { clipsContent: true })),
+    createComponent: () => onPage(new Node("COMPONENT")),
     createText() {
-      const text = new Node("TEXT", { characters: "", width: 10, height: 20 });
+      const text = onPage(new Node("TEXT", { characters: "", width: 10, height: 20 }));
       let font = null;
       Object.defineProperty(text, "fontName", {
         get: () => font,
@@ -121,7 +122,8 @@ export function createFigma({ pages = ["Button"], fonts = { "DM Sans": ["Regular
     },
     createNodeFromSvg(svg) {
       if (typeof svg !== "string" || !svg.startsWith("<svg")) throw new Error("Not an SVG.");
-      const frame = new Node("FRAME", { name: "svg", width: 24, height: 24 });
+      // Figma wraps the drawing in a frame with a white fill, whatever the markup says.
+      const frame = onPage(new Node("FRAME", { name: "svg", width: 24, height: 24, fills: [{ type: "SOLID", color: { r: 1, g: 1, b: 1 } }] }));
       frame.appendChild(new Node("VECTOR", { fills: [], strokes: [{ type: "SOLID", color: { r: 0, g: 0, b: 0 } }] }));
       return frame;
     },

@@ -1,14 +1,17 @@
 /**
- * The Figma adapter: turns a release's planned writes into Plugin API code.
+ * The Figma adapter: turns a release's planned writes into data for Plugin API code.
  *
- * It uses no model and makes no Figma call. `write` leaves code files and an
- * upload list in a folder, and the relay (issue #28) sends them through a
+ * It uses no model and makes no Figma call. `write` leaves data files and an
+ * upload list in a folder. The relay (relay/) builds each call's code from a
+ * data file and the runtime in its own checkout, and sends it through a
  * signed-in agent, because Figma's MCP server refuses a plain script.
  *
  *   plan      components whose current version is not written yet, and the screens to write
- *   estimate  calls and relay tokens: about 1,200 tokens a component version
- *   write     read computed styles from a static Storybook build, build the code, pack it into
- *             files of at most 50,000 characters, and list the screenshots to upload
+ *   estimate  calls and relay tokens, at the measured relay rate: 71,000 tokens a call plus
+ *             1.4 a character of code, about 100,000 for a Button-sized component version
+ *   write     read computed styles from a static Storybook build, build the data, pack it into
+ *             files of one component each by default whose code is at most 50,000 characters,
+ *             and list the screenshots to upload
  *   report    where the files are, and a link to the Figma file
  *
  * Settings are under outputs.figma.options. See settings.mjs.
@@ -19,23 +22,30 @@ import { selectComponents } from "../../frame/components.mjs";
 import { writeJsonFile } from "../../frame/json-file.mjs";
 import { packUnits } from "./batch.mjs";
 import { captureComponent, captureScreen, openStorybook, readStoryIndex, storyCandidates } from "./capture.mjs";
-import { hasComponent, hasScreen, readLedger, recordComponent, recordScreen } from "./ledger.mjs";
+import { anyVersionSent, componentSent, entryOf, GENERATED, readLedger, recordEntry, screenSent } from "./ledger.mjs";
 import { screenRoutes, uploadFor } from "./screens.mjs";
+import { RUNTIME_CODE } from "./codegen.mjs";
 import {
-  CHARS_PER_TOKEN,
+  CALL_BASE_TOKENS,
+  DATA_CHARS_PER_COMPONENT,
+  DATA_CHARS_PER_VARIANT,
   MAX_CODE_CHARS,
   MODE_NAME,
   SCREENS_PAGE,
-  TOKENS_PER_COMPONENT,
+  TOKENS_PER_CODE_CHAR,
   TOKENS_PER_EDITABLE_SCREEN,
   TOKENS_PER_SCREEN_IMAGE,
   pageFor,
   readOptions,
+  relayCallTokens,
 } from "./settings.mjs";
 import { buildComponentUnit, buildScreenUnit, describe } from "./spec.mjs";
 
 /** A component the versioning step has not numbered yet is written as this. */
 export const DEFAULT_VERSION = "1.0.0";
+
+/** Version 2 adds ledgerEntries, which the relay needs to record what it sent. */
+export const MANIFEST_VERSION = 2;
 
 /** Figma allows a few hundred variants in a set. Past this, the set is not worth drawing. */
 const MAX_VARIANTS = 256;
@@ -88,11 +98,12 @@ export function createAdapter(browser = {}) {
       const retry = new Set(ctx.unwrittenFromLastRun);
       const items = [];
 
-      const picked = selectComponents(ctx.inventory, ctx.selection, { isNew: (c) => !ledger.components[c.name] });
+      // A component is new to Figma until the relay has sent one of its versions.
+      const picked = selectComponents(ctx.inventory, ctx.selection, { isNew: (c) => !anyVersionSent(ledger, c.name) });
       for (const entry of picked) {
         if (entry.kind === "icon-set") continue;
         const version = entry.version || DEFAULT_VERSION;
-        if (hasComponent(ledger, entry.name, version) && !retry.has(entry.name)) continue;
+        if (componentSent(ledger, entry.name, version) && !retry.has(entry.name)) continue;
         // A component with no story cannot be drawn. Leave it out of the plan instead of failing every run.
         if (stories && storyCandidates(stories, entry.name, options.stories[entry.name]).length === 0) continue;
         items.push({
@@ -109,7 +120,7 @@ export function createAdapter(browser = {}) {
 
       for (const route of screenRoutes(ctx.selection.screens, ctx.inventory)) {
         const id = `screen:${route}`;
-        if (hasScreen(ledger, route, release) && !retry.has(id)) continue;
+        if (screenSent(ledger, route, release) && !retry.has(id)) continue;
         items.push({ id, kind: "screen", route, release, page: SCREENS_PAGE, editable: options.editableScreens });
       }
       return { items };
@@ -117,10 +128,17 @@ export function createAdapter(browser = {}) {
 
     estimate(plan, ctx) {
       const options = readOptions(ctx.settings);
-      const perCall = Math.round((1 / options.componentsPerCall) * 10000) / 10000;
+      const per = options.componentsPerCall;
+      const perCall = Math.round((1 / per) * 10000) / 10000;
+      // A call's fixed cost and the runtime it carries are shared by the components in its file.
+      const shared = (CALL_BASE_TOKENS + RUNTIME_CODE.length * TOKENS_PER_CODE_CHAR) / per;
       return {
         items: plan.items.map((item) => {
-          if (item.kind === "component") return { id: item.id, calls: perCall, tokens: TOKENS_PER_COMPONENT, usd: 0 };
+          if (item.kind === "component") {
+            const variants = item.axes.reduce((n, axis) => n * axis.values.length, 1) * (1 + options.states.length);
+            const data = DATA_CHARS_PER_COMPONENT + DATA_CHARS_PER_VARIANT * variants;
+            return { id: item.id, calls: perCall, tokens: Math.ceil(shared + data * TOKENS_PER_CODE_CHAR), usd: 0 };
+          }
           const tokens = item.editable ? TOKENS_PER_EDITABLE_SCREEN : TOKENS_PER_SCREEN_IMAGE;
           return { id: item.id, calls: 1, tokens, usd: 0 };
         }),
@@ -199,43 +217,50 @@ export function createAdapter(browser = {}) {
       if (imageRoutes.length > 0) {
         const retention = { kind: "retain", id: "retain-screens", page: SCREENS_PAGE, keep: options.screenVersionsKept, routes: imageRoutes, tokens: [] };
         const { files: kept } = packUnits([retention], { config });
-        afterUploads = { ...kept[0], name: "figma-retention.js" };
+        afterUploads = { ...kept[0], name: "figma-retention.json" };
       }
 
       const directory = path.join(root, options.outputDir, safeName(release));
       fs.mkdirSync(directory, { recursive: true });
       for (const name of fs.readdirSync(directory)) {
         // Only the names this adapter writes. A file someone else left in the folder stays.
-      if (/^figma-(\d+|retention)\.js$/.test(name) || name === "manifest.json") fs.rmSync(path.join(directory, name));
+      // An older generator wrote code files (.js); they go too, so no code is left in the folder.
+      if (/^figma-(\d+|retention)\.(js|json)$/.test(name) || name === "manifest.json") fs.rmSync(path.join(directory, name));
       }
       const everyFile = afterUploads ? [...files, afterUploads] : files;
-      for (const file of everyFile) fs.writeFileSync(path.join(directory, file.name), file.code);
+      // Data only. Whatever sends a file to Figma builds its code from the runtime in its own checkout.
+      for (const file of everyFile) writeJsonFile(path.join(directory, file.name), file.data);
 
-      const chars = everyFile.reduce((sum, file) => sum + file.code.length, 0);
+      // What relaying these files will cost. No relay has run yet, so this is the measured rate.
       const actual = {
         calls: everyFile.length + (uploads.length > 0 ? Math.ceil(uploads.length / 60) : 0),
-        tokens: Math.ceil(chars / CHARS_PER_TOKEN) + uploads.length * TOKENS_PER_SCREEN_IMAGE,
+        tokens: everyFile.reduce((sum, file) => sum + relayCallTokens(file.chars), 0) + uploads.length * TOKENS_PER_SCREEN_IMAGE,
         usd: 0,
       };
+      const sendable = units.filter((u) => packed.has(u.id));
       const manifest = {
-        schemaVersion: 1,
+        schemaVersion: MANIFEST_VERSION,
         output: "figma",
         fileKey: fileKeyOf(ctx.settings.target),
         release,
         generatedAt: new Date().toISOString(),
-        files: files.map((file) => ({ name: file.name, chars: file.code.length, units: file.units.map((unit) => unit.id) })),
+        // chars: the length of the code the relay sends, which is what a call costs.
+        files: files.map((file) => ({ name: file.name, chars: file.chars, units: file.units.map((unit) => unit.id) })),
+        // What the relay records in the ledger for each unit once use_figma confirms it.
+        ledgerEntries: Object.fromEntries([
+          ...sendable.map((unit) => [unit.id, entryOf(unit)]),
+          ...uploads.map((upload) => [upload.id, { kind: "screen", route: upload.screen, release: upload.release }]),
+        ]),
         uploads,
-        afterUploads: afterUploads ? { name: afterUploads.name, chars: afterUploads.code.length } : null,
+        afterUploads: afterUploads ? { name: afterUploads.name, chars: afterUploads.chars } : null,
         warnings: [...new Set(warnings)],
       };
       writeJsonFile(path.join(directory, "manifest.json"), manifest);
 
+      // Generated, not sent: only the relay records a unit as sent, after use_figma confirms it.
+      // The same entries the manifest gives the relay, so the two cannot drift apart.
       const ledger = readLedger(ledgerFile(root, options));
-      for (const unit of units.filter((u) => packed.has(u.id))) {
-        if (unit.kind === "component") recordComponent(ledger, unit.name, unit.version);
-        else if (unit.kind === "screen") recordScreen(ledger, unit.route, unit.release);
-      }
-      for (const upload of uploads) recordScreen(ledger, upload.screen, upload.release);
+      for (const entry of Object.values(manifest.ledgerEntries)) recordEntry(ledger, entry, GENERATED);
       writeJsonFile(ledgerFile(root, options), ledger);
 
       runs.set(ctx, { directory: path.relative(root, directory).split(path.sep).join("/"), manifest });
@@ -251,10 +276,10 @@ export function createAdapter(browser = {}) {
         return { summary: `Figma: ${outcome.dryRun ? "a dry run, so no code was generated" : "nothing was written"}.`, links };
       }
       const { manifest, directory } = run;
-      const parts = [`${manifest.files.reduce((n, f) => n + f.units.length, 0)} in ${manifest.files.length} code file${manifest.files.length === 1 ? "" : "s"}`];
+      const parts = [`${manifest.files.reduce((n, f) => n + f.units.length, 0)} in ${manifest.files.length} data file${manifest.files.length === 1 ? "" : "s"}`];
       if (manifest.uploads.length > 0) parts.push(`${manifest.uploads.length} screenshot${manifest.uploads.length === 1 ? "" : "s"} to upload`);
       return {
-        summary: `Figma code is ready for the relay in ${directory}: ${parts.join(" and ")}.`,
+        summary: `Figma data is ready for the relay in ${directory}: ${parts.join(" and ")}.`,
         links,
         details: { directory, manifest: `${directory}/manifest.json`, files: manifest.files, uploads: manifest.uploads.length, warnings: manifest.warnings },
       };

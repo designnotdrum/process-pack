@@ -6,8 +6,10 @@ import path from "node:path";
 import { test } from "node:test";
 import { resolveConfig, runKlaus, validateConfig } from "../../../frame/index.mjs";
 import adapter, { createAdapter, DEFAULT_VERSION, fileKeyOf } from "../index.mjs";
-import { readLedger } from "../ledger.mjs";
+import { readLedger, recordComponent, SENT } from "../ledger.mjs";
 import { MAX_CODE_CHARS, TOKENS_PER_EDITABLE_SCREEN, TOKENS_PER_SCREEN_IMAGE } from "../settings.mjs";
+import { codeFor, RUNTIME_CODE, SIZING_KEY } from "../codegen.mjs";
+import { readData } from "../data-file.mjs";
 import { runCode } from "./fake-figma.mjs";
 import { buttonCapture, newFigma } from "./helpers.mjs";
 
@@ -133,18 +135,45 @@ test("screens are planned for each listed route and each release", async () => {
   ]);
 });
 
-test("estimate: about 1,200 relay tokens and a tenth of a call for each component version", async () => {
+test("estimate: one relay call for each component version, at the measured relay rate", async () => {
   const root = tempRepo();
   const ctx = context(root, { entries: [entry("Button"), entry("Card")] });
   const plan = await adapter.plan(ctx);
   const estimate = await adapter.estimate(plan, ctx);
 
+  // 6 variants by 3 sizes: the runtime plus 1,600 + 160 x 18 characters of encoded data, at 71,000 a call and 1.4 a character.
+  const tokens = Math.ceil(71000 + (RUNTIME_CODE.length + 1600 + 160 * 18) * 1.4);
+  assert.ok(tokens > 95000 && tokens < 105000, `a Button-sized version is about 100,000 relay tokens, got ${tokens}`);
   assert.deepEqual(estimate.items, [
-    { id: "Button", calls: 0.1, tokens: 1200, usd: 0 },
-    { id: "Card", calls: 0.1, tokens: 1200, usd: 0 },
+    { id: "Button", calls: 1, tokens, usd: 0 },
+    { id: "Card", calls: 1, tokens, usd: 0 },
   ]);
+
+  // Five to a call share the call's fixed cost and the runtime.
   const five = context(root, { entries: [entry("Button")], options: { componentsPerCall: 5 } });
-  assert.equal((await adapter.estimate(await adapter.plan(five), five)).items[0].calls, 0.2);
+  const [shared] = (await adapter.estimate(await adapter.plan(five), five)).items;
+  assert.equal(shared.calls, 0.2);
+  assert.equal(shared.tokens, Math.ceil((71000 + RUNTIME_CODE.length * 1.4) / 5 + (1600 + 160 * 18) * 1.4));
+});
+
+test("estimate: a State property multiplies the variants a version carries", async () => {
+  const root = tempRepo();
+  const plain = context(root);
+  const states = context(root, { options: { states: ["loading", "disabled"] } });
+  const [one] = (await adapter.estimate(await adapter.plan(plain), plain)).items;
+  const [three] = (await adapter.estimate(await adapter.plan(states), states)).items;
+  // 18 variants become 54: each one is drawn default, loading and disabled.
+  assert.equal(three.tokens, Math.ceil(71000 + (RUNTIME_CODE.length + 1600 + 160 * 54) * 1.4));
+  assert.ok(three.tokens > one.tokens);
+});
+
+test("write puts one component version in each data file by default", async () => {
+  const root = tempRepo();
+  const figma = createAdapter(fakeBrowser().browser);
+  const ctx = context(root, { entries: [entry("Button"), entry("Card")] });
+  await figma.write(await figma.plan(ctx), ctx);
+  const manifest = JSON.parse(readFileSync(path.join(outputOf(root), "manifest.json"), "utf8"));
+  assert.deepEqual(manifest.files.map((f) => [f.name, f.units]), [["figma-001.json", ["Button"]], ["figma-002.json", ["Card"]]]);
 });
 
 test("estimate: a screenshot upload and an editable screen are costed apart from a component", async () => {
@@ -157,11 +186,11 @@ test("estimate: a screenshot upload and an editable screen are costed apart from
   assert.deepEqual(editableCost, { id: "screen:/a", calls: 1, tokens: TOKENS_PER_EDITABLE_SCREEN, usd: 0 });
 });
 
-test("write leaves code files, a manifest and a ledger, and the next plan has nothing left", async () => {
+test("write leaves data files, a manifest and a ledger that says generated, and the units stay planned until sent", async () => {
   const root = tempRepo();
   const { browser, seen } = fakeBrowser();
   const figma = createAdapter(browser);
-  const ctx = context(root, { entries: [entry("Button"), entry("Card")], options: { page: "Generator test" } });
+  const ctx = context(root, { entries: [entry("Button"), entry("Card")], options: { page: "Generator test", componentsPerCall: 10 } });
   const plan = await figma.plan(ctx);
 
   const result = await figma.write(plan, ctx);
@@ -172,22 +201,37 @@ test("write leaves code files, a manifest and a ledger, and the next plan has no
   assert.deepEqual(seen.requests.map((r) => [r.name, r.label, r.states, r.icons]), [["Button", "Button", [], false], ["Card", "Card", [], false]]);
 
   const directory = outputOf(root);
-  assert.deepEqual(readdirSync(directory).toSorted(), ["figma-001.js", "manifest.json"]);
-  const code = readFileSync(path.join(directory, "figma-001.js"), "utf8");
+  assert.deepEqual(readdirSync(directory).toSorted(), ["figma-001.json", "manifest.json"], "data only: no code in the folder");
+  const data = readData(readFileSync(path.join(directory, "figma-001.json"), "utf8"));
+  const code = codeFor(data);
+  // The manifest gives the length of the relay's encoded code, the longest a call can come to.
+  const chars = codeFor(data, { key: [...SIZING_KEY] }).length;
   assert.ok(code.length <= MAX_CODE_CHARS);
   const manifest = JSON.parse(readFileSync(path.join(directory, "manifest.json"), "utf8"));
   assert.equal(manifest.fileKey, KEY);
   assert.equal(manifest.release, "v1.0.0");
-  assert.deepEqual(manifest.files, [{ name: "figma-001.js", chars: code.length, units: ["Button", "Card"] }]);
+  assert.equal(manifest.schemaVersion, 2);
+  assert.deepEqual(manifest.files, [{ name: "figma-001.json", chars, units: ["Button", "Card"] }]);
+  assert.deepEqual(manifest.ledgerEntries, {
+    Button: { kind: "component", name: "Button", version: "1.0.0" },
+    Card: { kind: "component", name: "Card", version: "1.0.0" },
+  });
   assert.deepEqual(manifest.uploads, []);
   assert.equal(manifest.afterUploads, null);
 
-  // The cost is the code's size in relay tokens: about 3.75 characters a token.
-  assert.deepEqual(result.actual, { calls: 1, tokens: Math.ceil(code.length / 3.75), usd: 0 });
+  // What relaying the file will cost, at the measured rate: 71,000 a call and 1.4 a character.
+  assert.deepEqual(result.actual, { calls: 1, tokens: Math.ceil(71000 + chars * 1.4), usd: 0 });
 
-  const ledger = readLedger(path.join(root, ".klaus/figma/ledger.json"));
-  assert.deepEqual(ledger.components, { Button: ["1.0.0"], Card: ["1.0.0"] });
-  assert.deepEqual((await figma.plan(ctx)).items, [], "a written version is not planned again");
+  const ledgerPath = path.join(root, ".klaus/figma/ledger.json");
+  const ledger = readLedger(ledgerPath);
+  assert.deepEqual(ledger.components, { Button: { "1.0.0": "generated" }, Card: { "1.0.0": "generated" } });
+  assert.deepEqual((await figma.plan(ctx)).items.map((i) => i.id), ["Button", "Card"], "a data file alone does not count as written");
+
+  // The relay records a unit sent once use_figma confirms it. Then it is not planned again.
+  recordComponent(ledger, "Button", "1.0.0", SENT);
+  recordComponent(ledger, "Card", "1.0.0", SENT);
+  writeFileSync(ledgerPath, JSON.stringify(ledger));
+  assert.deepEqual((await figma.plan(ctx)).items, [], "a sent version is not planned again");
 
   // The code is what use_figma runs.
   const ran = await runCode(code, newFigma());
@@ -226,7 +270,7 @@ test("a component whose capture fails is reported failed and the others are writ
 
   assert.deepEqual(result.written, ["Button"]);
   assert.deepEqual(result.failed, [{ id: "Card", error: "No story found for Card." }]);
-  assert.deepEqual(readLedger(path.join(root, ".klaus/figma/ledger.json")).components, { Button: ["1.0.0"] }, "a failed component is not recorded");
+  assert.deepEqual(readLedger(path.join(root, ".klaus/figma/ledger.json")).components, { Button: { "1.0.0": "generated" } }, "a failed component is not recorded");
 });
 
 test("a Storybook build that cannot be opened fails every component with the reason", async () => {
@@ -284,12 +328,13 @@ test("screenshots become an upload list, and a retention file runs after the upl
 
   const manifest = JSON.parse(readFileSync(path.join(outputOf(root, "v3.0.0"), "manifest.json"), "utf8"));
   assert.deepEqual(manifest.uploads.map((u) => [u.id, u.frame, u.page, u.image]), [["screen:/settings", "/settings v3.0.0", "Screens", ".klaus/screens/settings.png"]]);
-  assert.equal(manifest.afterUploads.name, "figma-retention.js");
+  assert.equal(manifest.afterUploads.name, "figma-retention.json");
   assert.deepEqual(manifest.files, []);
 
-  const retention = readFileSync(path.join(outputOf(root, "v3.0.0"), "figma-retention.js"), "utf8");
-  assert.ok(/"keep":5/.test(retention) && retention.includes('"/settings"'));
-  assert.deepEqual(readLedger(path.join(root, ".klaus/figma/ledger.json")).screens, { "/settings": ["v3.0.0"] });
+  const retention = readData(readFileSync(path.join(outputOf(root, "v3.0.0"), "figma-retention.json"), "utf8"));
+  assert.deepEqual(retention.units.map((u) => [u.kind, u.keep, u.routes]), [["retain", 5, ["/settings"]]]);
+  assert.deepEqual(readLedger(path.join(root, ".klaus/figma/ledger.json")).screens, { "/settings": { "v3.0.0": "generated" } });
+  assert.deepEqual(manifest.ledgerEntries, { "screen:/settings": { kind: "screen", route: "/settings", release: "v3.0.0" } });
   // The upload costs a call, and the retention file another.
   assert.equal(result.actual.calls, 2);
 });
@@ -307,21 +352,24 @@ test("editable screens are captured from the running app and written as code", a
 
   assert.deepEqual(result.written, ["screen:/settings"]);
   assert.equal(seen.url, "http://localhost:3000/settings");
-  const ran = await runCode(readFileSync(path.join(outputOf(root), "figma-001.js"), "utf8"), newFigma(["Screens"]));
+  const ran = await runCode(codeFor(readData(readFileSync(path.join(outputOf(root), "figma-001.json"), "utf8"))), newFigma(["Screens"]));
   assert.deepEqual(ran.units.map((u) => [u.id, u.status, u.name]), [["screen:/settings", "written", "/settings v1.0.0"]]);
 });
 
-test("a rerun of a release does not leave an old code file behind, and does not touch other files", async () => {
+test("a rerun of a release does not leave an old data or code file behind, and does not touch other files", async () => {
   const root = tempRepo();
   const figma = createAdapter(fakeBrowser().browser);
-  const stale = path.join(outputOf(root), "figma-009.js");
+  const stale = path.join(outputOf(root), "figma-009.json");
+  const oldCode = path.join(outputOf(root), "figma-001.js");
   const notes = path.join(outputOf(root), "figma-notes.js");
   mkdirSync(outputOf(root), { recursive: true });
   writeFileSync(stale, "old");
+  writeFileSync(oldCode, "old code from an earlier generator");
   writeFileSync(notes, "mine");
   const ctx = context(root);
   await figma.write(await figma.plan(ctx), ctx);
   assert.equal(existsSync(stale), false);
+  assert.equal(existsSync(oldCode), false, "no code file is left in the folder");
   assert.equal(readFileSync(notes, "utf8"), "mine");
 });
 
@@ -333,7 +381,7 @@ test("report says where the code is and links the Figma file", async () => {
   const result = await figma.write(plan, ctx);
 
   const report = await figma.report({ written: result.written, failed: [], deferred: [], dryRun: false }, ctx);
-  assert.equal(report.summary, "Figma code is ready for the relay in .klaus/figma/v1.0.0: 1 in 1 code file.");
+  assert.equal(report.summary, "Figma data is ready for the relay in .klaus/figma/v1.0.0: 1 in 1 data file.");
   assert.deepEqual(report.links, [{ label: "Figma file", url: `https://www.figma.com/design/${KEY}` }]);
   assert.equal(report.details.manifest, ".klaus/figma/v1.0.0/manifest.json");
 
@@ -361,13 +409,14 @@ test("the frame can run it: a dry run shows the estimate, and a run writes throu
   try {
     const dry = await runKlaus({ ...args, dryRun: true, env: {} });
     assert.equal(dry.report.status, "ok");
-    assert.deepEqual(dry.report.outputs[0].estimated, { calls: 0.2, tokens: 2400, usd: 0 });
+    const perVersion = Math.ceil(71000 + (RUNTIME_CODE.length + 1600 + 160 * 18) * 1.4);
+    assert.deepEqual(dry.report.outputs[0].estimated, { calls: 2, tokens: 2 * perVersion, usd: 0 }, "two versions fit the default cap of 500,000");
     assert.equal(existsSync(path.join(root, ".klaus/figma")), false, "a dry run writes nothing");
 
     const real = await runKlaus({ ...args, env: {} });
     assert.deepEqual(real.report.outputs[0].written.toSorted(), ["Button", "Card"]);
     assert.equal(real.report.outputs[0].failed.length, 0);
-    assert.equal(real.report.outputs[0].adapter.details.files[0].name, "figma-001.js");
+    assert.equal(real.report.outputs[0].adapter.details.files[0].name, "figma-001.json");
   } finally {
     process.chdir(cwd);
   }

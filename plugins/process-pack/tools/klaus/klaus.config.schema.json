@@ -63,7 +63,7 @@
       "additionalProperties": false,
       "properties": {
         "maxComponentWrites": { "type": "integer", "minimum": 0, "default": 50 },
-        "maxRelayTokens": { "type": "integer", "minimum": 0, "default": 100000 }
+        "maxRelayTokens": { "type": "integer", "minimum": 0, "default": 500000 }
       }
     },
     "trigger": {

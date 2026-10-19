@@ -60,7 +60,7 @@ test("over the write cap, writes the 50 most-used components and defers the rest
   const { report, state } = await run({ config: configOf(), inventory, adapters: { storybook: adapter } });
 
   assert.equal(report.cap.maxComponentWrites, 50);
-  assert.equal(report.cap.maxRelayTokens, 100000);
+  assert.equal(report.cap.maxRelayTokens, 500000);
   assert.equal(report.status, "ok");
   const out = report.outputs[0];
   assert.deepEqual(out.written, ids.slice(0, 50));

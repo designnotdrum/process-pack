@@ -1,17 +1,28 @@
 /**
  * The part of every generated code file that is the same each time.
  *
- * codegen.mjs puts three constants in front of this text and sends the result
+ * codegen.mjs puts four constants in front of this text and sends the result
  * to Figma:
  *   CONFIG  { collection, mode }
  *   TOKENS  the colour variables the units in this file use
  *   UNITS   the component sets and screens to write, as built by spec.mjs
+ *   SVGS    SVG markup, as template literals; a unit's svgs list holds indexes into it
+ *   KEY     null, or the key the relay encoded every string of the data with
+ *
+ * With a KEY, every string in CONFIG, TOKENS and UNITS is base64 of its UTF-8
+ * bytes XORed with the key, except the fields in PLAIN_FIELDS. decodeData turns
+ * them back before anything else runs, so the rest of this file sees plain data.
  *
  * This file is not run by Node. It is plain JavaScript for the Figma Plugin API
  * and it avoids newer syntax on purpose. It uses top-level await and return,
  * which use_figma allows. It never switches the current page, because a call
- * may switch only once. It touches other pages by loading them and moving nodes
- * onto them.
+ * may switch only once and the person may be looking at it.
+ *
+ * Pages it touches: the page each unit names (a component's page, or Screens)
+ * and Older versions, found or created by name. It touches no other page. Figma
+ * creates every new node on the current page, so each node is appended to its
+ * parent in the same step it is created, with no await in between, and never
+ * stays on the current page. The variables it writes are in CONFIG.collection.
  *
  * Nothing is overwritten. A set that already exists is left alone and reported
  * as "exists". A set that fails is removed again and reported as "failed", and
@@ -31,7 +42,13 @@ const WEIGHT_STYLES = {
 };
 const PRIMARY = { C: "CENTER", E: "MAX", B: "SPACE_BETWEEN" };
 const COUNTER = { C: "CENTER", E: "MAX", T: "BASELINE" };
-const VERSION = /^\d+(\.\d+)*([-+][0-9A-Za-z.-]+)?$/;
+// The code holds no backslash: a model copying it into use_figma tends to drop them.
+const VERSION = /^[0-9]+([.][0-9]+)*([-+][0-9A-Za-z.-]+)?$/;
+const DIGITS = /^[0-9]+$/;
+const NEWLINE = String.fromCharCode(10);
+// The same list as codegen.mjs PLAIN_FIELDS.
+const PLAIN_FIELDS = ["kind", "k", "L", "pa", "ca", "td", "tt"];
+const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const warnings = [];
 const loadedFonts = {};
 let fontStyles = null;
@@ -135,7 +152,7 @@ function freeze(root, shipped) {
     });
   });
   const note = "Frozen when " + shipped + " shipped; colours are the values at that time.";
-  root.description = root.description ? root.description + "\n" + note : note;
+  root.description = root.description ? root.description + NEWLINE + note : note;
 }
 
 function paintOf(U, c) {
@@ -145,8 +162,9 @@ function paintOf(U, c) {
   return c[4] < 1 ? Object.assign({}, bound, { opacity: c[4] }) : bound;
 }
 
-async function makeText(U, n) {
+async function makeText(U, n, parent) {
   const t = figma.createText();
+  parent.appendChild(t);
   t.fontName = await fontFor(n.ff, n.wt);
   t.characters = n.v;
   t.fontSize = n.fs;
@@ -164,8 +182,13 @@ async function makeText(U, n) {
   return t;
 }
 
-function makeIcon(U, n) {
-  const icon = figma.createNodeFromSvg(U.svgs[n.s]);
+function makeIcon(U, n, parent) {
+  // codegen.mjs moves SVG markup into SVGS and leaves its index here, unless the markup cannot go in a template literal.
+  const svg = typeof U.svgs[n.s] === "number" ? SVGS[U.svgs[n.s]] : U.svgs[n.s];
+  const icon = figma.createNodeFromSvg(svg);
+  parent.appendChild(icon);
+  // Figma gives the frame around the drawing a white fill, which shows as a square behind the icon.
+  icon.fills = [];
   icon.name = n.n || "Icon";
   if (Math.abs(icon.width - n.w) > 0.5 || Math.abs(icon.height - n.h) > 0.5) icon.resize(Math.max(n.w, 1), Math.max(n.h, 1));
   if (n.c) {
@@ -219,8 +242,7 @@ async function fillBox(U, tree, f) {
     if (n.sc) f.strokesIncludedInLayout = true;
   }
   for (const child of tree[1]) {
-    const node = await makeNode(U, child);
-    f.appendChild(node);
+    const node = await makeNode(U, child, f);
     const c = U.nodes[child[0]];
     if (!n.L && c.x !== undefined) {
       node.x = c.x;
@@ -236,11 +258,14 @@ async function fillBox(U, tree, f) {
   return f;
 }
 
-async function makeNode(U, tree) {
+/** Makes a node inside parent. It is appended before anything else happens to it. */
+async function makeNode(U, tree, parent) {
   const n = U.nodes[tree[0]];
-  if (n.k === "t") return makeText(U, n);
-  if (n.k === "v") return makeIcon(U, n);
-  return fillBox(U, tree, figma.createFrame());
+  if (n.k === "t") return makeText(U, n, parent);
+  if (n.k === "v") return makeIcon(U, n, parent);
+  const frame = figma.createFrame();
+  parent.appendChild(frame);
+  return fillBox(U, tree, frame);
 }
 
 function parseVersion(node, name) {
@@ -272,8 +297,8 @@ function compareVersions(a, b) {
   for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
     if (pa[i] === undefined) return -1;
     if (pb[i] === undefined) return 1;
-    const x = /^\d+$/.test(pa[i]);
-    const y = /^\d+$/.test(pb[i]);
+    const x = DIGITS.test(pa[i]);
+    const y = DIGITS.test(pb[i]);
     if (x && y && Number(pa[i]) !== Number(pb[i])) return Number(pa[i]) < Number(pb[i]) ? -1 : 1;
     if (x !== y) return x ? -1 : 1;
     if (!x && pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1;
@@ -312,11 +337,12 @@ function freeY(page) {
   return bottom + 120;
 }
 
-async function buildSet(U, created) {
+async function buildSet(U, page, created) {
   const name = U.name + " " + U.version;
   const parts = [];
   for (const cell of U.cells) {
     const component = figma.createComponent();
+    page.appendChild(component);
     created.push(component);
     await fillBox(U, cell[1], component);
     component.name = U.axes.map(function (a, i) { return a.name + "=" + a.values[cell[0][i]]; }).join(", ");
@@ -332,7 +358,7 @@ async function buildSet(U, created) {
     only.description = U.description;
     return only;
   }
-  const set = figma.combineAsVariants(parts.map(function (p) { return p.component; }), figma.currentPage);
+  const set = figma.combineAsVariants(parts.map(function (p) { return p.component; }), page);
   created.push(set);
   set.name = name;
   set.description = U.description;
@@ -377,12 +403,13 @@ async function writeComponent(U) {
     siblings.sort(function (a, b) { return compareVersions(parseVersion(a, U.name), parseVersion(b, U.name)); });
     const newest = siblings.length > 0 ? siblings[siblings.length - 1] : null;
     const latest = newest === null || compareVersions(U.version, parseVersion(newest, U.name)) > 0;
-    const node = await buildSet(U, created);
+    // Where it goes is worked out before the set is on the page, so the set does not count itself.
+    const x = newest ? newest.x : freeX(page.children);
+    const y = newest ? newest.y : 0;
+    const node = await buildSet(U, page, created);
     const moved = [];
     let archive = older;
     if (latest) {
-      const x = newest ? newest.x : freeX(page.children);
-      const y = newest ? newest.y : 0;
       for (const old of siblings) {
         archive = archive || (await pageNamed(U.older));
         const at = freeX(archive.children);
@@ -442,15 +469,16 @@ async function writeScreen(U) {
     const page = await pageNamed(U.page);
     const name = U.route + " " + U.release;
     if (page.children.some(function (n) { return n.name === name; })) return { id: U.id, status: "exists", name: name };
+    // Where it goes is worked out before the frame is on the page, so the frame does not count itself.
+    const earlier = page.children.filter(function (n) { return n.type === "FRAME" && screenKey(n.name) === U.route; });
+    const x = earlier.length > 0 ? freeX(earlier) : 0;
+    const y = earlier.length > 0 ? earlier[0].y : freeY(page);
     const frame = figma.createFrame();
+    page.appendChild(frame);
     created.push(frame);
     await fillBox(U, U.tree, frame);
     frame.name = name;
     frame.clipsContent = true;
-    const earlier = page.children.filter(function (n) { return n.type === "FRAME" && screenKey(n.name) === U.route; });
-    const x = earlier.length > 0 ? freeX(earlier) : 0;
-    const y = earlier.length > 0 ? earlier[0].y : freeY(page);
-    page.appendChild(frame);
     frame.x = x;
     frame.y = y;
     const removed = trimScreen(page, U.route, U.keep);
@@ -472,6 +500,61 @@ async function retainScreens(U) {
   } catch (e) {
     return { id: U.id, status: "failed", error: message(e) };
   }
+}
+
+/** The text one encoded string holds: base64 to bytes, XOR with KEY, UTF-8 to text. */
+function decodeText(encoded) {
+  const bytes = [];
+  let value = 0;
+  let bits = 0;
+  for (let i = 0; i < encoded.length; i++) {
+    const digit = BASE64.indexOf(encoded.charAt(i));
+    if (digit < 0) continue;
+    value = (value << 6) | digit;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      bytes.push((value >> bits) & 255);
+      value = value & ((1 << bits) - 1);
+    }
+  }
+  for (let i = 0; i < bytes.length; i++) bytes[i] = bytes[i] ^ KEY[i % KEY.length];
+  let text = "";
+  let i = 0;
+  while (i < bytes.length) {
+    const first = bytes[i];
+    let size = 1;
+    let point = first;
+    if (first >= 240) { size = 4; point = first & 7; } else if (first >= 224) { size = 3; point = first & 15; } else if (first >= 192) { size = 2; point = first & 31; }
+    for (let j = 1; j < size; j++) point = (point << 6) | (bytes[i + j] & 63);
+    i += size;
+    if (point > 65535) {
+      point -= 65536;
+      text += String.fromCharCode(55296 + (point >> 10), 56320 + (point & 1023));
+    } else {
+      text += String.fromCharCode(point);
+    }
+  }
+  return text;
+}
+
+/** Decodes every string in place, except those of PLAIN_FIELDS. field is the key the value sits under. */
+function decodeData(value, field) {
+  if (typeof value === "string") return PLAIN_FIELDS.indexOf(field) >= 0 ? value : decodeText(value);
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) value[i] = decodeData(value[i], field);
+    return value;
+  }
+  if (value !== null && typeof value === "object") {
+    Object.keys(value).forEach(function (name) { value[name] = decodeData(value[name], name); });
+  }
+  return value;
+}
+
+if (KEY) {
+  decodeData(CONFIG, "");
+  decodeData(TOKENS, "");
+  decodeData(UNITS, "");
 }
 
 const result = { tokens: { made: [], updated: [] }, units: [], warnings: warnings };

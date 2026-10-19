@@ -139,9 +139,9 @@ test("rejects rules that need a second field", () => {
   assert.match(validateConfig(base({ selection: { screens: { mode: "listed" } } })).errors[0], /selection\.screens\.routes: must list at least one route/);
 });
 
-test("resolveConfig fills in the default cap of 50 writes and 100000 relay tokens", () => {
+test("resolveConfig fills in the default cap of 50 writes and 500000 relay tokens", () => {
   const config = resolveConfig(base());
-  assert.deepEqual(DEFAULT_SPENDING_CAP, { maxComponentWrites: 50, maxRelayTokens: 100000 });
+  assert.deepEqual(DEFAULT_SPENDING_CAP, { maxComponentWrites: 50, maxRelayTokens: 500000 });
   assert.deepEqual(config.spendingCap, DEFAULT_SPENDING_CAP);
   assert.deepEqual(config.trigger, { mode: "release", tagPattern: "v*" });
   assert.deepEqual(config.selection.screens, { mode: "none", routes: [] });
@@ -150,7 +150,7 @@ test("resolveConfig fills in the default cap of 50 writes and 100000 relay token
 });
 
 test("resolveConfig keeps a partial cap and fills the other half", () => {
-  assert.deepEqual(resolveConfig(base({ spendingCap: { maxComponentWrites: 10 } })).spendingCap, { maxComponentWrites: 10, maxRelayTokens: 100000 });
+  assert.deepEqual(resolveConfig(base({ spendingCap: { maxComponentWrites: 10 } })).spendingCap, { maxComponentWrites: 10, maxRelayTokens: 500000 });
 });
 
 test("resolveConfig throws with every problem listed and none of the values", () => {

@@ -1,0 +1,40 @@
+#!/usr/bin/env node
+/**
+ * A stand-in for the GitHub CLI in the relay's tests.
+ *
+ *   gh api repos/<repo>/actions/runs/<id>       prints STUB_GH_RUN, or a successful Klaus run on main
+ *   gh api repos/<repo>                         prints the default branch, STUB_GH_DEFAULT or main
+ *   gh api repos/<repo>/compare/<base>...<sha>  prints STUB_GH_COMPARE as the status, or "diverged"
+ *   gh run download <id> --name <artifact> --dir <dir> [--repo <owner/name>]
+ *                                               copies STUB_GH_SOURCE into <dir>, as gh unpacks an artifact
+ *
+ * Every call's arguments are appended to STUB_GH_LOG, one JSON line each.
+ */
+import { appendFileSync, cpSync } from "node:fs";
+
+const args = process.argv.slice(2);
+if (process.env.STUB_GH_LOG) appendFileSync(process.env.STUB_GH_LOG, `${JSON.stringify(args)}\n`);
+const fail = (message) => {
+  process.stderr.write(`${message}\n`);
+  process.exit(1);
+};
+
+if (args[0] === "api") {
+  const apiPath = args[1] ?? "";
+  if (/\/actions\/runs\/\d+$/.test(apiPath)) {
+    const trusted = { path: ".github/workflows/klaus.yml", status: "completed", conclusion: "success", head_branch: "main", head_sha: "a".repeat(40), event: "schedule" };
+    process.stdout.write(process.env.STUB_GH_RUN ?? JSON.stringify(trusted));
+  } else if (/\/compare\//.test(apiPath)) {
+    process.stdout.write(JSON.stringify({ status: process.env.STUB_GH_COMPARE ?? "diverged" }));
+  } else if (/^repos\/[^/]+\/[^/]+$/.test(apiPath)) {
+    process.stdout.write(JSON.stringify({ default_branch: process.env.STUB_GH_DEFAULT ?? "main" }));
+  } else fail(`stub gh: no answer for ${apiPath}`);
+  process.exit(0);
+}
+
+if (args[0] !== "run" || args[1] !== "download") fail(`stub gh: unexpected arguments ${JSON.stringify(args)}`);
+if (!process.env.STUB_GH_SOURCE) fail("no valid artifacts found to download");
+const at = args.indexOf("--dir");
+const dir = at === -1 ? undefined : args[at + 1];
+if (!dir) fail("stub gh: --dir is missing");
+cpSync(process.env.STUB_GH_SOURCE, dir, { recursive: true });

@@ -9,17 +9,34 @@
 /** Characters the relay can carry in one call, from Figma's use_figma limit. */
 export const MAX_CODE_CHARS = 50000;
 
-/** Relay tokens for one component version, measured on the prototype (about 4.5 KB of code). */
-export const TOKENS_PER_COMPONENT = 1200;
+/**
+ * What one relay call costs, from four real calls on 2026-10-18 (issue #28): 68,817 to 99,687
+ * relay tokens for 18,750 to 20,582 characters of code. A call is two model requests, and each
+ * reads Codex's instructions, the tool's definition and the code. The fixed part comes from the
+ * dearest call, so an estimate is not lower than what that call cost.
+ */
+export const CALL_BASE_TOKENS = 71000;
+export const TOKENS_PER_CODE_CHAR = 1.4;
 
-/** Characters per relay token on the prototype's code: 4.5 KB is about 1,200 tokens. */
-export const CHARS_PER_TOKEN = 3.75;
+/** The relay tokens of one call that carries chars characters of code. */
+export const relayCallTokens = (chars) => Math.ceil(CALL_BASE_TOKENS + chars * TOKENS_PER_CODE_CHAR);
+
+/**
+ * Characters of a component's own data in the relay's code, next to the shared runtime. The relay
+ * encodes every string, which makes the data about a tenth longer. From Meridian's two Button
+ * files of 2026-10-18, encoded: 4,434 characters for 18 variants and 6,337 for 30.
+ */
+export const DATA_CHARS_PER_COMPONENT = 1600;
+export const DATA_CHARS_PER_VARIANT = 160;
 
 /** Unverified: no measurement exists. It covers the text of one upload call. */
 export const TOKENS_PER_SCREEN_IMAGE = 300;
 
-/** Unverified: no measurement exists. An editable screen is code, and a screen has more layers than a component. */
-export const TOKENS_PER_EDITABLE_SCREEN = 3000;
+/**
+ * Unverified: no editable screen has been relayed. This is the cost of a call that carries a full
+ * file of 50,000 characters, so an estimate does not let the cap be passed.
+ */
+export const TOKENS_PER_EDITABLE_SCREEN = relayCallTokens(MAX_CODE_CHARS);
 
 export const STATES = Object.freeze(["loading", "disabled"]);
 
@@ -51,8 +68,12 @@ export const DEFAULT_OPTIONS = Object.freeze({
   globals: "theme:light",
   /** Story ids by component name, when the automatic pick is wrong. */
   stories: {},
-  /** Components in one code file. A file is also cut at 50,000 characters. */
-  componentsPerCall: 10,
+  /**
+   * Components in one code file. The relay sends each file in one call and carries the small
+   * updates after a release, so the default is one component version a call. A bulk load can set
+   * up to 50. A file is still cut at 50,000 characters.
+   */
+  componentsPerCall: 1,
   /** Write each screen as editable layers instead of a screenshot image. Needs screensBaseUrl. */
   editableScreens: false,
   /** Where Dieter leaves the screenshot of each screen, relative to the repo root. */
