@@ -7,11 +7,16 @@
  * the repo's secrets. What closes this is a repository ruleset that lets only a
  * short list of people and apps create or update tags matching the pattern.
  *
- * "Short list" is checked, not assumed. A ruleset protects the tags only when every
- * one of its bypass actors is a repository admin, or was approved by name by the
- * person who installed Klaus. The approved list is recorded in klaus.config.json
- * (trigger.approvedTagBypass), so every later render checks the same list and
- * refuses when the ruleset has gained someone who is not on it.
+ * Only a ruleset of one exact shape counts (see hasExactShape). Klaus does not judge
+ * other rulesets: a ruleset with an exclusion, a different include, or fewer rules
+ * neither counts as protection nor blocks it, because GitHub applies the rules of
+ * every ruleset that targets a tag, so the exact one still binds.
+ *
+ * "Short list" is checked, not assumed. A ruleset of that shape protects the tags
+ * only when every one of its bypass actors is a repository admin, or was approved by
+ * name by the person who installed Klaus. The approved list is recorded in
+ * klaus.config.json (trigger.approvedTagBypass), so every later render checks the
+ * same list and refuses when the ruleset has gained someone who is not on it.
  *
  * This file checks the rulesets, builds the one design-onboard proposes, and
  * creates it. It calls `gh api` from inside the repo, where gh fills in {owner} and
@@ -24,6 +29,15 @@ export const RULESET_NAME = "Klaus release tags";
 
 /** The repository admin role, as GitHub's rulesets API names it (checked on a real ruleset, 2026-10-19). */
 export const ADMIN_ROLE_ID = 5;
+
+/** The rules a ruleset must have, besides whatever else it has. */
+export const REQUIRED_RULES = Object.freeze(["creation", "update", "deletion"]);
+
+/** The ref conditions that take in every tag. A ruleset may include these instead of the release pattern. */
+const ALL_TAGS = new Set(["~ALL", "refs/tags/*"]);
+
+/** Why only one shape of ruleset counts, for the person to read. */
+export const SHAPE_NOTE = "Only a ruleset of exactly this shape counts: it is about tags, active, includes exactly the release pattern or all tags, excludes nothing, limits creating, updating and deleting, and only repository admins and actors approved by name can bypass it. Any exclusion leaves the tags it names open to everyone, and a different include may not reach the release tags, so Klaus does not try to judge other rulesets. They neither count nor block, and GitHub applies the rules of every ruleset together, so this one still binds.";
 
 /** The actor types the rulesets API knows. */
 export const ACTOR_TYPES = Object.freeze(["Integration", "OrganizationAdmin", "RepositoryRole", "Team", "DeployKey", "User"]);
@@ -70,7 +84,7 @@ export function rulesetBody({ tagPattern, apps = [], teams = [] }) {
     enforcement: "active",
     bypass_actors: [actor("RepositoryRole", ADMIN_ROLE_ID), ...named.map((entry) => actor(entry.type, entry.id))],
     conditions: { ref_name: { include: [`refs/tags/${tagPattern}`], exclude: [] } },
-    rules: [{ type: "creation" }, { type: "update" }],
+    rules: REQUIRED_RULES.map((type) => ({ type })),
   };
 }
 
@@ -84,31 +98,30 @@ export function explainRuleset(body, names = new Map()) {
   });
   return [
     `Why: a pushed tag runs the workflow file from the tagged commit, so the workflow cannot protect itself from a hostile tag. Anyone who can push a tag matching ${pattern} could run their own copy of the Klaus workflow with the repo's secrets.`,
-    `What it does: only ${named.join(", ")} can create or update tags matching ${pattern}. Everyone else is refused when they push one.`,
+    `What it does: only ${named.join(", ")} can create, update or delete tags matching ${pattern}. Everyone else is refused when they push, move or delete one.`,
     "Who it blocks: everyone not listed, including any workflow that makes release tags today. A workflow can create tags only if its identity is on the list: an app by id, a team, or a repository admin.",
   ].join("\n");
 }
 
-const BROAD = new Set(["~ALL", "refs/tags/**", "refs/tags/*"]);
-
-/** Whether the ruleset's ref conditions take in tags matching the pattern. */
-function covers(ruleset, tagPattern) {
-  const { include = [], exclude = [] } = ruleset.conditions?.ref_name ?? {};
+/**
+ * Whether a ruleset has the one shape Klaus accepts, leaving the bypass list aside:
+ * about tags, active, including exactly the release pattern or all tags, excluding nothing,
+ * and with the creation, update and deletion rules. Other rules may be there too.
+ */
+export function hasExactShape(ruleset, tagPattern) {
+  if (ruleset?.target !== "tag" || ruleset.enforcement !== "active") return false;
+  const { include, exclude } = ruleset.conditions?.ref_name ?? {};
+  if (!Array.isArray(include) || include.length === 0) return false;
+  if (exclude !== undefined && exclude !== null && !(Array.isArray(exclude) && exclude.length === 0)) return false;
   const wanted = `refs/tags/${tagPattern}`;
-  if (exclude.some((entry) => entry === wanted || BROAD.has(entry))) return false;
-  return include.some((entry) => entry === wanted || BROAD.has(entry));
-}
-
-/** A ruleset that is switched on, is about tags, takes in the pattern, and limits creating or updating. */
-function relevant(ruleset, tagPattern) {
-  if (ruleset?.target !== "tag" || ruleset.enforcement !== "active" || !covers(ruleset, tagPattern)) return false;
+  if (!include.every((entry) => entry === wanted || ALL_TAGS.has(entry))) return false;
   const types = new Set((ruleset.rules ?? []).map((rule) => rule.type));
-  return types.has("creation") || types.has("update");
+  return REQUIRED_RULES.every((type) => types.has(type));
 }
 
 /**
- * Judges the rulesets that apply to the release tags. They are read in full, and every one of them counts:
- * a person who can bypass any of them can get past what it limits.
+ * Judges the repo's tag rulesets. Only rulesets of the exact shape (hasExactShape) are looked at;
+ * any other ruleset neither counts as protection nor blocks it.
  *
  * @param {object} args
  * @param {object[]} args.rulesets   Rulesets as `gh api .../rulesets/<id>` returns them.
@@ -118,38 +131,43 @@ function relevant(ruleset, tagPattern) {
  *   | { status: "unapproved", rulesets: object[], unapproved: Array<{ ruleset: object, actor: object }> }
  *   | { status: "missing" }
  *   | { status: "unknown", reason: string }}
- *   unapproved: a ruleset lets someone bypass it who is neither an admin nor approved.
- *   missing: no switched-on ruleset limits both creating and updating the tags.
- *   unknown: a ruleset's bypass list was not returned, so who can bypass it is not known.
+ *   protected: a ruleset of the exact shape lets only admins and approved actors bypass it (rulesets lists those).
+ *   unapproved: rulesets of the exact shape exist, and each lets someone bypass it who is neither an admin nor approved.
+ *   missing: no ruleset has the exact shape.
+ *   unknown: no ruleset qualifies and the bypass list of one of the exact shape was not returned.
  */
 export function assess({ rulesets, tagPattern, approved = [] }) {
-  const matching = rulesets.filter((ruleset) => relevant(ruleset, tagPattern));
+  const exact = rulesets.filter((ruleset) => hasExactShape(ruleset, tagPattern));
+  if (exact.length === 0) return { status: "missing" };
   const allowed = new Set(approved.map((entry) => keyOf(entry.type, entry.id)));
+  const clean = [];
   const unapproved = [];
-  for (const ruleset of matching) {
+  let hidden = null;
+  for (const ruleset of exact) {
     if (!Array.isArray(ruleset.bypass_actors)) {
-      return { status: "unknown", reason: `the bypass list of the ruleset "${ruleset.name}" was not returned, so it is not known who can bypass it. Sign in to gh as a repository admin` };
+      hidden ??= `the bypass list of the ruleset "${ruleset.name}" was not returned, so it is not known who can bypass it. Sign in to gh as a repository admin`;
+      continue;
     }
-    for (const actor of ruleset.bypass_actors) {
-      if (isAdmin(actor) || allowed.has(keyOf(actor.actor_type, actor.actor_id))) continue;
+    const others = ruleset.bypass_actors.filter((actor) => !isAdmin(actor) && !allowed.has(keyOf(actor.actor_type, actor.actor_id)));
+    if (others.length === 0) clean.push(ruleset);
+    for (const actor of others) {
       unapproved.push({
         ruleset: { id: ruleset.id, name: ruleset.name, url: ruleset._links?.html?.href ?? null },
         actor: { type: actor.actor_type, id: actor.actor_id, mode: actor.bypass_mode ?? "always" },
       });
     }
   }
-  if (unapproved.length > 0) return { status: "unapproved", rulesets: matching, unapproved };
-  const types = new Set(matching.flatMap((ruleset) => ruleset.rules.map((rule) => rule.type)));
-  if (!types.has("creation") || !types.has("update")) return { status: "missing" };
-  return { status: "protected", rulesets: matching };
+  if (clean.length > 0) return { status: "protected", rulesets: clean };
+  if (hidden) return { status: "unknown", reason: hidden };
+  return { status: "unapproved", rulesets: exact, unapproved };
 }
 
-/** Whether one ruleset, alone, protects the tags: it limits both creating and updating, and every bypass actor is an admin or approved. */
+/** Whether one ruleset, alone, protects the tags: it has the exact shape, and every bypass actor is an admin or approved. */
 export function protects(ruleset, tagPattern, approved = []) {
   return assess({ rulesets: [ruleset], tagPattern, approved }).status === "protected";
 }
 
-/** The non-admin actors in the matching rulesets that the approved list covers: what klaus.config.json must keep recording. */
+/** The non-admin actors in the protecting rulesets that the approved list covers: what klaus.config.json must keep recording. */
 export function approvalsInUse(result, approved) {
   const present = new Set((result.rulesets ?? []).flatMap((ruleset) => ruleset.bypass_actors.map((a) => keyOf(a.actor_type, a.actor_id))));
   return approved.filter((entry) => present.has(keyOf(entry.type, entry.id)));
@@ -159,7 +177,7 @@ export function approvalsInUse(result, approved) {
 export function unapprovedMessage(result, tagPattern) {
   const lines = result.unapproved.map(({ ruleset, actor }) => `  - ${describeActor(actor.type, actor.id)} (${actor.type} ${actor.id}, bypass ${actor.mode}) can bypass "${ruleset.name}" (id ${ruleset.id})${ruleset.url ? `: ${ruleset.url}` : ""}`);
   return [
-    `A ruleset that covers tags matching ${tagPattern} lets people or apps other than repository admins bypass it, so those people can still push release tags:`,
+    `The ruleset for tags matching ${tagPattern} has the shape Klaus needs, but it lets people or apps other than repository admins bypass it, so those people can still push release tags:`,
     ...lines,
     "Remove each one from the ruleset in GitHub, or approve it by name with --approve <Type>:<id>:<name> and record it in klaus.config.json under trigger.approvedTagBypass. Release mode stays off until then.",
   ].join("\n");

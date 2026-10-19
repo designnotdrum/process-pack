@@ -153,10 +153,10 @@ export function lintWorkflow(file) {
 
 /**
  * Release mode runs on a pushed tag, and a pushed tag runs the workflow file from the tagged commit,
- * so only a tag ruleset protects it. This refuses to render release mode unless an active ruleset
- * limits creating and updating the tags and every one of its bypass actors is a repository admin or
- * is listed in trigger.approvedTagBypass. A ruleset that gained someone since the list was made
- * is refused the next time this runs.
+ * so only a tag ruleset protects it. This refuses to render release mode unless a ruleset of the one
+ * exact shape Klaus accepts (see ruleset.mjs hasExactShape) exists and every one of its bypass actors
+ * is a repository admin or is listed in trigger.approvedTagBypass. A ruleset that gained someone
+ * since the list was made is refused the next time this runs.
  * @returns {object[] | null}  The rulesets that protect the tags, or null when the trigger is not release.
  */
 export function requireTagRuleset({ repo, config, checkTags = checkRuleset }) {
@@ -165,7 +165,7 @@ export function requireTagRuleset({ repo, config, checkTags = checkRuleset }) {
   const found = checkTags({ repo, tagPattern, approved: config.trigger.approvedTagBypass ?? [] });
   if (found.status === "protected") return found.rulesets;
   if (found.status === "unapproved") throw new UserError(unapprovedMessage(found, tagPattern));
-  const why = found.status === "unknown" ? `The repo's rulesets could not be read (${found.reason}).` : `No active ruleset limits who can create or update tags matching ${tagPattern}.`;
+  const why = found.status === "unknown" ? `The repo's rulesets could not be read (${found.reason}).` : `No ruleset of the shape Klaus needs (about tags, active, including the release pattern or all tags, excluding nothing, limiting create, update and delete) protects tags matching ${tagPattern}.`;
   throw new UserError(`${why} Release mode runs on a pushed tag, and a pushed tag runs the workflow file from the tagged commit, so only a tag ruleset protects the repo's secrets from a hostile tag. Create one with \`install.mjs ruleset --repo <repo> --tag-pattern ${tagPattern} --create\` after the person agrees, or set trigger.mode to "schedule" in klaus.config.json.`);
 }
 

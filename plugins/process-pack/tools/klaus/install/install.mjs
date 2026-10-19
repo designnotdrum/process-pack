@@ -25,10 +25,12 @@
  *
  *   node install/install.mjs ruleset --repo <dir> --tag-pattern <pattern> [--approve <Type>:<id>:<name>]... [--bypass-app <id>:<name>]... [--bypass-team <id>:<name>]... [--create]
  *       Release mode runs on a pushed tag, and only a tag ruleset protects the repo's secrets from a
- *       hostile tag. Without --create this only reads: it reads every active tag ruleset in full and says
- *       whether they limit creating and updating the tags and let only repository admins and approved
- *       actors bypass them. If a ruleset lets anyone else bypass it, it lists them and stops. If none
- *       exists it shows the ruleset it would create and why. With --create it creates it. Admins always
+ *       hostile tag. Without --create this only reads: it reads every active tag ruleset in full and looks
+ *       only at rulesets of one exact shape (about tags; active; includes exactly the release pattern or
+ *       all tags; excludes nothing; has the creation, update and deletion rules). Other rulesets neither
+ *       count nor block. It says whether one of that shape lets only repository admins and approved
+ *       actors bypass it. If it lets anyone else bypass it, it lists them and stops. If no ruleset has
+ *       the shape it shows the one it would create and why. With --create it creates it. Admins always
  *       bypass it. --approve names an actor the person approves besides admins (Type is Integration,
  *       Team, User, RepositoryRole, OrganizationAdmin or DeployKey), --bypass-app and --bypass-team add one
  *       to the ruleset that is created. Approved actors are read from trigger.approvedTagBypass in
@@ -46,7 +48,7 @@ import { UserError } from "../frame/errors.mjs";
 import { readJsonFile } from "../frame/json-file.mjs";
 import { copyKlaus } from "./copy.mjs";
 import { estimateOutputs, formatCosts, OUTPUTS } from "./costs.mjs";
-import { approvalsInUse, checkRuleset, createRuleset, explainRuleset, parseActor, rulesetBody, unapprovedMessage } from "./ruleset.mjs";
+import { approvalsInUse, checkRuleset, createRuleset, explainRuleset, parseActor, rulesetBody, SHAPE_NOTE, unapprovedMessage } from "./ruleset.mjs";
 import { writeWorkflow } from "./workflow.mjs";
 
 const OPTIONS = {
@@ -125,7 +127,7 @@ function rulesetCommand(values) {
     const names = found.rulesets.map((ruleset) => `"${ruleset.name}" (id ${ruleset.id})`).join(", ");
     const extra = approvalsInUse(found, approved);
     console.log([
-      `Tags matching ${tagPattern} are protected by ${names}. Every bypass actor is a repository admin or approved by name.`,
+      `Tags matching ${tagPattern} are protected by ${names}, which has the shape Klaus needs. Every bypass actor is a repository admin or approved by name.`,
       ...(extra.length > 0 ? [`Approved besides admins: ${extra.map((entry) => `${entry.name} (${entry.type} ${entry.id})`).join(", ")}.`, recordLine(extra)] : []),
       "Nothing to create.",
     ].join("\n"));
@@ -138,13 +140,13 @@ function rulesetCommand(values) {
   const body = rulesetBody({ tagPattern, apps, teams });
   const names = new Map([...apps, ...teams].map((entry) => [`${entry.type}:${entry.id}`, entry.name]));
   if (!values.create) {
-    console.log([`No active ruleset limits who can create or update tags matching ${tagPattern}. Nothing has been created. This is what would be:`, "", explainRuleset(body, names), "", JSON.stringify(body, null, 2)].join("\n"));
+    console.log([`No ruleset of the shape Klaus needs limits who can create, update or delete tags matching ${tagPattern}. Nothing has been created. This is what would be:`, "", explainRuleset(body, names), "", SHAPE_NOTE, "", JSON.stringify(body, null, 2)].join("\n"));
     return 0;
   }
   const created = createRuleset({ repo, body });
   const recorded = [...apps, ...teams];
   console.log([
-    `Created the ruleset "${created?.name ?? body.name}" (id ${created?.id ?? "unknown"}). Only the bypass list can create or update tags matching ${tagPattern} from now on.`,
+    `Created the ruleset "${created?.name ?? body.name}" (id ${created?.id ?? "unknown"}). Only the bypass list can create, update or delete tags matching ${tagPattern} from now on.`,
     ...(recorded.length > 0 ? [recordLine(recorded)] : []),
   ].join("\n"));
   return 0;

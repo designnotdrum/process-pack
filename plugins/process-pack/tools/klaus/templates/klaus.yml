@@ -36,7 +36,7 @@ on:
   # A pushed tag runs THIS file as it is in the tagged commit, so nothing written here can
   # stop a hostile tag: whoever can push a tag matching the pattern below can run their own
   # copy of this workflow with the secrets. What protects release mode is a repository
-  # ruleset that lets only maintainers create or update tags matching the pattern: every
+  # ruleset that lets only maintainers create, update or delete tags matching the pattern: every
   # bypass actor of the ruleset is a repository admin, or was approved by name and is
   # listed in klaus.config.json under trigger.approvedTagBypass.
   # design-onboard checks for one with `gh api repos/{owner}/{repo}/rulesets` and creates
