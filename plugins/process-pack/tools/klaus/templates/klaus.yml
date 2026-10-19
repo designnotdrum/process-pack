@@ -36,9 +36,12 @@ on:
   # A pushed tag runs THIS file as it is in the tagged commit, so nothing written here can
   # stop a hostile tag: whoever can push a tag matching the pattern below can run their own
   # copy of this workflow with the secrets. What protects release mode is a repository
-  # ruleset that lets only maintainers create or update tags matching the pattern.
+  # ruleset that lets only maintainers create or update tags matching the pattern: every
+  # bypass actor of the ruleset is a repository admin, or was approved by name and is
+  # listed in klaus.config.json under trigger.approvedTagBypass.
   # design-onboard checks for one with `gh api repos/{owner}/{repo}/rulesets` and creates
-  # it, after a yes, before it renders this trigger. Without that ruleset, use the schedule.
+  # it, after a yes, before it renders this trigger, and checks the same list on every
+  # later render. Without that ruleset, use the schedule.
   push:
     tags:
       - "v*" # klaus:value tag-pattern
@@ -106,6 +109,17 @@ jobs:
         run: pnpm install --frozen-lockfile
       # klaus:end install
 
+      # Klaus runs from a copy outside the working tree, because the version-picker
+      # step checks out older release tags, and a tag from before Klaus was installed
+      # has no scripts/klaus.
+      - name: Copy Klaus out of the working tree
+        run: |
+          mkdir -p "$RUNNER_TEMP/klaus"
+          cp -R scripts/klaus/. "$RUNNER_TEMP/klaus/"
+          cp klaus.config.json "$RUNNER_TEMP/klaus.config.json"
+          echo "KLAUS=$RUNNER_TEMP/klaus" >> "$GITHUB_ENV"
+          echo "KLAUS_CONFIG=$RUNNER_TEMP/klaus.config.json" >> "$GITHUB_ENV"
+
       # Four things survive between runs, kept in the klaus-state artifact:
       #   .klaus/state.json                 the last release each output covered
       #   .klaus/inventory.versioned.json   the inventory the version picker last wrote
@@ -115,35 +129,51 @@ jobs:
       # picker reads the last versions from the kept copy.
       # An artifact, not the Actions cache: a run started by a tag cannot restore a
       # cache made for a different tag, so a cache would never reach the next release.
-      # If the artifact has expired, the committed inventory.json is the fallback
-      # when it holds versions, and the next run covers only the newest release.
+      # Any workflow in the repo can upload an artifact with this name, and Klaus reads
+      # these files as its own. So the newest artifact is not taken on trust. It is used
+      # only when it came from a successful run of this workflow file, on the default
+      # branch or at a commit that is on it, and only when check-state.mjs finds exactly
+      # the files and shapes Klaus writes. Otherwise the next one is tried.
+      # If none qualifies, the committed inventory.json is the fallback when it holds
+      # versions, and the next run covers only the newest release.
       - name: Restore Klaus state
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=klaus-state&per_page=20" \
-            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | reverse | .[0].workflow_run.id // empty')
-          if [ -z "$run_id" ]; then
-            echo "No earlier Klaus state. This run starts from the newest release."
-            exit 0
-          fi
           mkdir -p .klaus
-          if ! gh run download "$run_id" --name klaus-state --dir .klaus; then
-            echo "::warning::Could not download the klaus-state artifact of run $run_id. This run starts from the newest release."
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=klaus-state&per_page=30" > "$RUNNER_TEMP/artifacts.json"
+          candidates=$(jq -r '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | reverse | .[].workflow_run.id' "$RUNNER_TEMP/artifacts.json")
+          restored=""
+          for run_id in $candidates; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$RUNNER_TEMP/run.json"
+            path=$(jq -r '.path // ""' "$RUNNER_TEMP/run.json")
+            conclusion=$(jq -r '.conclusion // ""' "$RUNNER_TEMP/run.json")
+            event=$(jq -r '.event // ""' "$RUNNER_TEMP/run.json")
+            branch=$(jq -r '.head_branch // ""' "$RUNNER_TEMP/run.json")
+            sha=$(jq -r '.head_sha // ""' "$RUNNER_TEMP/run.json")
+            [ "${path%%@*}" = ".github/workflows/klaus.yml" ] || continue
+            [ "$conclusion" = success ] || continue
+            case "$event" in
+              push) ;;
+              schedule | workflow_dispatch) [ "$branch" = "$KLAUS_DEFAULT_BRANCH" ] || continue ;;
+              *) continue ;;
+            esac
+            git merge-base --is-ancestor "$sha" "refs/remotes/origin/$KLAUS_DEFAULT_BRANCH" 2> /dev/null || continue
+            dir="$RUNNER_TEMP/klaus-state-$run_id"
+            rm -rf "$dir"
+            gh run download "$run_id" --name klaus-state --dir "$dir" || continue
+            if node "$KLAUS/ci/check-state.mjs" "$dir"; then
+              cp -R "$dir/." .klaus/
+              restored="$run_id"
+              break
+            fi
+            echo "::warning::The klaus-state artifact of run $run_id does not have the shape Klaus writes, so it was not used."
+          done
+          if [ -z "$restored" ]; then
+            echo "No earlier Klaus state that can be trusted. This run starts from the newest release."
           fi
-
-      # Klaus runs from a copy outside the working tree, because the next step
-      # checks out older release tags, and a tag from before Klaus was installed
-      # has no scripts/klaus.
-      - name: Copy Klaus out of the working tree
-        run: |
-          mkdir -p "$RUNNER_TEMP/klaus"
-          cp -R scripts/klaus/. "$RUNNER_TEMP/klaus/"
-          cp klaus.config.json "$RUNNER_TEMP/klaus.config.json"
-          echo "KLAUS=$RUNNER_TEMP/klaus" >> "$GITHUB_ENV"
-          echo "KLAUS_CONFIG=$RUNNER_TEMP/klaus.config.json" >> "$GITHUB_ENV"
 
       # For each release since the last one handled, oldest first: check it out,
       # build the inventory, pick versions from the diff. The run ends on the
@@ -276,7 +306,7 @@ jobs:
           node "$KLAUS/frame/cli.mjs" "${args[@]}"
 
       - name: Keep Klaus state for the next run
-        if: always() && hashFiles('.klaus/state.json', '.klaus/inventory.versioned.json') != ''
+        if: success() && hashFiles('.klaus/state.json', '.klaus/inventory.versioned.json') != ''
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: klaus-state
