@@ -168,12 +168,14 @@ export function readCodeResult(result) {
 }
 
 /**
- * What the reconcile code returned: an object with a names key. The value is not checked here,
- * because a names key that does not hold a list of strings is a reply to refuse, not one to skip.
- * @returns {object | null}  null when the result holds no object with a names key.
+ * What the reconcile code returned: exactly its own return shape, an object whose only key is names
+ * and holds a list. The items of the list are not checked here. An object with other keys is some
+ * other part of the result, so it is not taken for the code's. A result with no such object is a
+ * reply to refuse.
+ * @returns {object | null}  null when the result holds no such object.
  */
 export function readNamesResult(result) {
-  return searchResult(result, (value) => Object.hasOwn(value, "names"));
+  return searchResult(result, (value) => Array.isArray(value.names) && Object.keys(value).length === 1);
 }
 
 /** The text of a result, for an error message. */

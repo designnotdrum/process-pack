@@ -57,7 +57,7 @@ test("the call carries the relay's own code on stdin, to the settings' file, wit
   const prompt = args.at(-1);
   assert.match(prompt, /use_figma tool of the figma MCP server exactly once/);
   assert.match(prompt, new RegExp(`fileKey: ${KEY}`));
-  assert.ok(!prompt.includes("const PAGES"), "the code is not pasted into the prompt");
+  for (const piece of ["const PAGES", "String.fromCharCode", "loadAsync", "[82,"]) assert.ok(!prompt.includes(piece), `the code is not pasted into the prompt (${piece})`);
   for (const flag of ["--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check"]) assert.ok(args.includes(flag), flag);
   assert.equal(args[args.indexOf("--sandbox") + 1], "read-only");
   assert.ok(args.includes('mcp_servers.figma.enabled_tools=["use_figma"]'), "Codex sees use_figma and no other tool");
@@ -223,11 +223,13 @@ test("a component whose page name cannot go in code is left generated, with a wa
 });
 
 test("generated screens stay generated, and the report says reconcile does not read them", async () => {
-  const root = reconcileRepo({ components: BOTH, screens: { "/settings": { v1: "generated" } } });
+  const root = reconcileRepo({ components: BOTH, screens: { "/settings": { v1: "generated", v2: "changed" } } });
   const run = await reconcile(root, [], { names: ["Button 1.0.0", "Button 1.1.0"] });
   assert.equal(run.code, 0, run.stderr);
-  assert.deepEqual(ledgerOf(root).screens, { "/settings": { v1: "generated" } });
-  assert.ok(outputOf(run.report).warnings.some((w) => /1 generated screen stay generated/.test(w)));
+  assert.deepEqual(ledgerOf(root).screens, { "/settings": { v1: "generated", v2: "changed" } });
+  const { warnings } = outputOf(run.report);
+  assert.ok(warnings.some((w) => /1 generated screen stays generated/.test(w)));
+  assert.ok(warnings.some((w) => /1 changed screen is left alone/.test(w)));
 });
 
 test("a mark another run wrote while the call ran is kept", async () => {
@@ -265,6 +267,17 @@ test("a second reconcile has nothing left to look for and makes no call", async 
   assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "sent", "1.1.0": "sent" } });
 });
 
+test("code over one call's character limit stops the run with an error before any call", async () => {
+  // Distinct 100-character page names, one for each component, add up to more than the 50,000 characters one call takes.
+  const components = Object.fromEntries(Array.from({ length: 140 }, (_, i) => [`${String(i).padStart(3, "0")}${"x".repeat(97)}`, { "1.0.0": "generated" }]));
+  const root = reconcileRepo({ components });
+  const run = await reconcile(root, [], { names: [] });
+  assert.equal(run.code, 2);
+  assert.match(run.stderr, /would name 141 pages and come to \d+ characters, more than the 50000 one call takes/);
+  assert.equal(run.calls.length, 0);
+  assert.deepEqual(ledgerOf(root).components, components);
+});
+
 test("the spending cap applies: a call over --max-calls, or over the token cap, is deferred and not made", async () => {
   const root = reconcileRepo({ components: BOTH });
   const calls = await reconcile(root, ["--max-calls", "0"], { names: ["Button 1.0.0"] });
@@ -293,6 +306,8 @@ test("--dry-run says what it would look for and what it would cost, and makes no
   assert.equal(output.status, "dry-run");
   assert.equal(output.estimated.calls, 1);
   assert.ok(output.estimated.tokens > CALL_BASE_TOKENS && output.estimated.tokens < relayCallTokens(5000), "about the fixed cost of a call plus a short code");
+  assert.equal(output.adapter.details.files[0].predictedTokens, output.estimated.tokens, "the file record and the estimate agree");
+  assert.equal(output.adapter.details.files[0].status, "would read");
   assert.match(output.adapter.summary, /dry run: would look for 2 component versions on 2 pages in 1 call/);
 });
 
@@ -376,7 +391,11 @@ test("reading the names out of a use_figma result", () => {
   assert.deepEqual(readNames({ content: [{ type: "text", text: JSON.stringify({ names: [] }) }] }), { names: [], ignored: 0 });
   assert.deepEqual(readNames({ content: [{ type: "text", text: JSON.stringify({ names: ["Icon", "Button 1.0.0"] }) }] }), { names: ["Button 1.0.0"], ignored: 1 });
   assert.match(readNames({ content: [{ type: "text", text: "Done" }] }).error, /no list of names/);
-  assert.match(readNames({ content: [{ type: "text", text: '{"names":{"a":1}}' }] }).error, /not a list/);
+  assert.match(readNames({ content: [{ type: "text", text: '{"names":{"a":1}}' }] }).error, /no list of names/);
+  assert.match(readNames({ content: [{ type: "text", text: '{"names":"Button 1.0.0"}' }] }).error, /no list of names/);
+  assert.deepEqual(readNames({ content: [{ type: "text", text: JSON.stringify({ names: "x", result: { names } }) }] }), { names, ignored: 0 }, "a list nested in a wrapper is found");
+  const foreign = { names: ["Button 1.0.0"], note: "a different object" };
+  assert.match(readNames({ content: [{ type: "text", text: JSON.stringify(foreign) }] }).error, /no list of names/, "an object with other keys is not the code's return value");
   assert.match(readNames({ content: [{ type: "text", text: '{"names":[null]}' }] }).error, /not text/);
   assert.match(readNames(null).error, /no list of names/);
 });

@@ -156,20 +156,20 @@ It takes no release folder, `--run`, `--repo`, `--artifact` or `--release`. `--d
 
 What it does:
 
-1. Reads the ledger and takes every component version that is `generated`. Screens are not read: they are frames, not components, so generated screens stay `generated` and the report says so. A `changed` version is not looked for and is never touched. A `sent` version is not looked for.
+1. Reads the ledger and takes every component version that is `generated`. Screens are not read: they are frames, not components, so generated and changed screens are left as they are and the report says so. A `changed` version is not looked for and is never touched. A `sent` version is not looked for.
 2. Works out the pages to read: each version's page (the `page` setting, or the component's own name, the same rule as the generator) and `Older versions`. A component whose page name has a control character or is over 100 characters is left `generated`, with a warning.
 3. Writes the call's code (`reconcile.mjs` `reconcileCode`). It writes nothing, makes no page and switches no page. For each page it finds the page by name, loads it with `page.loadAsync()` (as the generated code does, so it is not a page switch), and collects the names of the component sets and components that sit directly on it. It returns `{ names }` and nothing else.
 4. Checks the spending cap as a send does (the predicted tokens and `--max-calls`). Component writes count for nothing, because the call writes none. A call over the cap is not made, and the versions are reported as deferred.
 5. Runs `codex exec` once, with the same limits as a send: the settings' Figma file only, a clean Codex config, only the figma server's `use_figma` tool, a 60-second start-up wait, no hooks, a read-only sandbox, the code on stdin byte for byte.
 6. Applies the copy check. The code `use_figma` received, by Codex's own events, must equal the code the relay wrote, on the settings' file, and the call must have completed. If not, the result is refused, and the error says the code could have written, so the file needs a look.
-7. Reads the names from the tool's result only, never the model's closing message. The result must hold a `names` list of strings. Anything else is refused and nothing changes. A string that is not shaped like `<Name> <version>` (another person's component on a Klaus page, for example) is dropped and counted as `otherNames`. A name that matches no generated version is ignored.
-8. Marks each generated version whose exact `<Name> <version>` is in the list as `sent`. The ledger is read again just before the write, so a mark another run wrote is kept, and a version that is no longer `generated` by then is left as it is. Versions not found stay `generated`.
+7. Reads the names from the tool's result only, never the model's closing message. The result must hold an object whose only key is `names`, a list of strings (the code's own return value; the search looks through wrappers, and an object with other keys is not taken for it). Anything else is refused and nothing changes. A string that is not shaped like `<Name> <version>` (another person's component on a Klaus page, for example) is dropped and counted as `otherNames`. A name that matches no generated version is ignored.
+8. Marks each generated version whose exact `<Name> <version>` is in the list as `sent`. The ledger is read again just before the write, so a mark another run wrote is kept, and a version that is no longer `generated` by then is left as it is and reported as not marked. The relay takes no lock, so a run that writes in the instant between that read and the write can still be overwritten (see "Limits"). Versions not found stay `generated`.
 
 The report counts the call and its tokens under `figma-relay`, like a send. It differs from a send in these ways:
 
 - `written` is empty, because the relay wrote no set. The versions it marked are in `adapter.details.reconciled`, with status `reconciled` in `adapter.details.units`, so a reconciled version can be told from a relayed send (`sent`).
 - `adapter.details.missing` lists the versions the file did not have. They stay `generated`. A missing version is not a failure: the plugin may not have written it yet.
-- `adapter.details.changed` lists the `changed` versions that were left alone.
+- `adapter.details.changed` lists the `changed` versions that were left alone. `adapter.details.notMarked` lists versions the call found whose ledger status changed while it ran. A version skipped for an unusable page name is `deferred` with the reason `page-name-not-usable`.
 - A refused or failed call is one entry in `failed`, with the id `reconcile`, and the run exits with 1. No version is called missing then, because the answer could not be read.
 
 The ledger itself does not record how a version became `sent`. Its statuses are still `generated`, `sent` and `changed`, so the generator and the relay read it as before.

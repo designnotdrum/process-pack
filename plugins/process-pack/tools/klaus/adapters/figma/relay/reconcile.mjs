@@ -96,7 +96,6 @@ export function readNames(result) {
   const found = readNamesResult(result);
   if (!found) return { error: "its result holds no list of names." };
   const { names } = found;
-  if (!Array.isArray(names)) return { error: "its names are not a list." };
   if (names.length > MAX_NAMES) return { error: `its list has ${names.length} names, more than the ${MAX_NAMES} the relay reads.` };
   if (names.some((name) => typeof name !== "string")) return { error: "its list holds something that is not text." };
   const kept = names.filter(isVersionedName);

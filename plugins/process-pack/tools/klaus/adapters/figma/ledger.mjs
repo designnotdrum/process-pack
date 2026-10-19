@@ -126,9 +126,9 @@ export function generatedComponents(ledger) {
   return out;
 }
 
-/** Counts the screen releases the ledger holds as generated. */
-export function generatedScreenCount(ledger) {
-  return Object.values(ledger.screens).reduce((n, releases) => n + Object.values(releases).filter((status) => status === GENERATED).length, 0);
+/** Counts the screen releases the ledger holds with this status. */
+export function screenCount(ledger, status) {
+  return Object.values(ledger.screens).reduce((n, releases) => n + Object.values(releases).filter((held) => held === status).length, 0);
 }
 
 /**

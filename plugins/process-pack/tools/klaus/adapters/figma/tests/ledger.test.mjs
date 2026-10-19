@@ -14,12 +14,12 @@ import {
   entryStatus,
   GENERATED,
   generatedComponents,
-  generatedScreenCount,
   markGeneratedAsSent,
   readLedger,
   recordScreen,
   recordComponent,
   recordEntry,
+  screenCount,
   screenSent,
   SENT,
 } from "../ledger.mjs";
@@ -122,11 +122,14 @@ test("generatedComponents lists only the versions that are generated", () => {
   recordComponent(ledger, "Card", "2.0.0", CHANGED);
   recordComponent(ledger, "Card", "2.1.0", GENERATED);
   recordScreen(ledger, "/settings", "v1.0.0", GENERATED);
+  recordScreen(ledger, "/settings", "v2.0.0", CHANGED);
   assert.deepEqual(generatedComponents(ledger), [
     { kind: "component", name: "Button", version: "1.0.0" },
     { kind: "component", name: "Card", version: "2.1.0" },
   ]);
-  assert.equal(generatedScreenCount(ledger), 1);
+  assert.equal(screenCount(ledger, GENERATED), 1);
+  assert.equal(screenCount(ledger, CHANGED), 1);
+  assert.equal(screenCount(ledger, SENT), 0);
   assert.deepEqual(generatedComponents(emptyLedger()), []);
 });
 

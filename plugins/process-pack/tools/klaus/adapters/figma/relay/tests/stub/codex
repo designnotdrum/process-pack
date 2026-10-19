@@ -104,7 +104,8 @@ const results = units.map((unit) => ({ id: unit.id, status, name: `${unit.name} 
 if (scenario === "unit-failed" && results.length > 0) {
   results[results.length - 1] = { id: results.at(-1).id, status: "failed", error: "The font DM Sans Medium could not be loaded." };
 }
-// The reconcile code is read-only and returns the names it found.
+// The reconcile code is read-only and returns the names it found. These env values apply to every
+// call the stub answers, which is one call for a reconcile.
 const reconcile = lines.some((l) => l.startsWith("const PAGES = "));
 let names = [];
 try {
