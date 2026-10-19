@@ -172,8 +172,9 @@ const DOM_ATTRIBUTE_FILE = /\binterface\s+(?:AriaAttributes|DOMAttributes)\b/
  * types it is declared with, or undefined for a name that is not an attribute. The interfaces
  * are `AriaAttributes`, `DOMAttributes`, `HTMLAttributes`, `AllHTMLAttributes`, an element's own
  * such as `ButtonHTMLAttributes`, and `SVGAttributes`. They are read from wherever the program
- * loaded React's types, so nothing here names a path. When React's types are not in the program
- * no name is an attribute. A shape is formatted the first time its name is asked for, because a
+ * loaded React's types, so nothing here names a path. A declaration file is read when it declares
+ * `AriaAttributes` or `DOMAttributes`, which `@types/react` does in the file that holds the rest.
+ * When React's types are not in the program no name is an attribute. A shape is formatted the first time its name is asked for, because a
  * program carries thousands of attribute properties and a few props need the answer.
  */
 function readDomAttributes(ts, checker, program) {
@@ -193,7 +194,7 @@ function readDomAttributes(ts, checker, program) {
     } else if (ts.isSourceFile(node) || ts.isModuleDeclaration(node) || ts.isModuleBlock(node)) ts.forEachChild(node, visit)
   }
   for (const file of program.getSourceFiles()) {
-    if (file.isDeclarationFile && file.text.includes('AriaAttributes') && DOM_ATTRIBUTE_FILE.test(file.text)) visit(file)
+    if (file.isDeclarationFile && DOM_ATTRIBUTE_FILE.test(file.text)) visit(file)
   }
 
   const shapes = new Map()
@@ -203,6 +204,9 @@ function readDomAttributes(ts, checker, program) {
     return shapes.get(name)
   }
 }
+
+const QUOTED = String.raw`"(?:[^"\\]|\\.)*"`
+const TYPE_ARGUMENTS = new RegExp(`${QUOTED}|<(?:${QUOTED}|[^<>"])*>`, 'g')
 
 /**
  * A type as text, so two types that differ only in the element they are typed for read the same:
@@ -216,11 +220,13 @@ function readDomAttributes(ts, checker, program) {
 function shapeOf(ts, checker, type) {
   const print = (member) => {
     let text = checker.typeToString(member, undefined, ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope)
+    // The innermost type arguments go first, so a nested list is gone after a few passes. A string
+    // literal type is kept whole: `"<b>"` is not a type argument.
     for (let previous = ''; previous !== text; ) {
       previous = text
-      text = text.replace(/<[^<>]*>/g, '<>')
+      text = text.replace(TYPE_ARGUMENTS, (part) => (part.startsWith('"') ? part : '\u0001'))
     }
-    return text
+    return text.replace(/\u0001+/g, '<>')
   }
   return (type.isUnion() ? type.types : [type])
     .filter((member) => !(member.flags & ts.TypeFlags.Undefined))
