@@ -10,6 +10,7 @@
  * STUB_CODEX_SCENARIOS is a comma list with one scenario a call. The last one repeats.
  *   success       use_figma ran and the code reported every unit written
  *   exists        use_figma ran and the code found every unit already in the file
+ *   figma         use_figma ran the code in the fake Plugin API, and the result is what the code returned
  *   unit-failed   use_figma ran and the code reported its last unit failed
  *   tool-error    use_figma returned an error
  *   changed-code  Codex sent different code to use_figma, and Figma wrote it
@@ -26,6 +27,13 @@
  * STUB_CODEX_RESULT_TEXT replaces the whole result text, for a reply that is not what the code
  * returns. STUB_CODEX_MESSAGE replaces the model's closing message.
  *
+ * With the scenario "figma" the stub runs the code in the fake Plugin API (tests/fake-figma.mjs) and returns
+ * what the code returned, so a test sees the relay and the runtime work together. The fake file starts
+ * empty, then runs the code in the list that STUB_CODEX_FIGMA_SEED names (a JSON file holding a list of code
+ * texts, the state the file was in before the run), then every earlier call of this run that was also a "figma"
+ * call, then this call. A call is a separate process, so the earlier calls are run again to rebuild the file.
+ * STUB_CODEX_FIGMA_FAIL_DRAWING is a text: the fake refuses to draw an SVG that holds it, so a unit fails.
+ *
  * success.jsonl is the event stream of a real relay call (2026-10-18, gpt-6-luna), with
  * three placeholders: "__CODE__" (the code use_figma received), "__FILE_KEY__" and
  * "__RESULT_TEXT__" (what the code returned, as Figma's server wraps it). tool-error.jsonl
@@ -36,6 +44,7 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createFigma, runCode } from "../../../tests/fake-figma.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -137,12 +146,31 @@ const encodeResult = (value, field = "") => {
   if (value !== null && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, encodeResult(item, name)]));
   return value;
 };
+// The "figma" scenario: what the code itself returns when it runs against the fake Plugin API.
+const runInFigma = async () => {
+  const figma = createFigma();
+  const refused = process.env.STUB_CODEX_FIGMA_FAIL_DRAWING;
+  if (refused) {
+    const draw = figma.createNodeFromSvg;
+    figma.createNodeFromSvg = (svg) => {
+      if (String(svg).includes(refused)) throw new Error("Not an SVG.");
+      return draw(svg);
+    };
+  }
+  const seed = process.env.STUB_CODEX_FIGMA_SEED ? JSON.parse(readFileSync(process.env.STUB_CODEX_FIGMA_SEED, "utf8")) : [];
+  const ran = Array.from({ length: n - 1 }, (_, i) => i + 1).filter((k) => scenarios[Math.min(k, scenarios.length) - 1] === "figma");
+  const earlier = ran.map((k) => readFileSync(path.join(log, `call-${k}.stdin`), "utf8"));
+  for (const before of [...seed, ...earlier]) await runCode(before, figma);
+  return runCode(code, figma);
+};
 const returned = reconcile
   ? { found: labels.map((label) => names.includes(label)) }
-  : encodeResult({ tokens: { made: [], updated: [] }, units: results, warnings: jsonEnv("STUB_CODEX_WARNINGS", "[]") });
+  : scenario === "figma"
+    ? await runInFigma()
+    : encodeResult({ tokens: { made: [], updated: [] }, units: results, warnings: jsonEnv("STUB_CODEX_WARNINGS", "[]") });
 const resultText = process.env.STUB_CODEX_RESULT_TEXT ?? JSON.stringify(returned);
 
-const fixture = { success: "success", exists: "success", "unit-failed": "success", "changed-code": "success", "changed-key": "success", "changed-code-failed": "tool-error", "wrong-file-key": "success", "tool-error": "tool-error", "no-call": "no-call", crash: "crash" }[scenario];
+const fixture = { success: "success", figma: "success", exists: "success", "unit-failed": "success", "changed-code": "success", "changed-key": "success", "changed-code-failed": "tool-error", "wrong-file-key": "success", "tool-error": "tool-error", "no-call": "no-call", crash: "crash" }[scenario];
 if (!fixture) fail(`unknown scenario ${scenario}`);
 const anchor = reconcile ? "const PAGES" : "const CONFIG";
 const sent = scenario === "changed-key"
