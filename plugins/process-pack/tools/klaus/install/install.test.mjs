@@ -173,6 +173,19 @@ test("the workflow keeps one trigger, the repo's install, the secrets and the Fi
   assert.doesNotMatch(text, /# klaus:/);
 });
 
+test("state is kept in an artifact, not the Actions cache, and every upload includes hidden files", () => {
+  const { text } = render(CONFIG);
+  // A tag run cannot restore a cache made for another tag (GitHub's caching reference, read 2026-10-19).
+  assert.doesNotMatch(text, /actions\/cache/);
+  assert.match(text, /permissions:\n {2}contents: read\n {2}actions: read/);
+  assert.match(text, /name: klaus-state\n/);
+  assert.match(text, /gh run download "\$run_id" --name klaus-state --dir \.klaus/);
+  // Everything under .klaus is hidden to upload-artifact, which skips hidden files unless told not to.
+  const uploads = text.match(/uses: actions\/upload-artifact@/g).length;
+  assert.equal(text.match(/include-hidden-files: true/g).length, uploads);
+  assert.equal(uploads, 3);
+});
+
 test("the Figma artifact is named the way the relay downloads it", () => {
   const relay = readFileSync(path.join(SOURCE_ROOT, "adapters/figma/relay/relay.mjs"), "utf8");
   const expected = /DEFAULT_ARTIFACT = "([^"]+)"/.exec(relay)?.[1];

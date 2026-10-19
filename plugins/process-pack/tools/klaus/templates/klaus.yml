@@ -39,6 +39,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # to find and download the state artifact of the last run
 
 concurrency:
   group: klaus
@@ -67,25 +68,31 @@ jobs:
         run: pnpm install --frozen-lockfile
       # klaus:end install
 
-      # Four things survive between runs:
+      # Four things survive between runs, kept in the klaus-state artifact:
       #   .klaus/state.json                 the last release each output covered
       #   .klaus/inventory.versioned.json   the inventory the version picker last wrote
       #   .klaus/screenshots                the screenshot stored with each version
       #   .klaus/figma/ledger.json          which Figma versions the generator has planned
       # The inventory step rebuilds inventory.json with empty versions, so the
-      # picker reads the last versions from the kept copy. If GitHub drops the
-      # cache, the committed inventory.json is the fallback when it holds versions,
-      # and the next run covers only the newest release.
+      # picker reads the last versions from the kept copy.
+      # An artifact, not the Actions cache: a run started by a tag cannot restore a
+      # cache made for a different tag, so a cache would never reach the next release.
+      # If the artifact has expired, the committed inventory.json is the fallback
+      # when it holds versions, and the next run covers only the newest release.
       - name: Restore Klaus state
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            .klaus/state.json
-            .klaus/inventory.versioned.json
-            .klaus/screenshots
-            .klaus/figma/ledger.json
-          key: klaus-state-${{ github.run_id }}
-          restore-keys: klaus-state-
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=klaus-state&per_page=20" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | reverse | .[0].workflow_run.id // empty')
+          if [ -z "$run_id" ]; then
+            echo "No earlier Klaus state. This run starts from the newest release."
+            exit 0
+          fi
+          mkdir -p .klaus
+          gh run download "$run_id" --name klaus-state --dir .klaus
 
       # Klaus runs from a copy outside the working tree, because the next step
       # checks out older release tags, and a tag from before Klaus was installed
@@ -185,16 +192,20 @@ jobs:
           if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
           node "$KLAUS/frame/cli.mjs" "${args[@]}"
 
-      - name: Save Klaus state
+      - name: Keep Klaus state for the next run
         if: always() && hashFiles('.klaus/state.json', '.klaus/inventory.versioned.json') != ''
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
+          name: klaus-state
+          # Everything under .klaus is hidden to this action unless told otherwise.
+          include-hidden-files: true
           path: |
             .klaus/state.json
             .klaus/inventory.versioned.json
             .klaus/screenshots
             .klaus/figma/ledger.json
-          key: klaus-state-${{ github.run_id }}
+          if-no-files-found: ignore
+          retention-days: 90
 
       # klaus:begin figma-artifact
       # The relay downloads this by name: relay.mjs --run <id> --artifact klaus-figma.
@@ -203,6 +214,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: klaus-figma
+          include-hidden-files: true
           path: .klaus/figma/
           if-no-files-found: ignore
           retention-days: 30
@@ -214,6 +226,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: klaus-report
+          include-hidden-files: true
           path: .klaus/reports/
           if-no-files-found: ignore
           retention-days: 90
