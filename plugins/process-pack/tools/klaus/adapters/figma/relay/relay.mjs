@@ -84,8 +84,8 @@ import { checkTargets, DataError, readData } from "../data-file.mjs";
 import { fileKeyOf, MANIFEST_VERSION } from "../index.mjs";
 import { CHANGED, entrySent, entryStatus, GENERATED, generatedComponents, markGeneratedAsSent, readLedger, recordEntry, screenCount, SENT } from "../ledger.mjs";
 import { MAX_CODE_CHARS, readOptions, relayCallTokens } from "../settings.mjs";
-import { FIGMA_SERVER, FIGMA_TOOL, parseEvents, readCodeResult, relayTokens, resultText, summarizeEvents } from "./events.mjs";
-import { lookupPlan, readNames, reconcileCode } from "./reconcile.mjs";
+import { decodeResult, FIGMA_SERVER, FIGMA_TOOL, keyIn, parseEvents, readCodeResult, relayTokens, resultText, summarizeEvents } from "./events.mjs";
+import { lookupPlan, readFound, reconcileCode } from "./reconcile.mjs";
 
 /**
  * The relaying model. On 2026-10-18 gpt-6-luna at low effort changed a 20,582-character file on
@@ -147,6 +147,8 @@ export function codexArgs({ model, effort, workdir, figmaUrl, keepCodexConfig, p
     "-c", `model_reasoning_effort="${effort}"`,
     "-c", 'approval_policy="never"',
     "-c", "features.hooks=false",
+    // No shell tool: the model then has use_figma and Codex's built-in file tools in a read-only sandbox, and cannot run a command.
+    "-c", "features.shell_tool=false",
     "-c", `mcp_servers.${FIGMA_SERVER}.enabled_tools=["${FIGMA_TOOL}"]`,
     // A server that has not listed its tools by then is dropped, and the model runs without use_figma.
     "-c", `mcp_servers.${FIGMA_SERVER}.startup_timeout_sec=${MCP_STARTUP_TIMEOUT_SECONDS}`,
@@ -281,7 +283,7 @@ function downloadArtifact({ gh, run, repo, artifact, cwd }) {
  * Reads and checks every data file the manifest lists, and builds each one's code, before any call.
  * Anything that is not the generator's shape, writes where the settings do not say, or does not
  * match the manifest's ledger entries stops the run here.
- * @returns {Map<string, string>}  The code of each data file, by name.
+ * @returns {Map<string, { code: string, key: number[] }>}  The code of each data file, by name, with the key its strings are encoded with.
  */
 function prepareCode(folder, manifest, options) {
   const code = new Map();
@@ -309,9 +311,10 @@ function prepareCode(folder, manifest, options) {
       if (!same) fail(`its unit ${unit.id} does not match the manifest's ledger entry.`);
     }
     // A new key for each call: the model sees every piece of the data's text as noise (codegen.mjs).
-    const built = codeFor(data, { key: newKey() });
+    const key = newKey();
+    const built = codeFor(data, { key });
     if (built.length > MAX_CODE_CHARS) fail(`its code comes to ${built.length} characters, more than the ${MAX_CODE_CHARS} one call takes.`);
-    code.set(file.name, built);
+    code.set(file.name, { code: built, key });
   }
   return code;
 }
@@ -429,7 +432,7 @@ function judgeRun({ run, summary, timeoutMs, errors, warnings }) {
  *   units holds what the code reported for each unit, from calls that carried the file's code unchanged.
  *   changed holds the units Figma wrote from code Codex had changed.
  */
-async function sendFile({ codex, args, code, workdir, timeoutMs, fileKey, eventsFile }) {
+async function sendFile({ codex, args, code, key, workdir, timeoutMs, fileKey, eventsFile }) {
   const startedAt = Date.now();
   const { run, summary, warnings } = await runCodex({ codex, args, code, workdir, timeoutMs, eventsFile });
   const units = new Map();
@@ -445,7 +448,9 @@ async function sendFile({ codex, args, code, workdir, timeoutMs, fileKey, events
     if (typeof sent !== "string" || sent.trim() !== text) {
       errors.push(`Codex changed the code before it reached ${FIGMA_TOOL}, so its result is not trusted.`);
       // Figma may still have drawn units from the changed code. Those sets may be wrong.
-      const drawn = call.status === "completed" ? readCodeResult(call.result) : null;
+      // The runtime encoded its result with the key it was given, which is the changed code's own.
+      const found = call.status === "completed" ? readCodeResult(call.result) : null;
+      const drawn = found ? decodeResult(found, (typeof sent === "string" ? keyIn(sent) : null) ?? key) : null;
       for (const unit of drawn?.units ?? []) if (unit.status === "written") changed.add(unit.id);
       continue;
     }
@@ -457,11 +462,13 @@ async function sendFile({ codex, args, code, workdir, timeoutMs, fileKey, events
       errors.push(`${FIGMA_TOOL} failed: ${call.error ?? (resultText(call.result) || "no reason given")}`);
       continue;
     }
-    const returned = readCodeResult(call.result);
-    if (!returned) {
+    const encoded = readCodeResult(call.result);
+    if (!encoded) {
       errors.push(`${FIGMA_TOOL} returned a result Klaus cannot read: ${resultText(call.result) || "an empty result"}`);
       continue;
     }
+    // The runtime encodes every string of its result with the call's key, so the model read none of it.
+    const returned = decodeResult(encoded, key);
     for (const unit of returned.units) {
       // Over two calls, a unit counts as sent if either call sent it.
       if (!SENT_STATUSES.has(units.get(unit.id)?.status)) units.set(unit.id, unit);
@@ -572,8 +579,9 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
     for (const file of manifest.files) {
       const entries = file.units.map((id) => ({ id, ...manifest.ledgerEntries[id] }));
       const pending = entries.filter((entry) => !entrySent(ledger, entry));
-      const code = Buffer.from(prepared.get(file.name), "utf8");
-      const chars = prepared.get(file.name).length;
+      const { code: text, key } = prepared.get(file.name);
+      const code = Buffer.from(text, "utf8");
+      const chars = text.length;
       const record = { name: file.name, chars, units: file.units };
       const unitBase = (entry) => ({ id: entry.id, kind: entry.kind, file: file.name });
       if (pending.length === 0) {
@@ -611,7 +619,7 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
       const prompt = relayPrompt({ fileKey, fileName: file.name });
       const args = codexArgs({ model, effort, workdir, figmaUrl, keepCodexConfig: Boolean(options.keepCodexConfig), prompt });
       const eventsFile = keepEvents ? path.join(keepEvents, file.name.replace(/\.json$/, ".jsonl")) : null;
-      const outcome = await sendFile({ codex, args, code, workdir, timeoutMs, fileKey, eventsFile });
+      const outcome = await sendFile({ codex, args, code, key, workdir, timeoutMs, fileKey, eventsFile });
 
       if (outcome.tokens === null) {
         // Codex stopped before it said what the call cost. The cap counts the prediction.
@@ -739,19 +747,18 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
 }
 
 /**
- * Sends the reconcile code and reads the names it returned. Nothing is trusted that did not come
- * from the tool's own result: the code use_figma received must be the code the relay wrote, on
- * the settings' file, and the result must hold a list of names. Any error means no names.
- * @returns {Promise<{ names: Set<string> | null, ignored: number, error: string | null, usage: object | null, tokens: number | null, warnings: string[], durationMs: number }>}
+ * Sends the reconcile code and reads the booleans it returned. Nothing is trusted that did not
+ * come from the tool's own result: the code use_figma received must be the code the relay wrote,
+ * on the settings' file, and the result must hold a list of true and false as long as the list of
+ * labels sent. Any error means no answer.
+ * @returns {Promise<{ found: boolean[] | null, error: string | null, usage: object | null, tokens: number | null, warnings: string[], durationMs: number }>}
  */
-async function sendReconcile({ codex, args, code, workdir, timeoutMs, fileKey, eventsFile }) {
+async function sendReconcile({ codex, args, code, expected, workdir, timeoutMs, fileKey, eventsFile }) {
   const startedAt = Date.now();
   const { run, summary, warnings } = await runCodex({ codex, args, code, workdir, timeoutMs, eventsFile });
   const errors = [];
   const text = code.toString("utf8").trim();
-  const names = new Set();
-  let ignored = 0;
-  let read = 0;
+  const answers = [];
 
   for (const call of summary.calls) {
     const sent = call.arguments?.code;
@@ -768,21 +775,19 @@ async function sendReconcile({ codex, args, code, workdir, timeoutMs, fileKey, e
       errors.push(`${FIGMA_TOOL} failed: ${call.error ?? (resultText(call.result) || "no reason given")}`);
       continue;
     }
-    const found = readNames(call.result);
-    if (found.error) {
-      errors.push(`${FIGMA_TOOL}'s result is refused, so nothing was marked: ${found.error}`);
+    const read = readFound(call.result, expected);
+    if (read.error) {
+      errors.push(`${FIGMA_TOOL}'s result is refused, so nothing was marked: ${read.error}`);
       continue;
     }
-    read += 1;
-    ignored += found.ignored;
-    for (const name of found.names) names.add(name);
+    answers.push(read.found);
   }
 
   judgeRun({ run, summary, timeoutMs, errors, warnings });
-  const refused = errors.length > 0 || read === 0;
+  // Two valid answers from two calls are merged: a version is found if either call found it.
+  const merged = answers.length === 0 || errors.length > 0 ? null : answers[0].map((entry, i) => answers.some((answer) => answer[i]));
   return {
-    names: refused ? null : names,
-    ignored,
+    found: merged,
     error: errors.length > 0 ? [...new Set(errors)].join(" ") : null,
     usage: summary.usage,
     tokens: relayTokens(summary.usage),
@@ -849,11 +854,12 @@ async function reconcileLedger(options, { settings, ledgerPath, root }) {
   const missing = [];
   let fileRecord = null;
   let callTokens = null;
-  let otherNames = 0;
   let stopped = null;
 
   if (looked.length > 0) {
-    const code = reconcileCode(pages);
+    const labels = looked.map(labelOf);
+    const key = newKey();
+    const code = reconcileCode(pages, labels, key);
     // As with a send (prepareCode), code over one call's limit is a setting to fix, so the run stops with an error.
     if (code.length > MAX_CODE_CHARS) {
       throw new UserError(`The reconcile call would name ${plural(pages.length, "page")} and come to ${code.length} characters, more than the ${MAX_CODE_CHARS} one call takes. Set outputs.figma.options.page to one page for the components.`);
@@ -886,19 +892,18 @@ async function reconcileLedger(options, { settings, ledgerPath, root }) {
       try {
         log(`reconcile: looking for ${plural(looked.length, "component version")} on ${plural(pages.length, "page")}, about ${predicted} relay tokens`);
         const args = codexArgs({ model, effort, workdir, figmaUrl, keepCodexConfig: Boolean(options.keepCodexConfig), prompt: relayPrompt({ fileKey, fileName: "reconcile" }) });
-        outcome = await sendReconcile({ codex, args, code: Buffer.from(code, "utf8"), workdir, timeoutMs, fileKey, eventsFile: keepEvents ? path.join(keepEvents, "reconcile.jsonl") : null });
+        outcome = await sendReconcile({ codex, args, code: Buffer.from(code, "utf8"), expected: labels.length, workdir, timeoutMs, fileKey, eventsFile: keepEvents ? path.join(keepEvents, "reconcile.jsonl") : null });
       } finally {
         rmSync(workdir, { recursive: true, force: true });
       }
       callTokens = outcome.tokens;
-      otherNames = outcome.ignored;
       if (outcome.tokens === null) warnings.push("The call ended without a token count, so actual tokens leave it out. The cap counted its predicted tokens.");
 
-      if (outcome.names === null) {
-        failed.push({ id: "reconcile", error: outcome.error ?? "The call returned no list of names." });
+      if (outcome.found === null) {
+        failed.push({ id: "reconcile", error: outcome.error ?? "The call returned no list of true and false." });
         for (const entry of looked) unitRecords.push({ id: labelOf(entry), kind: "component", status: "not checked" });
       } else {
-        const found = looked.filter((entry) => outcome.names.has(labelOf(entry)));
+        const found = looked.filter((_, i) => outcome.found[i]);
         for (const entry of looked) if (!found.includes(entry)) missing.push(entry);
         if (found.length > 0) {
           // Apply the marks to the ledger as it is now, so a mark another run wrote since this run read it is kept.
@@ -915,7 +920,7 @@ async function reconcileLedger(options, { settings, ledgerPath, root }) {
       }
       fileRecord = {
         ...record,
-        status: outcome.names === null ? "failed" : "read",
+        status: outcome.found === null ? "failed" : "read",
         error: outcome.error ?? undefined,
         calls: 1,
         tokens: outcome.tokens,
@@ -966,7 +971,6 @@ async function reconcileLedger(options, { settings, ledgerPath, root }) {
         notMarked: notMarked.map(labelOf),
         missing: missing.map(labelOf),
         changed: changedLabels,
-        otherNames,
         files: fileRecord ? [fileRecord] : [],
         units: unitRecords,
       },

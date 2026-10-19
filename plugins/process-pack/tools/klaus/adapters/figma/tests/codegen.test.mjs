@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { codeFor, dataFor, decodeText, encodeText, newKey, RUNTIME_CODE, templateSafe } from "../codegen.mjs";
+import { decodeResult } from "../relay/events.mjs";
 import { buildComponentUnit } from "../spec.mjs";
 import { createFigma, runCode, walk } from "./fake-figma.mjs";
 import { buttonCapture, CONFIG, OPTIONS, screenUnit } from "./helpers.mjs";
@@ -86,7 +87,12 @@ test("the relay's encoded code draws exactly what the plain code draws, text and
   const plain = createFigma({ pages: ["Runtime check"] });
   const encoded = createFigma({ pages: ["Runtime check"] });
   const plainResult = await runCode(codeFor(data), plain);
-  const encodedResult = await runCode(codeFor(data, { key: newKey() }), encoded);
+  const key = newKey();
+  const encodedRaw = await runCode(codeFor(data, { key }), encoded);
+  // The runtime encodes its result with the key too, so the relaying model reads no name. The relay decodes it.
+  assert.notEqual(encodedRaw.units[0].name, plainResult.units[0].name, "the result's names are encoded");
+  assert.equal(encodedRaw.units[0].status, plainResult.units[0].status, "a status stays plain");
+  const encodedResult = decodeResult(encodedRaw, key);
 
   // Node ids come from the fake's counter, which both runs share, so they are left out.
   const withoutNodeIds = (result) => ({ ...result, units: result.units.map(({ nodeId: _nodeId, ...unit }) => unit) });

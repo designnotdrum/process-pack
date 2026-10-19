@@ -4,28 +4,18 @@
  *
  * Reconcile exists because the Klaus plugin in Figma writes the first, large load and cannot
  * write the repo's ledger. After it runs, the ledger still lists every unit as generated. One
- * read-only use_figma call returns the names of the component sets and components on the pages
- * Klaus writes, and each generated unit whose `<Name> <version>` is among them becomes sent.
+ * read-only use_figma call is told the `<Name> <version>` of every generated unit and returns one
+ * true or false for each, in the same order: true when a component set or component of that name
+ * sits on a page Klaus writes. It returns no name, because the reply stays in the context of the
+ * model that relays the call, and a name from the Figma file could be written to steer it.
  */
+import { readFileSync } from "node:fs";
+import { encodeText } from "../codegen.mjs";
 import { OLDER_VERSIONS_PAGE, pageFor } from "../settings.mjs";
-import { readNamesResult } from "./events.mjs";
+import { readFoundResult } from "./events.mjs";
 
 /** A page name the relay will put in code: the same rule as the page setting. */
 const PAGE_NAME = /^[^\u0000-\u001f]{1,100}$/;
-
-/** A version, as data-file.mjs and the runtime read one. */
-const VERSION = /^\d+(\.\d+)*([-+][0-9A-Za-z.-]+)?$/;
-
-/** The most names a reply may list, and the most characters one may have. */
-export const MAX_NAMES = 20000;
-export const MAX_NAME_CHARS = 300;
-
-/** True for a string shaped like `<Name> <version>`. */
-export function isVersionedName(text) {
-  if (typeof text !== "string" || text.length > MAX_NAME_CHARS) return false;
-  const space = text.lastIndexOf(" ");
-  return space > 0 && VERSION.test(text.slice(space + 1));
-}
 
 /**
  * The pages to look at for some generated component versions. Each version's page is the one the
@@ -53,26 +43,45 @@ export function lookupPlan(entries, options) {
   return { pages, looked, skipped };
 }
 
+const RUNTIME = readFileSync(new URL("../runtime.js", import.meta.url), "utf8");
+
+/**
+ * The runtime's own decoder, as text: its BASE64 line and its decodeText function, so the call
+ * decodes what encodeText wrote with the same code the generated units use.
+ */
+function decoderCode() {
+  const base64 = /^const BASE64 = .*;$/m.exec(RUNTIME);
+  const decode = /^function decodeText\(encoded\) \{\n[\s\S]*?\n\}$/m.exec(RUNTIME);
+  if (!base64 || !decode) throw new Error("reconcile.mjs cannot find the decoder in runtime.js.");
+  return [base64[0], ...decode[0].split("\n").map((line) => line.trim()).filter(Boolean)];
+}
+
+export const DECODER_CODE = decoderCode();
+
 /**
  * The code of the one call. It is read-only: it writes nothing, makes no page and switches no
- * page. It loads each page named below with `loadAsync`, as the generated code does, and returns
- * the names of the component sets and components that sit directly on those pages. A page the
- * file does not have is skipped.
+ * page. It decodes the page names and the labels it was given, loads each page with `loadAsync`
+ * as the generated code does, collects the names of the component sets and components that sit
+ * directly on those pages, and returns { found }, one true or false for each label in order. A
+ * page the file does not have is skipped. No name from the file leaves the code.
  *
- * The text is fixed apart from the page names. Those come from the repo's settings and ledger,
- * never from an artifact, and each is written as a list of character codes, so the relaying
- * model reads no name. It holds no backslash, because a model drops them (see the README).
- * A page name is at most 100 characters, so `String.fromCharCode.apply` gets a short argument list.
+ * Every page name and label is encoded with the call's key (encodeText), so the relaying model
+ * reads no name from the ledger or the settings either. The code holds no backslash, because a
+ * model drops them (see the README).
  * @param {string[]} pages
+ * @param {string[]} labels  `<Name> <version>`, in the order the answer is wanted.
+ * @param {number[]} key
  */
-export function reconcileCode(pages) {
-  const codes = pages.map((page) => `[${Array.from({ length: page.length }, (_, i) => page.charCodeAt(i)).join(",")}]`);
+export function reconcileCode(pages, labels, key) {
   return [
-    "// Klaus reconcile. Read only: it returns the names of the sets and components on the pages below.",
-    `const PAGES = [${codes.join(",")}];`,
+    "// Klaus reconcile. Read only: it returns one true or false for each label, and no name.",
+    `const KEY = [${key.join(",")}];`,
+    `const PAGES = ${JSON.stringify(pages.map((page) => encodeText(page, key)))};`,
+    `const LABELS = ${JSON.stringify(labels.map((label) => encodeText(label, key)))};`,
+    ...DECODER_CODE,
     "const names = [];",
-    "for (const codes of PAGES) {",
-    "  const pageName = String.fromCharCode.apply(null, codes);",
+    "for (const encodedPage of PAGES) {",
+    "  const pageName = decodeText(encodedPage);",
     "  const page = figma.root.children.find(function (p) { return p.name === pageName; });",
     "  if (!page) continue;",
     "  await page.loadAsync();",
@@ -80,24 +89,22 @@ export function reconcileCode(pages) {
     '    if (node.type === "COMPONENT_SET" || node.type === "COMPONENT") names.push(node.name);',
     "  }",
     "}",
-    "return { names: names };",
+    "return { found: LABELS.map(function (label) { return names.indexOf(decodeText(label)) >= 0; }) };",
     "",
   ].join("\n");
 }
 
 /**
- * Reads the names out of a use_figma result, and nothing else: the model's own reply is never
- * looked at. The result must hold a list of strings. A string that is not shaped like
- * `<Name> <version>` is dropped, because another person's components can sit on a Klaus page and
- * they match no unit. Anything else is refused, and then nothing changes.
- * @returns {{ names: string[], ignored: number } | { error: string }}
+ * Reads the booleans out of a use_figma result, and nothing else: the model's own reply is never
+ * looked at. The result must hold { found }, a list of booleans as long as the labels sent.
+ * Anything else is refused, and then nothing changes.
+ * @returns {{ found: boolean[] } | { error: string }}
  */
-export function readNames(result) {
-  const found = readNamesResult(result);
-  if (!found) return { error: "its result holds no list of names." };
-  const { names } = found;
-  if (names.length > MAX_NAMES) return { error: `its list has ${names.length} names, more than the ${MAX_NAMES} the relay reads.` };
-  if (names.some((name) => typeof name !== "string")) return { error: "its list holds something that is not text." };
-  const kept = names.filter(isVersionedName);
-  return { names: kept, ignored: names.length - kept.length };
+export function readFound(result, expected) {
+  const reply = readFoundResult(result);
+  if (!reply) return { error: "its result holds no list of true and false." };
+  const { found } = reply;
+  if (found.length !== expected) return { error: `its list has ${found.length} entries, and ${expected} were asked for.` };
+  if (found.some((entry) => typeof entry !== "boolean")) return { error: "its list holds something that is not true or false." };
+  return { found };
 }

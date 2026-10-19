@@ -13,6 +13,13 @@
  * bytes XORed with the key, except the fields in PLAIN_FIELDS. decodeData turns
  * them back before anything else runs, so the rest of this file sees plain data.
  *
+ * With a KEY, the result goes back the same way: every string it returns (unit names, the names
+ * of sets moved to Older versions, warnings, error messages) is encoded with the key, except the
+ * values of a status field, which are the fixed words written, exists and failed. The relay's
+ * model keeps the result in its context, and a name in the file or a message that quotes one could
+ * be written to steer it, so it reads noise. The relay decodes the result with the key. Without a
+ * KEY (the Klaus plugin), the result is plain.
+ *
  * This file is not run by Node. It is plain JavaScript for the Figma Plugin API
  * and it avoids newer syntax on purpose. It uses top-level await and return,
  * which use_figma allows. It never switches the current page, because a call
@@ -48,6 +55,8 @@ const DIGITS = /^[0-9]+$/;
 const NEWLINE = String.fromCharCode(10);
 // The same list as codegen.mjs PLAIN_FIELDS.
 const PLAIN_FIELDS = ["kind", "k", "L", "pa", "ca", "td", "tt"];
+// The result's fields that stay plain when it is encoded: a status is one of the fixed words written, exists and failed.
+const RESULT_PLAIN_FIELDS = ["status"];
 const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const warnings = [];
 const loadedFonts = {};
@@ -551,6 +560,50 @@ function decodeData(value, field) {
   return value;
 }
 
+/** The inverse of decodeText: the text's UTF-8 bytes, XOR with KEY, base64 with padding. */
+function encodeText(text) {
+  const bytes = [];
+  for (let i = 0; i < text.length; i++) {
+    let point = text.charCodeAt(i);
+    if (point >= 55296 && point <= 56319 && i + 1 < text.length) {
+      const low = text.charCodeAt(i + 1);
+      if (low >= 56320 && low <= 57343) {
+        point = 65536 + ((point - 55296) << 10) + (low - 56320);
+        i += 1;
+      }
+    }
+    if (point >= 55296 && point <= 57343) point = 65533;
+    if (point < 128) bytes.push(point);
+    else if (point < 2048) bytes.push(192 | (point >> 6), 128 | (point & 63));
+    else if (point < 65536) bytes.push(224 | (point >> 12), 128 | ((point >> 6) & 63), 128 | (point & 63));
+    else bytes.push(240 | (point >> 18), 128 | ((point >> 12) & 63), 128 | ((point >> 6) & 63), 128 | (point & 63));
+  }
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 3) {
+    const hasB = i + 1 < bytes.length;
+    const hasC = i + 2 < bytes.length;
+    const a = bytes[i] ^ KEY[i % KEY.length];
+    const b = hasB ? bytes[i + 1] ^ KEY[(i + 1) % KEY.length] : 0;
+    const c = hasC ? bytes[i + 2] ^ KEY[(i + 2) % KEY.length] : 0;
+    out += BASE64.charAt(a >> 2) + BASE64.charAt(((a & 3) << 4) | (b >> 4));
+    out += hasB ? BASE64.charAt(((b & 15) << 2) | (c >> 6)) : "=";
+    out += hasC ? BASE64.charAt(c & 63) : "=";
+  }
+  return out;
+}
+
+/** A copy of the result with every string encoded, except those under a field of RESULT_PLAIN_FIELDS. */
+function encodeResult(value, field) {
+  if (typeof value === "string") return RESULT_PLAIN_FIELDS.indexOf(field) >= 0 ? value : encodeText(value);
+  if (Array.isArray(value)) return value.map(function (item) { return encodeResult(item, field); });
+  if (value !== null && typeof value === "object") {
+    const out = {};
+    Object.keys(value).forEach(function (name) { out[name] = encodeResult(value[name], name); });
+    return out;
+  }
+  return value;
+}
+
 if (KEY) {
   decodeData(CONFIG, "");
   decodeData(TOKENS, "");
@@ -564,14 +617,19 @@ try {
   result.tokens = { error: message(e), made: [], updated: [] };
   note("The variables could not be written, so colours are not bound: " + result.tokens.error);
 }
-for (const U of UNITS) {
-  if (U.kind === "component") result.units.push(await writeComponent(U));
-  else if (U.kind === "screen") result.units.push(await writeScreen(U));
-  else if (U.kind === "retain") result.units.push(await retainScreens(U));
+try {
+  for (const U of UNITS) {
+    if (U.kind === "component") result.units.push(await writeComponent(U));
+    else if (U.kind === "screen") result.units.push(await writeScreen(U));
+    else if (U.kind === "retain") result.units.push(await retainScreens(U));
+  }
+} catch (e) {
+  // Nothing escapes as a raw error, because the error text of an escaped exception is not encoded.
+  note("The run stopped early: " + message(e));
 }
 try {
   PENDING.forEach(function (p) { p.variable.setValueForMode(p.mode, p.value); });
 } catch (e) {
   note("A changed token colour could not be written to its variable: " + message(e));
 }
-return result;
+return KEY ? encodeResult(result, "") : result;

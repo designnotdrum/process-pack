@@ -14,6 +14,8 @@
  * A tool result whose is_error is set arrives as status "failed" with the result kept.
  */
 
+import { decodeText, KEY_BYTES } from "../codegen.mjs";
+
 export const FIGMA_SERVER = "figma";
 export const FIGMA_TOOL = "use_figma";
 
@@ -168,14 +170,49 @@ export function readCodeResult(result) {
 }
 
 /**
- * What the reconcile code returned: exactly its own return shape, an object whose only key is names
- * and holds a list. The items of the list are not checked here. An object with other keys is some
- * other part of the result, so it is not taken for the code's. A result with no such object is a
- * reply to refuse.
+ * What the reconcile code returned: exactly its own return shape, an object whose only key is
+ * found and holds a list. The entries of the list are not checked here. An object with other keys
+ * is some other part of the result, so it is not taken for the code's. A result with no such
+ * object is a reply to refuse.
  * @returns {object | null}  null when the result holds no such object.
  */
-export function readNamesResult(result) {
-  return searchResult(result, (value) => Array.isArray(value.names) && Object.keys(value).length === 1);
+export function readFoundResult(result) {
+  return searchResult(result, (value) => Array.isArray(value.found) && Object.keys(value).length === 1);
+}
+
+/**
+ * The result fields that stay plain when the runtime encodes its result: a status is one of the
+ * fixed words written, exists and failed. The runtime keeps the same list (RESULT_PLAIN_FIELDS).
+ */
+export const RESULT_PLAIN_FIELDS = Object.freeze(["status"]);
+
+/**
+ * A result from code that has a KEY, with every string decoded except those under a plain field.
+ * The runtime encodes them so the model that relays the call reads no name from the file. What
+ * comes out is text from the Figma file or the data, so it goes into the report and nowhere else.
+ */
+export function decodeResult(value, key, field = "") {
+  if (typeof value === "string") return RESULT_PLAIN_FIELDS.includes(field) ? value : decodeText(value, key);
+  if (Array.isArray(value)) return value.map((item) => decodeResult(item, key, field));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, decodeResult(item, key, name)]));
+  }
+  return value;
+}
+
+/**
+ * The key a piece of code carries, from its `const KEY = [...]` line, or null. Used when Codex
+ * changed the code: the runtime encodes its result with whatever key it was given.
+ */
+export function keyIn(code) {
+  const line = /^const KEY = (\[[0-9, ]*\]);$/m.exec(String(code));
+  if (!line) return null;
+  try {
+    const key = JSON.parse(line[1]);
+    return key.length === KEY_BYTES && key.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255) ? key : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The text of a result, for an error message. */
