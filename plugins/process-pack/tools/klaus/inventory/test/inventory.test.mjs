@@ -18,8 +18,11 @@ const cli = path.join(here, '..', 'inventory.mjs')
 /**
  * The tests run on a copy of the fixture repo, so a killed run leaves nothing behind in the
  * checkout. The copy gets a test file and a story that import Button; they are not checked in
- * because a repo that copies this folder would run them as its own tests. It also gets a link to
- * this package's node_modules, which is where the repo's own `typescript` is found from.
+ * because a repo that copies this folder would run them as its own tests. It also gets a
+ * node_modules, with a link to this package's `typescript`, which is where the repo's own copy is
+ * found from, and the stubs for React's and motion's types from `fixtures/dependencies`. They
+ * have to be in node_modules because that is where the inventory tells a dependency's props from
+ * the repo's.
  */
 let fixture
 let inventory
@@ -28,7 +31,8 @@ const entry = (name, folder) => inventory.entries.find((e) => e.name === name &&
 before(() => {
   fixture = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'klaus-fixture-')), 'repo')
   fs.cpSync(source, fixture, { recursive: true })
-  fs.symlinkSync(path.join(here, '..', '..', 'node_modules'), path.join(fixture, 'node_modules'))
+  fs.cpSync(path.join(here, 'fixtures', 'dependencies'), path.join(fixture, 'node_modules'), { recursive: true })
+  fs.symlinkSync(fs.realpathSync(path.join(here, '..', '..', 'node_modules', 'typescript')), path.join(fixture, 'node_modules', 'typescript'))
   for (const file of ['packages/ui/src/button.test.tsx', 'packages/ui/src/button.stories.tsx']) {
     fs.writeFileSync(path.join(fixture, file), "import { Button } from './button'\nexport const x = Button\n")
   }
