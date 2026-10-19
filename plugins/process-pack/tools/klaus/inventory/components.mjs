@@ -30,7 +30,7 @@ const TYPE_LIMIT = 200
  * Reads the components a file exports. `checker` must belong to a program that contains the file.
  * Components are returned in source order.
  */
-export function readComponents(ts, checker, sourceFile, root) {
+export function readComponents(ts, checker, sourceFile, root, domAttributes = () => new Map()) {
   const moduleSymbol = checker.getSymbolAtLocation(sourceFile)
   if (!moduleSymbol) return []
   const byDeclaration = new Map()
@@ -54,13 +54,14 @@ export function readComponents(ts, checker, sourceFile, root) {
       continue
     }
 
-    const { props, variants } = readProps(ts, checker, symbol, declaration, root)
+    const { props, variants, omittedDomProps } = readProps(ts, checker, symbol, declaration, root, domAttributes)
     byDeclaration.set(declaration, {
       name,
       isDefault,
       position: declaration.getStart(sourceFile),
       props,
       variants,
+      omittedDomProps,
       purpose: parsePurpose(docCommentAbove(ts, declaration)),
     })
   }
@@ -135,7 +136,11 @@ export function parsePurpose(raw) {
   return purpose
 }
 
-/** Props the repo declares itself. Everything inherited from React, the DOM or a library is left out. */
+/**
+ * Props the repo declares itself. A prop declared in React, the DOM or a library is left out.
+ * A prop with no declaration at all, which is what a mapped type produces, passes here: the
+ * compiler cannot say where it came from. `isUndeclaredDomAttribute` filters those further.
+ */
 export function ownProp(prop, root) {
   const declarations = prop.declarations ?? []
   if (!declarations.length) return true
@@ -154,9 +159,71 @@ function propsTypeOf(ts, checker, symbol, declaration) {
   return propsSymbol ? checker.getTypeOfSymbolAtLocation(propsSymbol, declaration) : undefined
 }
 
-function readProps(ts, checker, symbol, declaration, root) {
+/** The interfaces that declare DOM attributes. `AllHTMLAttributes` and an element's own, `InputHTMLAttributes` for one, end in the same word. */
+const DOM_ATTRIBUTE_INTERFACE = /(?:HTMLAttributes|SVGAttributes|AriaAttributes|DOMAttributes)$/
+const DOM_ATTRIBUTE_FILE = /\binterface\s+(?:AriaAttributes|DOMAttributes)\b/
+
+/**
+ * The attributes React gives an element, by name, each with the shapes of the types they are
+ * declared with: `AriaAttributes`, `DOMAttributes`, `HTMLAttributes`, `AllHTMLAttributes`, an
+ * element's own such as `ButtonHTMLAttributes`, and `SVGAttributes`. They are read from wherever
+ * the program loaded React's types, so nothing here names a path. Empty when React's types are
+ * not part of the program, in which case no prop is taken for a DOM attribute.
+ */
+function readDomAttributes(ts, checker, program) {
+  const attributes = new Map()
+  const seen = new Set()
+  const read = (node) => {
+    const symbol = checker.getSymbolAtLocation(node.name)
+    if (!symbol || seen.has(symbol)) return
+    seen.add(symbol)
+    for (const prop of checker.getPropertiesOfType(checker.getDeclaredTypeOfSymbol(symbol))) {
+      const shape = shapeOf(ts, checker, checker.getTypeOfSymbolAtLocation(prop, node))
+      attributes.set(prop.getName(), (attributes.get(prop.getName()) ?? new Set()).add(shape))
+    }
+  }
+  const visit = (node) => {
+    if (ts.isInterfaceDeclaration(node)) {
+      if (DOM_ATTRIBUTE_INTERFACE.test(node.name.text)) read(node)
+    } else if (ts.isSourceFile(node) || ts.isModuleDeclaration(node) || ts.isModuleBlock(node)) ts.forEachChild(node, visit)
+  }
+  for (const file of program.getSourceFiles()) {
+    if (file.isDeclarationFile && file.text.includes('AriaAttributes') && DOM_ATTRIBUTE_FILE.test(file.text)) visit(file)
+  }
+  return attributes
+}
+
+/**
+ * A type as text, with type arguments erased and `undefined` dropped, so `MouseEventHandler<HTMLDivElement>`
+ * on a div and `MouseEventHandler<T>` as React declares it read the same.
+ */
+function shapeOf(ts, checker, type) {
+  let text = checker.typeToString(type, undefined, ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope)
+  for (let previous = ''; previous !== text; ) {
+    previous = text
+    text = text.replace(/<[^<>]*>/g, '<>')
+  }
+  return text.replace(/ \| undefined$/, '')
+}
+
+/**
+ * Whether a prop is a DOM attribute that came in without a declaration. A mapped type such as
+ * framer-motion's `HTMLMotionProps<"div">` rebuilds React's attributes as new properties, and a
+ * property made that way points at no declaration, so the file it was declared in cannot say
+ * where it came from. It counts as a DOM attribute when React declares an attribute of the same
+ * name and the type reads the same. A prop the repo declares is never one, whatever its name.
+ * A mapped type the repo writes itself, with a key and a type that both match an attribute, is
+ * read as that attribute: `Record<"id", string>`.
+ */
+function isUndeclaredDomAttribute(ts, checker, prop, type, domAttributes) {
+  if (prop.declarations?.length) return false
+  const shapes = domAttributes().get(prop.getName())
+  return Boolean(shapes?.has(shapeOf(ts, checker, type)))
+}
+
+function readProps(ts, checker, symbol, declaration, root, domAttributes) {
   const propsType = propsTypeOf(ts, checker, symbol, declaration)
-  if (!propsType || propsType.flags & ts.TypeFlags.Any) return { props: [], variants: {} }
+  if (!propsType || propsType.flags & ts.TypeFlags.Any) return { props: [], variants: {}, omittedDomProps: 0 }
 
   // A props type that is a union of object types lists the props every member shares, which would
   // hide most of them. Merge the members instead. A prop is required only if every member has it and requires it.
@@ -174,15 +241,20 @@ function readProps(ts, checker, symbol, declaration, root) {
 
   const props = []
   const variants = {}
+  let omittedDomProps = 0
   for (const [name, { prop, count, required }] of [...merged].sort(([a], [b]) => (a < b ? -1 : 1))) {
     if (!ownProp(prop, root)) continue
     const type = checker.getTypeOfSymbolAtLocation(prop, declaration)
+    if (isUndeclaredDomAttribute(ts, checker, prop, type, domAttributes)) {
+      omittedDomProps += 1
+      continue
+    }
     const isRequired = required && count === members.length
     props.push({ name, type: typeText(ts, checker, type, declaration, isRequired), required: isRequired })
     const options = literalOptions(ts, type)
     if (options) variants[name] = options
   }
-  return { props, variants }
+  return { props, variants, omittedDomProps }
 }
 
 function typeText(ts, checker, type, location, required) {
@@ -252,9 +324,12 @@ export function readAllComponents(ts, root, tsconfigs, files) {
     const rootNames = [...group, ...tsconfigs.ambientFilesFor(configPath || null)]
     const program = ts.createProgram({ rootNames, options: tsconfigs.optionsFor(group[0]) })
     const checker = program.getTypeChecker()
+    // Read on first use, because only a prop with no declaration needs it.
+    let domAttributes
+    const domAttributesOf = () => (domAttributes ??= readDomAttributes(ts, checker, program))
     for (const file of group) {
       const sourceFile = program.getSourceFile(file)
-      components.set(file, sourceFile ? readComponents(ts, checker, sourceFile, root) : [])
+      components.set(file, sourceFile ? readComponents(ts, checker, sourceFile, root, domAttributesOf) : [])
     }
   }
   return components

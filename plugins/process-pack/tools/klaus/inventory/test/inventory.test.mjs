@@ -93,6 +93,53 @@ describe('a class-variance-authority variant', () => {
   })
 })
 
+describe('a component that inherits DOM attributes', () => {
+  test('lists its own props only when it spreads ComponentProps<"button">', () => {
+    const button = entry('IconButton')
+    assert.deepEqual(button.props.map((p) => p.name), ['label'])
+    assert.deepEqual(button.variants, {})
+  })
+
+  test('counts no omitted props for attributes React declares, since the compiler names where they come from', () => {
+    assert.equal('omittedDomProps' in entry('IconButton'), false)
+  })
+
+  test('lists its own props and counts the DOM attributes a mapped type rebuilt without a declaration', () => {
+    const motionButton = entry('MotionButton')
+    assert.deepEqual(motionButton.props.map((p) => p.name), ['hasIcon', 'title'])
+    // The attributes with literal options, such as `type`, are not variants either.
+    assert.deepEqual(motionButton.variants, {})
+    // Nine attributes in the stub, less the `title` the repo declares itself.
+    assert.equal(motionButton.omittedDomProps, 8)
+  })
+
+  test('leaves out a prop from the library\'s own component API, as before, and does not count it', () => {
+    assert.ok(!entry('MotionButton').props.some((p) => p.name === 'animate'))
+  })
+
+  test('counts the omitted attributes of a part on the part', () => {
+    const group = entry('MotionButton').parts.find((p) => p.name === 'MotionButtonGroup')
+    assert.deepEqual(group.props, [])
+    assert.equal(group.omittedDomProps, 9)
+  })
+
+  test('keeps a prop the repo wrote with a mapped type, though its name is a DOM attribute and the type differs', () => {
+    const slots = entry('Slots')
+    assert.deepEqual(slots.props.map((p) => [p.name, p.type, p.required]), [['footer', 'ReactNode', true], ['title', 'ReactNode', true]])
+    assert.equal('omittedDomProps' in slots, false)
+  })
+
+  test('adds the count to no other entry', () => {
+    assert.deepEqual(inventory.entries.filter((e) => 'omittedDomProps' in e).map((e) => e.name), ['MotionButton'])
+  })
+
+  test('is told in the readable view', () => {
+    const markdown = renderMarkdown(inventory)
+    assert.match(markdown, /### MotionButton[\s\S]*?- Props: `hasIcon\?`, `title\?`\n- Also takes 8 DOM attributes, not listed\.\n/)
+    assert.equal((markdown.match(/Also takes/g) ?? []).length, 1)
+  })
+})
+
 describe('a local component', () => {
   test('is marked local with its route', () => {
     const header = entry('ProjectHeader')

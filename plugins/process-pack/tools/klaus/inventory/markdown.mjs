@@ -38,6 +38,7 @@ function entryLines(entry, role) {
   if (entry.icons) lines.push(`- Icons (${entry.icons.length}): ${entry.icons.join(', ')}`)
   if (entry.parts.length) lines.push(`- Parts: ${entry.parts.map((p) => p.name).join(', ')}`)
   if (entry.props.length) lines.push(`- Props: ${propLine(entry.props)}`)
+  if (entry.omittedDomProps) lines.push(`- Also takes ${plural(entry.omittedDomProps, 'DOM attribute')}, not listed.`)
   const variants = Object.entries(entry.variants)
   if (variants.length) lines.push(`- Variants: ${variants.map(([name, options]) => `${code(name)} (${options.join(', ')})`).join('; ')}`)
   lines.push(`- ${usedLine(entry, role)}`, '')
