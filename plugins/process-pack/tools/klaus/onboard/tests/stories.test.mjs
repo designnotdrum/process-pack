@@ -36,12 +36,21 @@ test('sampleValue gives a value for the types a story can fill in, and null for 
     ['level', '1 | 2 | 3', '1'],
     ['onClick', '() => void', '() => {}'],
     ['onChange', '(value: string) => void', '() => {}'],
+    ['onSave', '(_value: string) => Promise<void>', 'async () => {}'],
+    ['onSave', '(_value?: Date) => Promise<void>', 'async () => {}'],
+    ['onSave', '((_value: string) => Promise<void>)', 'async () => {}'],
+    ['onLoad', '() => Promise<string[]>', 'async () => []'],
+    ['onLoad', '() => Promise<number>', 'async () => 1'],
+    ['format', '(value: number) => string', "() => 'Sample'"],
+    ['isValid', '() => boolean', '() => false'],
+    ['onDone', '(cb: () => void) => void | Promise<void>', '() => {}'],
+    ['onUpdate', '((_sectionId: string, _width: number, _height: number) => void)', '() => {}'],
     ['rows', 'string[]', '[]'],
     ['items', 'Array<Item>', '[]'],
     ['when', 'Date', "new Date('2026-01-01T00:00:00Z')"],
   ]
   for (const [name, type, want] of cases) assert.equal(sampleValue(name, type), want, `${name}: ${type}`)
-  for (const type of ['{ a: string }', 'Record<string, string>', 'Project', 'T']) assert.equal(sampleValue('x', type), null, type)
+  for (const type of ['{ a: string }', 'Record<string, string>', 'Project', 'T', '() => Project', '() => Promise<Project>', '<T>(value: T) => void']) assert.equal(sampleValue('x', type), null, type)
 })
 
 test('storyArgs fills required props only and names the prop it cannot fill', () => {

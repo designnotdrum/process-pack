@@ -38,6 +38,8 @@ To start over after a failure, delete the branches the run made (`klaus/onboardi
 
 The run commits three times, after the model work. On Meridian the first commit was refused by the repo's pre-commit hook after 3,583,498 writer tokens and 235 checks had been spent. So before any model call the run tries each commit first. It writes that commit's files, stages them, and runs the hook on them, in the order it commits: the list and the duplicates, then the purpose comments, then the stories. The files of the commits before stay on disk, unstaged, as they would be in the branch. The purpose comments cannot exist yet, so each file the writer is given gets a placeholder purpose that passes the same text checks a real one must. A hook that refuses stops the run with its message, before anything is spent. Either way the index is put back to `HEAD`, every file the check wrote or the hook changed is restored, and the run checks that `HEAD` and the branch did not move.
 
+The stories are type-checked at the same point, before the hook is tried, because the plan that the run checks against the estimate holds the result (see Stories).
+
 The hook is run with `git hook run pre-commit`, which finds it the way a commit does (`core.hooksPath`, as husky sets it, then `.git/hooks`). That needs git 2.36 or later. With an older git the run takes the path `git rev-parse --git-path hooks/pre-commit` gives, which also follows `core.hooksPath`, and runs that file from the repo root when it is executable. Only the pre-commit hook is tried: a `commit-msg` hook and the `pre-push` hook run at the real commit and push, and are not tried first.
 
 ### A stop after the model work keeps it
@@ -126,14 +128,21 @@ The cut-offs (50% and 75%) are choices, not measurements, and every percentage i
 
 ## Stories
 
-A story is written for a component that has none, shows no live data, and has every required prop fillable from its type (a string, a number, a boolean, a closed set of literals, a node, a function, an array, a date). Each required prop gets one sample value. A variant prop gets one story for each value, up to eight. The story sits beside the component, imports it by name, and takes `Meta` and `StoryObj` from the package the repo's existing stories use, else the one in `package.json`, else `@storybook/react`. A repo's existing story is found by what it imports, so a story with another name still counts. No story is overwritten.
+A story is written for a component that has none, shows no live data, and has every required prop fillable from its type (a string, a number, a boolean, a closed set of literals, a node, a function, an array, a date). Each required prop gets one sample value. A function prop gets a stub that returns what its type says: `() => {}` for `void`, `async () => {}` for `Promise<void>`, a sample value of the right kind otherwise. A variant prop gets one story for each value, up to eight. The story sits beside the component, imports it by name, and takes `Meta` and `StoryObj` from the package the repo's existing stories use, else the one in `package.json`, else `@storybook/react`. A repo's existing story is found by what it imports, so a story with another name still counts. No story is overwritten.
+
+A story is written only where a Storybook loads it. The run reads each `.storybook/main.*` in the repo as source (it does not run it), takes the `stories` patterns relative to that `.storybook` folder, and writes a story only if one of them matches the story's path. The Storybook package in the story's import comes from that config's `framework`, else from the rule above. A component whose story no config loads is left for a person with the reason "no Storybook in this repo loads stories from this folder". A config whose `stories` is not a plain list of patterns (a spread, a computed value, a `!` pattern, a negated group) is left for a person with the reason it could not be read.
+
+Every story is then type-checked, before any file, branch or model call. The story text is held in memory and compiled with the repo's own TypeScript and the tsconfig nearest the story, so each package is checked with its own settings and nothing is written. Two things move a story to "left for a person", with the reason in `docs/klaus/stories.md`: a required prop that the compiler sees on the component and the inventory does not (a prop a library declares, such as a flow node's `data`), and any error the compiler reports in the story, with its code and message. A story whose package cannot find the Storybook package it imports is one of those. The estimate and the report count these as left for a person, so the stories written in the estimate and in the run agree.
+
+`onboard/write-stories.mjs --repo <dir> [--approve <plan id>] [--captures <file>]` writes only the third pull request's files into a working tree, from the same plan and with the run's own function for the files. It makes no branch, commit or model call.
 
 A component shows live data when its own file imports a data or auth package (`@clerk/`, `@tanstack/react-query`, `swr`, `@supabase/` and the others in `config.mjs`, plus the repo's `dataBoundImports`), calls a `use...` hook from a local `hooks`, `data`, `queries`, `api`, `services` or `store` folder, or calls `fetch`. It is listed in `docs/klaus/stories.md` with the screens it appears on and a capture for each, when the baseline has one.
 
 ## Limits
 
 - Data-bound is read from the component's own file. A component that renders a data-bound child is not marked.
-- A story is not rendered by the run. In a repo with Storybook's types installed, `tsc --noEmit` shows whether they compile.
+- A story is type-checked but not rendered by the run, so a story that compiles can still fail to draw.
+- Only a glob that Storybook configs usually hold is matched: `*`, `**`, `?`, `{a,b}`, `[abc]` and `@(a|b)`, `?(a|b)`, `+(a|b)`, `*(a|b)`. A config that needs anything else is left for a person.
 - A required prop typed as an object, a generic or a type from another file cannot be given a sample value, so that component is listed for a person to write.
 - Existing `.mdx` stories are not read.
 - The writer's coverage is the files of a folder. A component declared in a way `source.mjs` cannot place (a re-export from another file) is left for a person with the reason.

@@ -5,9 +5,11 @@
  *   2. the missing purposes, written and then checked against where each component is used
  *   3. stories for components that have none, and the screens for the data-bound ones (no model)
  *
- * Before any model call, the files that need no model are worked out and the repo's pre-commit
- * hook is tried on each commit's files (hook-check.mjs), so a hook that would refuse a commit
- * stops the run before anything is spent. The model work (purposes-stage.mjs) comes next and
+ * Before any model call, the files that need no model are worked out, each story is type-checked
+ * with the repo's own TypeScript (story-check.mjs, inside the plan), and the repo's pre-commit
+ * hook is tried on each commit's files (hook-check.mjs), so a hook or a compiler that would refuse
+ * a commit stops the run before anything is spent. A story that does not compile is left for a
+ * person and is not written. The model work (purposes-stage.mjs) comes next and
  * changes no branch, and each result is saved as it arrives (results.mjs), so a stop after it
  * does not lose it. Then the branches are made and stacked: the second is cut from the first, the
  * third from the second, and each pull request is based on the branch before it. Nothing is merged.
@@ -77,12 +79,12 @@ function listFiles(plan, inventory, docs) {
  * report. None needs a model: a story is made from the component's name and props, which a
  * purpose comment does not change.
  */
-function storyFiles(plan, inventory, docs) {
+export function storyFiles(plan, inventory, docs) {
   const byId = new Map(inventory.entries.map((e) => [`${e.file}#${e.name}`, e]))
   const captureOf = new Map((inventory.screens ?? []).map((s) => [s.route, s.screenshot]))
   const files = []
   const items = plan.stories.items.map((item) => {
-    if (item.status === 'write') files.push({ rel: item.storyFile, text: renderStory({ entry: byId.get(item.id), importPath: item.importPath, isDefault: item.isDefault, framework: plan.stories.framework, typed: item.typed, args: item.args }) })
+    if (item.status === 'write') files.push({ rel: item.storyFile, text: renderStory({ entry: byId.get(item.id), importPath: item.importPath, isDefault: item.isDefault, framework: item.framework ?? plan.stories.framework, typed: item.typed, args: item.args }) })
     if (item.status !== 'data-bound') return item
     const screens = byId.get(item.id).usedIn
     return { ...item, screens, capture: screens.map((s) => captureOf.get(s)).find(Boolean) ?? null }
@@ -180,6 +182,8 @@ export async function runOnboarding(options) {
   const plan = buildPlan({ root: repo, folders, onboarding })
   if (plan.id !== estimate.id) throw new UserError(`The repo is not the one the estimate was made on (the plan is now ${plan.id}, the estimate says ${estimate.id}). Run onboard.mjs estimate again.`)
   const caps = captures ? readCaptures(path.resolve(repo, captures)) : undefined
+  const { check } = plan.stories
+  log(`Stories: ${check.typeChecked} type-checked with the repo's own TypeScript before any branch or model call. Left for a person: ${plan.stories.items.filter((i) => i.status === 'skipped').length} (${check.noStorybook} in folders no Storybook loads, ${check.needsValue} with a required prop to fill in, ${check.storybookMissing + check.didNotCompile} that did not compile).`)
 
   const state = { plan, estimate, prs: [], docsDir: onboarding.docsDir, writerLabel: writerLabel(onboarding), checkerLabel: checkerLabel(onboarding), writerCalls: [], writerExecuted: 0, writerReused: 0, writerTokens: 0, checkerRuns: [], checksNotReached: [], purposes: { items: [] }, stories: null, rows: [], notes: [], startedAt: new Date().toISOString() }
   mkdirPlain(repo, work)
@@ -273,6 +277,7 @@ export async function runOnboarding(options) {
       checkerTokens: external('checker') ? null : sumOf(made, 'tokens'),
       checkerUsd: external('checker') ? null : made.some((r) => r.usd !== null) ? sumOf(made, 'usd') : 0,
       stories: storyItems.filter((i) => i.status === 'write').length,
+      storiesLeft: storyItems.filter((i) => i.status === 'skipped').length,
       pairs: plan.duplicates.length,
       tickets: plan.duplicates.filter((p) => p.verdict === 'merge').length,
       decisions: plan.duplicates.filter((p) => p.verdict !== 'merge').length,
@@ -315,7 +320,7 @@ export async function runOnboarding(options) {
     writerCalls: state.writerCalls,
     checkerRuns: state.checkerRuns,
     purposes: state.purposes.items.map(({ id, name, file, status, verdict, reason }) => ({ id, name, file, status, verdict: verdict ?? null, reason: reason ?? null })),
-    stories: storyItems.map((s) => ({ id: s.id, status: s.status })),
+    stories: storyItems.map((s) => ({ id: s.id, status: s.status, ...(s.status === 'skipped' ? { reason: s.reason } : {}) })),
     notes: [...(state.guardNote ? [state.guardNote] : []), ...state.notes],
   }
   writeJsonFile(path.join(work, 'report.json'), report)
