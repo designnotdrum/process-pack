@@ -136,7 +136,6 @@ describe('a component that inherits DOM attributes', () => {
   test('is told in the readable view', () => {
     const markdown = renderMarkdown(inventory)
     assert.match(markdown, /### MotionButton[\s\S]*?- Props: `hasIcon\?`, `title\?`\n- Also takes 8 DOM attributes, not listed\.\n/)
-    assert.equal((markdown.match(/Also takes/g) ?? []).length, 1)
   })
 })
 

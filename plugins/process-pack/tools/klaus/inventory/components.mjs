@@ -30,7 +30,7 @@ const TYPE_LIMIT = 200
  * Reads the components a file exports. `checker` must belong to a program that contains the file.
  * Components are returned in source order.
  */
-export function readComponents(ts, checker, sourceFile, root, domAttributes = () => new Map()) {
+export function readComponents(ts, checker, sourceFile, root, domAttributes = () => undefined) {
   const moduleSymbol = checker.getSymbolAtLocation(sourceFile)
   if (!moduleSymbol) return []
   const byDeclaration = new Map()
@@ -159,27 +159,32 @@ function propsTypeOf(ts, checker, symbol, declaration) {
   return propsSymbol ? checker.getTypeOfSymbolAtLocation(propsSymbol, declaration) : undefined
 }
 
-/** The interfaces that declare DOM attributes. `AllHTMLAttributes` and an element's own, `InputHTMLAttributes` for one, end in the same word. */
+/**
+ * The interfaces that declare DOM attributes, matched by name: `AllHTMLAttributes` and an
+ * element's own, `InputHTMLAttributes` for one, end in the same word. A library that declares an
+ * interface with one of these names has its properties counted as attributes too.
+ */
 const DOM_ATTRIBUTE_INTERFACE = /(?:HTMLAttributes|SVGAttributes|AriaAttributes|DOMAttributes)$/
 const DOM_ATTRIBUTE_FILE = /\binterface\s+(?:AriaAttributes|DOMAttributes)\b/
 
 /**
- * The attributes React gives an element, by name, each with the shapes of the types they are
- * declared with: `AriaAttributes`, `DOMAttributes`, `HTMLAttributes`, `AllHTMLAttributes`, an
- * element's own such as `ButtonHTMLAttributes`, and `SVGAttributes`. They are read from wherever
- * the program loaded React's types, so nothing here names a path. Empty when React's types are
- * not part of the program, in which case no prop is taken for a DOM attribute.
+ * The DOM attributes React declares, as a function from an attribute name to the shapes of the
+ * types it is declared with, or undefined for a name that is not an attribute. The interfaces
+ * are `AriaAttributes`, `DOMAttributes`, `HTMLAttributes`, `AllHTMLAttributes`, an element's own
+ * such as `ButtonHTMLAttributes`, and `SVGAttributes`. They are read from wherever the program
+ * loaded React's types, so nothing here names a path. When React's types are not in the program
+ * no name is an attribute. A shape is formatted the first time its name is asked for, because a
+ * program carries thousands of attribute properties and a few props need the answer.
  */
 function readDomAttributes(ts, checker, program) {
-  const attributes = new Map()
+  const declared = new Map()
   const seen = new Set()
   const read = (node) => {
     const symbol = checker.getSymbolAtLocation(node.name)
     if (!symbol || seen.has(symbol)) return
     seen.add(symbol)
     for (const prop of checker.getPropertiesOfType(checker.getDeclaredTypeOfSymbol(symbol))) {
-      const shape = shapeOf(ts, checker, checker.getTypeOfSymbolAtLocation(prop, node))
-      attributes.set(prop.getName(), (attributes.get(prop.getName()) ?? new Set()).add(shape))
+      declared.set(prop.getName(), [...(declared.get(prop.getName()) ?? []), { prop, node }])
     }
   }
   const visit = (node) => {
@@ -190,20 +195,38 @@ function readDomAttributes(ts, checker, program) {
   for (const file of program.getSourceFiles()) {
     if (file.isDeclarationFile && file.text.includes('AriaAttributes') && DOM_ATTRIBUTE_FILE.test(file.text)) visit(file)
   }
-  return attributes
+
+  const shapes = new Map()
+  return (name) => {
+    if (!declared.has(name)) return undefined
+    if (!shapes.has(name)) shapes.set(name, new Set(declared.get(name).map(({ prop, node }) => shapeOf(ts, checker, checker.getTypeOfSymbolAtLocation(prop, node)))))
+    return shapes.get(name)
+  }
 }
 
 /**
- * A type as text, with type arguments erased and `undefined` dropped, so `MouseEventHandler<HTMLDivElement>`
- * on a div and `MouseEventHandler<T>` as React declares it read the same.
+ * A type as text, so two types that differ only in the element they are typed for read the same:
+ * type arguments are erased, `MouseEventHandler<HTMLDivElement>` on a div and
+ * `MouseEventHandler<T>` as React declares it both read `MouseEventHandler<>`. Union members are
+ * sorted and `undefined` is dropped, so the order and optionality do not matter.
+ *
+ * This is text and not a structural comparison, so it can miss. A prop that does not read the
+ * same as React's after this is listed, as it was before.
  */
 function shapeOf(ts, checker, type) {
-  let text = checker.typeToString(type, undefined, ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope)
-  for (let previous = ''; previous !== text; ) {
-    previous = text
-    text = text.replace(/<[^<>]*>/g, '<>')
+  const print = (member) => {
+    let text = checker.typeToString(member, undefined, ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope)
+    for (let previous = ''; previous !== text; ) {
+      previous = text
+      text = text.replace(/<[^<>]*>/g, '<>')
+    }
+    return text
   }
-  return text.replace(/ \| undefined$/, '')
+  return (type.isUnion() ? type.types : [type])
+    .filter((member) => !(member.flags & ts.TypeFlags.Undefined))
+    .map(print)
+    .sort()
+    .join(' | ')
 }
 
 /**
@@ -217,8 +240,7 @@ function shapeOf(ts, checker, type) {
  */
 function isUndeclaredDomAttribute(ts, checker, prop, type, domAttributes) {
   if (prop.declarations?.length) return false
-  const shapes = domAttributes().get(prop.getName())
-  return Boolean(shapes?.has(shapeOf(ts, checker, type)))
+  return Boolean(domAttributes(prop.getName())?.has(shapeOf(ts, checker, type)))
 }
 
 function readProps(ts, checker, symbol, declaration, root, domAttributes) {
@@ -326,7 +348,7 @@ export function readAllComponents(ts, root, tsconfigs, files) {
     const checker = program.getTypeChecker()
     // Read on first use, because only a prop with no declaration needs it.
     let domAttributes
-    const domAttributesOf = () => (domAttributes ??= readDomAttributes(ts, checker, program))
+    const domAttributesOf = (name) => (domAttributes ??= readDomAttributes(ts, checker, program))(name)
     for (const file of group) {
       const sourceFile = program.getSourceFile(file)
       components.set(file, sourceFile ? readComponents(ts, checker, sourceFile, root, domAttributesOf) : [])
