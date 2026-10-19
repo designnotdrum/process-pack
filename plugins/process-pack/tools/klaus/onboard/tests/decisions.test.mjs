@@ -329,7 +329,10 @@ test('a wrapper is found by the file it imports, under any local name and throug
     const reasons = found.dismissed.map((d) => d.reason)
     assert.ok(reasons.includes("the web app's FancyBaseTile is built on BaseTile"), reasons.join(' | '))
     assert.ok(reasons.includes("the web app's BigBaseTile is built on BaseTile"), reasons.join(' | '))
-    assert.equal(found.some((p) => [p.keep.name, p.drop.name].includes('FancyBaseTile') && p.verdict !== 'merge'), false)
+    assert.equal(found.some((p) => [p.keep.name, p.drop.name].includes('BaseTile')), false, 'neither wrapper is asked about against what it is built on')
+    // The two wrappers write no class names, so their look cannot be compared. That is not evidence that they differ, so it stays a question.
+    const wrappers = found.find((p) => [p.keep.name, p.drop.name].sort().join('+') === 'BigBaseTile+FancyBaseTile')
+    assert.equal(wrappers?.verdict, 'decide-look-unknown')
   } finally {
     second.cleanup()
   }
@@ -343,4 +346,45 @@ test('the pull request summary says when every pair found was set aside', async 
   assert.doesNotMatch(listBody(state), /None were found/)
   const nothing = { ...state, plan: { ...state.plan, duplicates: [] } }
   assert.match(listBody(nothing), /None were found\./)
+})
+
+test('a same-looking pair is a merge ticket only when neither is built on the other', async () => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const second = makeDecisionsSample()
+  try {
+    const components = path.join(second.repo, 'apps/web/src/components')
+    const body = (name, inner) => `export function ${name}({ data, selected }: { data: string; selected?: boolean }) {\n  return ${inner}\n}\n`
+    fs.writeFileSync(path.join(components, 'Sheet.tsx'), body('Sheet', '<div className="rounded border bg-white">{data}</div>'))
+    fs.writeFileSync(path.join(components, 'WideSheet.tsx'), `import { Sheet } from './Sheet'\n\n${body('WideSheet', '<div className="rounded border bg-white"><Sheet data={data} selected={selected} /></div>')}`)
+    fs.writeFileSync(path.join(components, 'Plain.tsx'), body('PlainSheet', '<div className="rounded border bg-white">{data}</div>'))
+    fs.mkdirSync(path.join(second.repo, 'apps/web/src/app/sheets'))
+    fs.writeFileSync(path.join(second.repo, 'apps/web/src/app/sheets/page.tsx'), "import { Sheet } from '@/components/Sheet'\nimport { WideSheet } from '@/components/WideSheet'\nimport { PlainSheet } from '@/components/Plain'\n\nexport default function SheetsPage() {\n  return [Sheet, WideSheet, PlainSheet]\n}\n")
+    const found = planOf(second.repo).duplicates
+    const names = (p) => [p.keep.name, p.drop.name].sort().join('+')
+    assert.ok(found.dismissed.some((d) => d.reason === "the web app's WideSheet is built on Sheet"), 'identical class names do not hide that one wraps the other')
+    assert.equal(found.some((p) => names(p) === 'Sheet+WideSheet'), false)
+    assert.ok(found.some((p) => names(p) === 'PlainSheet+Sheet' && p.ticket === 'merge'), 'a pair that is not built on each other is still a merge ticket')
+  } finally {
+    second.cleanup()
+  }
+})
+
+test('an import from a package outside this repo that has the same name is not a wrapper', async () => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const second = makeDecisionsSample()
+  try {
+    const components = path.join(second.repo, 'apps/web/src/components')
+    const body = (name, inner) => `export function ${name}({ data, selected }: { data: string; selected?: boolean }) {\n  return ${inner}\n}\n`
+    fs.writeFileSync(path.join(components, 'Frame.tsx'), body('Frame', '<div className="rounded border bg-white">{data}</div>'))
+    fs.writeFileSync(path.join(components, 'WideFrame.tsx'), `import { Frame } from '@vendor/ui'\n\n${body('WideFrame', '<div className="shadow-lg"><Frame /></div>')}`)
+    fs.mkdirSync(path.join(second.repo, 'apps/web/src/app/frames'))
+    fs.writeFileSync(path.join(second.repo, 'apps/web/src/app/frames/page.tsx'), "import { Frame } from '@/components/Frame'\nimport { WideFrame } from '@/components/WideFrame'\n\nexport default function FramesPage() {\n  return [Frame, WideFrame]\n}\n")
+    const found = planOf(second.repo).duplicates
+    assert.equal(found.dismissed.some((d) => d.reason.includes('built on')), false)
+    assert.ok(found.some((p) => [p.keep.name, p.drop.name].sort().join('+') === 'Frame+WideFrame' && p.verdict === 'decide'))
+  } finally {
+    second.cleanup()
+  }
 })

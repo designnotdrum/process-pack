@@ -88,10 +88,16 @@ export function reExportedFiles({ ts, tsconfigs, file, seen = new Set() }) {
     return []
   }
   const found = []
-  for (const statement of sourceFile.statements) {
-    if (!ts.isExportDeclaration(statement) || !statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier)) continue
-    const target = resolveFrom(ts, tsconfigs, file, statement.moduleSpecifier.text)
+  const bindings = importBindings(ts, sourceFile)
+  const add = (spec) => {
+    const target = resolveFrom(ts, tsconfigs, file, spec)
     if (target) found.push(target, ...reExportedFiles({ ts, tsconfigs, file: target, seen }))
+  }
+  for (const statement of sourceFile.statements) {
+    if (!ts.isExportDeclaration(statement)) continue
+    if (statement.moduleSpecifier && ts.isStringLiteral(statement.moduleSpecifier)) add(statement.moduleSpecifier.text)
+    // `import { A } from './a'; export { A }`: the export list names what the file imported.
+    else if (statement.exportClause && ts.isNamedExports(statement.exportClause)) for (const element of statement.exportClause.elements) if (bindings.has((element.propertyName ?? element.name).text)) add(bindings.get((element.propertyName ?? element.name).text).spec)
   }
   return found
 }

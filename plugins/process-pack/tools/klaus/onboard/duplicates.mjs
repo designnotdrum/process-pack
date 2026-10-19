@@ -9,8 +9,9 @@
  * ticket. Only the rest, pairs that look different or whose look cannot be compared, go on the
  * owner's decisions list (decisions.mjs).
  */
+import fs from 'node:fs'
 import path from 'node:path'
-import { toPosix } from '../inventory/files.mjs'
+import { toPosix, walk } from '../inventory/files.mjs'
 import { createTsconfigLoader } from '../inventory/tsconfig.mjs'
 import { declaringFile } from './barrels.mjs'
 import { describeClassDifference, READABLE_CLASS_COUNT } from './decisions-look.mjs'
@@ -50,12 +51,13 @@ const round = (n) => (n === null ? null : Math.round(n * 100) / 100)
 const usedCount = (entry) => entry.usedIn.length
 /**
  * Why a pair is set aside as two different components, or null: one is built on the other (`built`
- * says which), or the names differ without one holding the other's words and the look differs.
+ * says which), or the names differ without one holding the other's words and the look is known to
+ * differ. A look that cannot be compared is not evidence of a difference, so that pair stays a question.
  */
-function setAsideReason(pair, built, variantNames) {
+function setAsideReason(pair, built, differentComponents) {
   const sides = sidesOf(pair)
   if (built) return built.on === pair.keep ? `${sides.keep.text} is built on ${sides.drop.then}` : `${sides.drop.text} is built on ${sides.keep.then}`
-  return variantNames ? null : 'the names differ and the look differs, so they are different components'
+  return differentComponents ? 'the names differ and the look differs, so they are different components' : null
 }
 const specific = (props) => new Set([...props].filter((p) => !GENERIC_PROPS.has(p)))
 
@@ -101,17 +103,30 @@ export function findDuplicates({ ts, root, inventory, setAside: setAsideOn = tru
   const propNames = (entry) => new Set(entry.props.map((p) => p.name))
   const tsconfigs = createTsconfigLoader(ts, root)
   const imported = new Map()
+  /** The names of the packages in this repo. TypeScript resolves an import of one to its built files, not to the source. */
+  const workspaceNames = new Set(
+    walk(root, (name) => name === 'package.json').flatMap((file) => {
+      try {
+        const name = JSON.parse(fs.readFileSync(file, 'utf8')).name
+        return typeof name === 'string' ? [name] : []
+      } catch {
+        return []
+      }
+    }),
+  )
+  const packageOf = (spec) => (spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0])
   /**
-   * True when the file of `entry` imports `other`: by the name `other` has, which also covers a
-   * package import TypeScript cannot resolve, or from the file `other` is in, directly or through a
-   * barrel file, under whatever local name. Then `entry` is built on `other`.
+   * True when the file of `entry` imports `other`, so `entry` is built on `other`. An import is
+   * followed to the file it names, through barrel files, and counts when that is the file `other` is
+   * in, whatever the import calls it. An import of a package in this repo cannot be followed to its
+   * source, so it counts when it takes a name that `other` has.
    */
   const builtOn = (entry, other) => {
     const file = path.join(root, entry.file)
     if (!imported.has(entry.file)) imported.set(entry.file, importsOf(ts, parseSource(ts, file)))
     const target = toPosix(path.join(root, other.file))
     return imported.get(entry.file).some((item) => {
-      if (item.defaultName === other.name || item.names.some((n) => n.imported === other.name)) return true
+      if (workspaceNames.has(packageOf(item.module))) return item.defaultName === other.name || item.names.some((n) => n.imported === other.name)
       const resolved = ts.resolveModuleName(item.module, file, tsconfigs.optionsFor(file), ts.sys).resolvedModule?.resolvedFileName
       if (!resolved) return false
       const module = toPosix(resolved)
@@ -156,8 +171,10 @@ export function findDuplicates({ ts, root, inventory, setAside: setAsideOn = tru
       const unused = usedCount(keep) === 0 || usedCount(drop) === 0
       const ticket = unused ? 'remove' : lookSimilarity !== null && lookSimilarity >= THRESHOLDS.sameLook ? 'merge' : null
       // The data can also say a pair is no pair: one is built on the other, or the names differ and so does the look. Those are set aside, with the reason, not asked about.
-      const built = ticket || !setAsideOn ? null : builtOn(keep, drop) ? { on: keep } : builtOn(drop, keep) ? { on: drop } : null
-      const reason = ticket || !setAsideOn ? null : setAsideReason({ keep, drop }, built, isVariantName(a.name, b.name))
+      // A copy that is unused is a removal whatever it is built on. A same-looking pair is a merge ticket only when neither is built on the other.
+      const built = ticket === 'remove' || !setAsideOn ? null : builtOn(keep, drop) ? { on: keep } : builtOn(drop, keep) ? { on: drop } : null
+      const differentComponents = !ticket && lookSimilarity !== null && !isVariantName(a.name, b.name)
+      const reason = setAsideOn ? setAsideReason({ keep, drop }, built, differentComponents) : null
       if (reason) {
         dismissed.push({ id: `${idOf(keep)} + ${idOf(drop)}`, keep, drop, reason })
         continue
@@ -246,7 +263,7 @@ export function renderDuplicatesList(pairs) {
     '',
     'Written by the Klaus onboarding run. Nothing here has been changed in the code.',
     '',
-    `A pair is listed when the two components do the same job: the same name in two files, or the same kind of name (Button and PrimaryButton) with at least ${Math.round(THRESHOLDS.props * 100)}% of their prop names in common. Props that nearly every component takes (${[...GENERIC_PROPS].join(', ')}) do not count toward that, so two components that share only those are not a pair. A pair is also set aside, and listed at the end with the reason, when one component is built on the other (its file imports the other by name), or when the names differ, neither name holds all the words of the other (InsightCard and HypothesisCard, but not Button and PrimaryButton) and the look differs. The look is compared by the class names each component writes, because the run has no screenshots. At ${Math.round(THRESHOLDS.sameLook * 100)}% or more in common, the pair looks the same. These cut-offs are choices, so the percentages are printed and a person can overrule them.`,
+    `A pair is listed when the two components do the same job: the same name in two files, or the same kind of name (Button and PrimaryButton) with at least ${Math.round(THRESHOLDS.props * 100)}% of their prop names in common. Props that nearly every component takes (${[...GENERIC_PROPS].join(', ')}) do not count toward that, so two components that share only those are not a pair. A pair is also set aside, and listed at the end with the reason, when one component is built on the other (its file imports the other by name), or when the names differ, neither name holds all the words of the other (InsightCard and HypothesisCard, but not Button and PrimaryButton) and the look is known to differ. A look that cannot be compared is not enough, so that pair stays a question. The look is compared by the class names each component writes, because the run has no screenshots. At ${Math.round(THRESHOLDS.sameLook * 100)}% or more in common, the pair looks the same. These cut-offs are choices, so the percentages are printed and a person can overrule them.`,
     '',
     'What happens to a pair: if one copy is used in no place, it becomes a removal ticket. If the two look the same, it becomes a merge ticket. Otherwise it is a question for the owner, in decisions.md.',
     '',
