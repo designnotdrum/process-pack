@@ -147,7 +147,7 @@ Run this step after DESIGN.md exists, and run its commands from the repo root. A
 - **One output per screen.** Each screen shows the route, the cost lines, the limits and the default, then asks one question.
 - **Secrets stay out.** The config holds names, never values. Never ask for a token and never print one. The person sets the values in the repo's CI secrets.
 - **Nothing that is not on the default branch gets a secret.** The workflow refuses a commit that is not on the default branch, ignores release tags that are not, and gives the Vercel token to one step only. Release mode is not set up without the tag ruleset in 8.5.
-- **This step runs no model and writes nothing to Figma.** It makes no deploy and no Codex call.
+- **Steps 8.1 to 8.9 run no model and write nothing to Figma.** They make no deploy and no Codex call. Step 8.10 runs the models the person approved, and only after they have seen what they cost.
 
 ### 8.1 Preflight, read only
 
@@ -279,7 +279,7 @@ Show these as a short list. Do not run them.
 - **Secrets** to add in the repo's settings, by name: the ones the command printed. Their values come from the person's own secret store.
 - **Figma, when on.** (1) Once, in the Figma desktop app: open the target file, then Plugins, Development, Import plugin from manifest, and pick `scripts/klaus/adapters/figma/plugin/manifest.json` in the repo. (2) On the machine that will run the relay, install the Codex CLI and sign it in to Figma: the steps are in `scripts/klaus/adapters/figma/relay/README.md`. (3) After the onboarding run has written the Figma data files, apply them with the plugin ("Klaus: apply a release"), then run `relay.mjs --reconcile` once so the relay does not send what the plugin wrote.
 
-### 8.9 The onboarding run: show the estimate and stop
+### 8.9 The outputs' one-time estimate, and the commit
 
 Print the one-time estimate for the outputs that are on:
 
@@ -289,10 +289,36 @@ node <klaus-src>/install/install.mjs costs --repo <repo> --config klaus.config.j
 
 Commit `scripts/klaus/`, `klaus.config.json`, the workflow and `.gitignore` (when it changed) in one commit, apart from the design commits.
 
-The onboarding run builds the baseline (process-pack issue #30). Ask the person to approve the estimate. On yes, continue with the onboarding run, which is that issue's step. When this skill has no such step yet, say so and end here: the estimate and the commit are the result, and 8.8 lists what is left.
+The onboarding run builds the baseline. Ask the person to approve the estimate above, then go on to 8.10. If they decline, end here: the estimate and the commit are the result, and 8.8 lists what is left.
+
+### 8.10 The onboarding run
+
+The run builds the repo's baseline in three pull requests, in order, each on a branch stacked on the one before: (1) the list of components at 1.0.0, with the duplicates, (2) the missing purposes, written and then checked against where each component is used, (3) stories for components that have none, with the data-bound components listed with their screens. Its scripts and its README are in `<klaus-src>/onboard/` (and in `scripts/klaus/onboard/` after 8.7). Nothing is merged and nothing is filed in a tracker. The duplicates become files in the first pull request.
+
+Rules for this step:
+
+- **The estimate comes first.** `onboard.mjs run` refuses without the plan id that `onboard.mjs estimate` printed, and refuses again if the repo no longer gives that plan. Show the estimate as printed. Do not rework a number in it.
+- **Say what leaves the machine.** The estimate has a line for it. Read it out, because the files of each folder go to OpenAI and each component's props go to OpenRouter.
+- **Never ask for a key, never print one.** The checker's key stays in the person's secret store. Start the one command through it.
+- **The 8.9 commit must be on the default branch of the remote** before the run, because the pull requests are based on it. Without that, the run refuses. If the repo's workflow is to open a pull request for it, that pull request is merged first.
+- **Do not merge the run's pull requests, and do not retry by hand.** If the run stops, it names the branches it made. To start again, delete them and close their pull requests.
+
+1. **Preflight, read only.** `git status` is clean and the repo is on its default branch. `gh auth status` works. For a local writer, `codex --version` and `codex login status`. For a local checker, ask the person whether the key is in their secret store, and by what name (`OPENROUTER_API_KEY` unless they say otherwise).
+2. **The estimate, with the defaults.** Run `node <klaus-src>/onboard/onboard.mjs estimate --repo <repo>` and show it as printed. It reads the repo, calls no model and writes nothing to the working tree. Without an `onboarding` section the writer is the local Codex CLI on `gpt-5.6-terra` (counted against the ChatGPT plan's Codex quota) and the checker is one OpenRouter call for each component on `z-ai/glm-5.3-flash`, a different model family (billed for each token, never call it free). Read out its line about what leaves the machine.
+3. **The writer and the checker, if the person wants others.** The alternative for either is `external`: another agent, such as Codex cloud or a Cyrus session, that the repo is already connected to. Those two only work on repos connected to them, which is why the defaults are the local ones. When the person changes a part, write the `onboarding` section of `klaus.config.json`, run `node scripts/klaus/frame/cli.mjs validate`, commit the change on its own and land it on the default branch the way the repo lands changes, then run `estimate` again and show the new text. A different cost is never saved before it has been shown. Ask the person to approve the estimate.
+4. **The run.** On yes, start it through the person's secret store, with the commit and pull request attribution the repo uses:
+
+   ```bash
+   <secret store command that sets OPENROUTER_API_KEY for this command only> -- \
+     node <klaus-src>/onboard/onboard.mjs run --repo <repo> --approve <plan id> \
+     [--commit-trailer "<line>"] [--body-footer "<text>"] [--captures <file>]
+   ```
+
+   Pass `--captures` when the repo's visual checks wrote a captures file for the baseline. With an external writer or checker, the first run writes briefs to `.git/klaus-onboarding/briefs/` and stops, having changed nothing. Hand them over as `<klaus-src>/onboard/README.md` says, and run again with `--writer-branch` and `--checks-file`.
+5. **What the person does next.** Show the three pull request addresses and the table of the estimate against the run, as the run printed it. Say that the pull requests are reviewed and merged in order, each merged without deleting its branch (GitHub closes a pull request whose base branch is deleted), and the next one's base changed to the default branch after each merge. The merge tickets in `docs/klaus/tickets/` are files, and filing them where the repo files work is a separate step. The decisions list `docs/klaus/decisions.md` is the owner's to rule on, with DESIGN.md changed first. Screen captures for the data-bound components arrive once the repo's visual check captures those routes. The run does not edit AGENTS.md. Once the first pull request has merged, `inventory.json` is in the repo, and the person can add the reuse rule: before writing a new UI component, run `node scripts/klaus/find/find.mjs "<purpose>"` and record the choice as a `Klaus:` line in the PR body (the steps are in `scripts/klaus/find/SKILL.md`).
 
 ## Report
 
 End with: the path taken, the direction or branch the user picked, the references, the Jev results with their sources, the checks installed and whether they pass, each UI Skill with its pinned commit, and anything left open.
 
-For Klaus, say whether it was skipped. If it was set up, give each output as on or off with its cost lines as `install.mjs costs` printed them, the spending cap, the trigger (in release mode, the tag ruleset that protects it, or why release mode was left off), the version line from `scripts/klaus/VERSION.txt`, the secrets still to set, the steps left for the person, which workflow check ran, and the onboarding run's one-time estimate.
+For Klaus, say whether it was skipped. If it was set up, give each output as on or off with its cost lines as `install.mjs costs` printed them, the spending cap, the trigger (in release mode, the tag ruleset that protects it, or why release mode was left off), the version line from `scripts/klaus/VERSION.txt`, the secrets still to set, the steps left for the person, which workflow check ran, and the onboarding run's one-time estimate. If the onboarding run happened, give its three pull request addresses and the estimate set beside the run's actual numbers.

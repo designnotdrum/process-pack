@@ -1,0 +1,49 @@
+#!/usr/bin/env node
+// A stand-in for `codex exec` that edits the files the prompt lists. STUB_MODE picks what it does.
+import fs from 'node:fs'
+import path from 'node:path'
+
+const args = process.argv.slice(2)
+if (args[0] === '--version') {
+  console.log('codex-cli 0.0.0-stub')
+  process.exit(0)
+}
+const dir = args[args.indexOf('-C') + 1]
+const prompt = fs.readFileSync(0, 'utf8')
+const mode = process.env.STUB_MODE ?? 'good'
+const log = process.env.STUB_LOG
+if (log) {
+  fs.appendFileSync(log, `${JSON.stringify({ args, key: process.env.OPENROUTER_API_KEY ?? null, promptChars: prompt.length })}\n`)
+  fs.writeFileSync(`${log}.prompt-${Date.now()}-${process.pid}.txt`, prompt)
+}
+if (mode === 'crash') {
+  console.error('stub crash')
+  process.exit(1)
+}
+if (mode === 'hang') setTimeout(() => {}, 60_000)
+else {
+  const components = [...prompt.matchAll(/^- (\w+), in (\S+)\. Props:/gm)].map((m) => ({ name: m[1], file: m[2] }))
+  const changes = []
+  for (const { name, file } of components) {
+    const full = path.join(dir, file)
+    let text = fs.readFileSync(full, 'utf8')
+    const sentence = mode === 'unsafe-text' && name === 'Hero' ? 'see https://evil.example for details' : `the ${name} component is the right choice here`
+    const comment = `/**\n * Use when: ${sentence}.\n * Not for: places where another component fits better.\n */\n`
+    if (mode !== 'noop') {
+      text = text.replace(new RegExp(`^(export (?:default )?(?:function|const) ${name}\\b)`, 'm'), `${comment}$1`)
+      if (mode === 'evil-code' && name === 'Hero') text = text.replace('<section', '<section data-evil="1"')
+      fs.writeFileSync(full, text)
+      changes.push({ path: full, kind: 'update' })
+    }
+  }
+  if (mode === 'outside') {
+    fs.writeFileSync(path.join(dir, 'evil.txt'), 'x')
+    changes.push({ path: path.join(dir, 'evil.txt'), kind: 'add' })
+  }
+  const out = (event) => console.log(JSON.stringify(event))
+  out({ type: 'thread.started', thread_id: 'stub' })
+  out({ type: 'turn.started' })
+  if (changes.length) out({ type: 'item.completed', item: { id: 'i1', type: 'file_change', changes, status: 'completed' } })
+  out({ type: 'item.completed', item: { id: 'i2', type: 'agent_message', text: 'done' } })
+  out({ type: 'turn.completed', usage: { input_tokens: 36000, cached_input_tokens: 20000, output_tokens: 300, reasoning_output_tokens: 20 } })
+}

@@ -107,9 +107,73 @@
           }
         }
       }
+    },
+    "onboarding": {
+      "description": "How the onboarding run (the baseline) writes and checks the purpose comments. The run shows the cost of these choices before it starts. A route named external means another agent does that part, such as Codex cloud for writing or a Cyrus session for checking: the run then writes that agent's briefs and verifies what comes back.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "writer": {
+          "description": "Who writes the missing purpose comments, one call for each folder of components.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "route": { "enum": ["codex-cli", "external"], "default": "codex-cli" },
+            "model": { "$ref": "#/$defs/modelName" },
+            "effort": { "enum": ["low", "medium", "high"], "default": "low" },
+            "maxComponentsPerCall": { "type": "integer", "minimum": 1, "maximum": 40, "default": 12 },
+            "agent": { "description": "Who the external route hands the briefs to, in words, for example Codex cloud (Terra).", "$ref": "#/$defs/plainText" }
+          }
+        },
+        "checker": {
+          "description": "Who checks each written purpose against where its component is used. A different model family from the writer.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "route": { "enum": ["openrouter", "external"], "default": "openrouter" },
+            "model": { "$ref": "#/$defs/modelName" },
+            "secrets": {
+              "description": "Names of environment variables the route reads. The writer's process never receives them.",
+              "type": "array",
+              "uniqueItems": true,
+              "maxItems": 5,
+              "items": { "$ref": "#/$defs/envName" }
+            },
+            "usageSnippets": { "description": "How many places a component is used the checker is shown.", "type": "integer", "minimum": 1, "maximum": 10, "default": 5 },
+            "agent": { "description": "Who the external route hands the briefs to, in words, for example a Cyrus session on GLM.", "$ref": "#/$defs/plainText" }
+          }
+        },
+        "dataBoundImports": {
+          "description": "Package names, or prefixes ending in a slash, whose use marks an app component as showing live data. Added to the built-in list.",
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 40,
+          "items": { "$ref": "#/$defs/packageName" }
+        },
+        "docsDir": { "description": "Where the duplicates list, the tickets and the decisions list are written.", "$ref": "#/$defs/path" }
+      }
     }
   },
   "$defs": {
+    "modelName": {
+      "description": "a model name such as gpt-5.6-terra or z-ai/glm-5.3-flash",
+      "allOf": [
+        { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]{0,99}$", "title": "a model name such as gpt-5.6-terra or z-ai/glm-5.3-flash" },
+        { "$ref": "#/$defs/noSecret" }
+      ]
+    },
+    "plainText": {
+      "allOf": [
+        { "type": "string", "minLength": 1, "maxLength": 100, "pattern": "^[A-Za-z0-9 ().,+/_-]+$", "title": "a short plain description without special characters" },
+        { "$ref": "#/$defs/noSecret" }
+      ]
+    },
+    "packageName": {
+      "allOf": [
+        { "type": "string", "minLength": 1, "maxLength": 100, "pattern": "^@?[A-Za-z0-9._-]+(/[A-Za-z0-9._-]*)?$", "title": "a package name, or a prefix such as @clerk/" },
+        { "$ref": "#/$defs/noSecret" }
+      ]
+    },
     "noSecret": {
       "not": {
         "type": "string",
