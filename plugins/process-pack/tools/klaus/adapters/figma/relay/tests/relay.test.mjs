@@ -6,8 +6,8 @@ import { test } from "node:test";
 import { CALL_BASE_TOKENS, DEFAULT_MODEL, predictTokens } from "../relay.mjs";
 import { generatedRepo, KEY, ledgerOf, outputOf, relay } from "./helpers.mjs";
 
-// The success fixture's usage: 18,000 input and 5,200 output tokens.
-const SUCCESS_TOKENS = 23200;
+// The recorded success call's usage: 86,388 input and 6,274 output tokens.
+const SUCCESS_TOKENS = 92662;
 
 test("a successful call marks its units sent, and the generator stops planning them", async () => {
   const { root, folder, plan } = await generatedRepo();
@@ -29,7 +29,7 @@ test("a successful call marks its units sent, and the generator stops planning t
   assert.equal(first.status, "sent");
   assert.equal(first.calls, 1);
   assert.equal(first.tokens, SUCCESS_TOKENS);
-  assert.deepEqual(first.usage, { input_tokens: 18000, cached_input_tokens: 9000, output_tokens: 5200, reasoning_output_tokens: 64 });
+  assert.deepEqual(first.usage, { input_tokens: 86388, cached_input_tokens: 53120, output_tokens: 6274, reasoning_output_tokens: 0 });
   assert.deepEqual(
     output.adapter.details.units.map((u) => [u.id, u.status, u.figma, u.calls, u.tokens]),
     [["Button", "sent", "written", 1, SUCCESS_TOKENS], ["Card", "sent", "written", 1, SUCCESS_TOKENS]],
@@ -86,7 +86,7 @@ test("a tool error leaves the units unsent and reports them, and the next run re
   assert.deepEqual(output.written, ["Button"]);
   assert.deepEqual(output.failed, [{ id: "Card", error: "use_figma failed: Error: You do not have edit access to this file." }]);
   assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "sent" }, Card: { "1.0.0": "generated" } });
-  assert.equal(output.adapter.details.files[1].tokens, 23100, "a failed call still counts its tokens");
+  assert.equal(output.adapter.details.files[1].tokens, 68817, "a failed call still counts its tokens");
 
   const second = await relay(root, [folder]);
   assert.equal(second.code, 0);
@@ -125,12 +125,37 @@ test("a unit the code reports failed stays unsent while the rest of its file is 
   assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "sent" }, Card: { "1.0.0": "generated" } });
 });
 
-test("code that Codex changed on the way is not trusted, even when Figma ran it", async () => {
+test("a set Figma drew from changed code is recorded as changed, and a later exists does not count", async () => {
   const { root, folder } = await generatedRepo({ perFile: 10 });
-  const run = await relay(root, [folder], { scenarios: "changed-code" });
-  assert.equal(run.code, 1);
+  const first = await relay(root, [folder], { scenarios: "changed-code" });
+  assert.equal(first.code, 1);
+  assert.match(outputOf(first.report).failed[0].error, /^Figma drew Button 1\.0\.0 from code Codex changed on the way, so the set may be wrong\. Delete it in Figma/);
+  assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "changed" }, Card: { "1.0.0": "changed" } });
+
+  // The next call copies the code exactly, and the code finds the wrong set already there.
+  const second = await relay(root, [folder], { scenarios: "exists" });
+  assert.equal(second.code, 1);
+  assert.match(outputOf(second.report).failed[0].error, /Button 1\.0\.0 in Figma was drawn from code Codex changed in an earlier run/);
+  assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "changed" }, Card: { "1.0.0": "changed" } });
+
+  // Once a person has deleted the sets, the next call writes them again from the right code.
+  const third = await relay(root, [folder], { scenarios: "success" });
+  assert.equal(third.code, 0);
+  assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "sent" }, Card: { "1.0.0": "sent" } });
+});
+
+test("code Codex changed on the way is not trusted when the call failed", async () => {
+  const { root, folder } = await generatedRepo({ perFile: 10 });
+  const run = await relay(root, [folder], { scenarios: "changed-code-failed" });
   assert.match(outputOf(run.report).failed[0].error, /Codex changed the code before it reached use_figma/);
-  assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "generated" }, Card: { "1.0.0": "generated" } });
+  assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "generated" }, Card: { "1.0.0": "generated" } }, "nothing was drawn, so nothing is changed");
+});
+
+test("an exists from an exact copy marks a unit sent", async () => {
+  const { root, folder } = await generatedRepo({ perFile: 10 });
+  const run = await relay(root, [folder], { scenarios: "exists" });
+  assert.equal(run.code, 0);
+  assert.deepEqual(outputOf(run.report).adapter.details.units.map((u) => [u.id, u.status, u.figma]), [["Button", "sent", "exists"], ["Card", "sent", "exists"]]);
 });
 
 test("a reply without a use_figma call is a failure, with what Codex said", async () => {
@@ -145,9 +170,10 @@ test("a reply without a use_figma call is a failure, with what Codex said", asyn
 test("the token cap stops before the call that would pass it, and defers the rest", async () => {
   const predicted = predictTokens(0);
   assert.ok(predicted >= CALL_BASE_TOKENS);
-  // Room for the first call and not for the second, once the first has been measured.
-  const { root, folder, manifest } = await generatedRepo({ components: ["Button", "Card", "Badge"], config: { outputs: { figma: { enabled: true, target: KEY } }, spendingCap: { maxRelayTokens: SUCCESS_TOKENS + 1000 } } });
-  assert.ok(predictTokens(manifest.files[0].chars) < SUCCESS_TOKENS + 1000, "the first call fits its prediction");
+  // Room for the first call and not for the second.
+  const probe = await generatedRepo();
+  const cap = Math.max(predictTokens(probe.manifest.files[0].chars), SUCCESS_TOKENS) + 1000;
+  const { root, folder } = await generatedRepo({ components: ["Button", "Card", "Badge"], config: { outputs: { figma: { enabled: true, target: KEY } }, spendingCap: { maxRelayTokens: cap } } });
 
   const run = await relay(root, [folder]);
 
@@ -159,6 +185,15 @@ test("the token cap stops before the call that would pass it, and defers the res
   assert.deepEqual(output.adapter.details.files.map((f) => [f.name, f.status]), [["figma-001.js", "sent"], ["figma-002.js", "deferred"], ["figma-003.js", "deferred"]]);
   assert.ok(output.warnings.some((w) => /stopped before a call that would pass the token-cap/.test(w)));
   assert.equal(ledgerOf(root).components.Card["1.0.0"], "generated", "a deferred unit stays unsent for the next run");
+});
+
+test("a file that alone needs more than the token cap is deferred with a reason that says it never fits", async () => {
+  const { root, folder } = await generatedRepo({ config: { outputs: { figma: { enabled: true, target: KEY } }, spendingCap: { maxRelayTokens: 50000 } } });
+  const run = await relay(root, [folder]);
+  assert.equal(run.calls.length, 0);
+  const output = outputOf(run.report);
+  assert.deepEqual(output.deferred.map((d) => d.reason), ["larger-than-token-cap", "larger-than-token-cap"]);
+  assert.ok(output.warnings.some((w) => /will never be sent at this cap\. Raise the cap, or lower outputs\.figma\.options\.componentsPerCall/.test(w)));
 });
 
 test("the component write cap and --max-calls defer the same way", async () => {

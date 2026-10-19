@@ -6,10 +6,12 @@ import path from "node:path";
 import { test } from "node:test";
 import {
   anyVersionSent,
+  CHANGED,
   componentSent,
   emptyLedger,
   entryOf,
   entrySent,
+  entryStatus,
   GENERATED,
   readLedger,
   recordComponent,
@@ -41,6 +43,17 @@ test("generating a sent version again leaves it sent", () => {
   recordComponent(ledger, "Button", "1.0.0", SENT);
   recordComponent(ledger, "Button", "1.0.0");
   assert.equal(ledger.components.Button["1.0.0"], SENT);
+});
+
+test("a version drawn from changed code stays changed when generated again, and is not sent", () => {
+  const ledger = emptyLedger();
+  recordComponent(ledger, "Button", "1.1.0", CHANGED);
+  recordComponent(ledger, "Button", "1.1.0");
+  assert.equal(entryStatus(ledger, { kind: "component", name: "Button", version: "1.1.0" }), CHANGED);
+  assert.equal(componentSent(ledger, "Button", "1.1.0"), false);
+  assert.deepEqual(readLedger(ledgerFile(ledger)).components, { Button: { "1.1.0": CHANGED } });
+  recordComponent(ledger, "Button", "1.1.0", SENT);
+  assert.equal(componentSent(ledger, "Button", "1.1.0"), true, "a later write from the right code clears it");
 });
 
 test("a version 1 ledger counted code files as written, so its entries read as generated", () => {

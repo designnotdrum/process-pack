@@ -15,6 +15,12 @@
  * plan leaves out sent units only, so a unit whose relay call failed is planned,
  * generated and sent again.
  *
+ * The relay records "changed" when Figma drew a unit from code that Codex
+ * changed on the way. The set in Figma may then differ from the generated code,
+ * and the code leaves an existing set alone, so a later "exists" proves nothing.
+ * A changed unit becomes sent only when a call writes it again, after a person
+ * has deleted the set in Figma. Generating its code again does not clear it.
+ *
  * The file sits in the adapter's output folder. If it is lost, the next run
  * plans everything again. That costs relay tokens and nothing else: the
  * generated code leaves a set that already exists alone.
@@ -25,8 +31,9 @@ import { readJsonFile } from "../../frame/json-file.mjs";
 export const LEDGER_VERSION = 2;
 export const GENERATED = "generated";
 export const SENT = "sent";
+export const CHANGED = "changed";
 
-const STATUSES = new Set([GENERATED, SENT]);
+const STATUSES = new Set([GENERATED, SENT, CHANGED]);
 
 export function emptyLedger() {
   return { version: LEDGER_VERSION, components: {}, screens: {} };
@@ -74,8 +81,8 @@ const ownEntry = (table, key) => (Object.hasOwn(table, key) ? table[key] : undef
 
 function mark(table, key, value, status) {
   const entry = ownEntry(table, key) ?? {};
-  // Generating a sent version's code again does not take it out of Figma.
-  if (!(status === GENERATED && entry[value] === SENT)) entry[value] = status;
+  // Generating the code again does not take a sent set out of Figma, or fix a changed one.
+  if (!(status === GENERATED && (entry[value] === SENT || entry[value] === CHANGED))) entry[value] = status;
   table[key] = entry;
 }
 
@@ -114,9 +121,12 @@ export function recordEntry(ledger, entry, status) {
   else throw unknownKind(entry.kind);
 }
 
-/** True when the relay has sent the unit a manifest names. */
-export function entrySent(ledger, entry) {
-  if (entry.kind === "component") return componentSent(ledger, entry.name, entry.version);
-  if (entry.kind === "screen") return screenSent(ledger, entry.route, entry.release);
+/** The status the ledger holds for the unit a manifest names, or undefined. */
+export function entryStatus(ledger, entry) {
+  if (entry.kind === "component") return ownEntry(ledger.components, entry.name)?.[entry.version];
+  if (entry.kind === "screen") return ownEntry(ledger.screens, entry.route)?.[entry.release];
   throw unknownKind(entry.kind);
 }
+
+/** True when the relay has sent the unit a manifest names. */
+export const entrySent = (ledger, entry) => entryStatus(ledger, entry) === SENT;

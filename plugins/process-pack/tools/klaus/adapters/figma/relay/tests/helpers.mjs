@@ -39,7 +39,10 @@ const browser = {
  * A repo with the generator's output for one release: one code file per component unless
  * perFile says otherwise. Returns the repo, the release folder and the manifest.
  */
-export async function generatedRepo({ components = ["Button", "Card"], perFile = 1, release = "v1.0.0", config } = {}) {
+/** A cap no test reaches unless it means to. At measured costs, the frame's default allows about one call. */
+const ROOMY = { outputs: { figma: { enabled: true, target: KEY } }, spendingCap: { maxRelayTokens: 10000000 } };
+
+export async function generatedRepo({ components = ["Button", "Card"], perFile = 1, release = "v1.0.0", config = ROOMY } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "klaus-relay-"));
   if (config) writeFileSync(path.join(root, "klaus.config.json"), JSON.stringify(config));
   const ctx = {

@@ -58,7 +58,7 @@ import { UserError } from "../../../frame/errors.mjs";
 import { readJsonFile, writeJsonFile } from "../../../frame/json-file.mjs";
 import { buildReport, writeReport } from "../../../frame/report.mjs";
 import { MANIFEST_VERSION } from "../index.mjs";
-import { entrySent, readLedger, recordEntry, SENT } from "../ledger.mjs";
+import { CHANGED, entrySent, entryStatus, readLedger, recordEntry, SENT } from "../ledger.mjs";
 import { DEFAULT_OPTIONS, readOptions } from "../settings.mjs";
 import { FIGMA_SERVER, FIGMA_TOOL, parseEvents, readCodeResult, relayTokens, resultText, summarizeEvents } from "./events.mjs";
 
@@ -69,12 +69,16 @@ export const DEFAULT_ARTIFACT = "klaus-figma";
 export const DEFAULT_FIGMA_URL = "https://mcp.figma.com/mcp";
 
 /**
- * Relay tokens a call costs before its code: Codex's instructions, the use_figma
- * definition and the prompt. Unverified until the first real run measures it.
+ * What a call costs, measured on 2026-10-18 with gpt-6-luna at low effort: three calls with
+ * 18,750, 20,582 and 20,582 characters of code cost 92,662, 68,817 and 99,687 relay tokens.
+ * A call is two model requests, one that writes the use_figma call and one after its result,
+ * and each request reads Codex's instructions, the tool's definition and the code again.
+ * Output ran at about 0.35 tokens a character, and the code is read about three times and
+ * written once, so 1.4 tokens a character. The fixed part is set from the dearest call, so a
+ * prediction is not lower than what that call cost.
  */
-export const CALL_BASE_TOKENS = 12000;
-/** Relay tokens per character of code: the code is read once and written once as the tool's argument. */
-export const TOKENS_PER_CODE_CHAR = 2 / 3.75;
+export const CALL_BASE_TOKENS = 71000;
+export const TOKENS_PER_CODE_CHAR = 1.4;
 
 /** The output name in the run report, so a relay run is not counted as another generator run. */
 export const REPORT_OUTPUT = "figma-relay";
@@ -259,12 +263,16 @@ function spawnCodex(codex, args, input, cwd, timeoutMs) {
   });
 }
 
+/** How a unit is named in Figma: the set "Button 1.1.0", or the frame "/settings v3.0.0". */
+const labelOf = (entry) => (entry.kind === "component" ? `${entry.name} ${entry.version}` : `${entry.route} ${entry.release}`);
+
 const lastLine = (text) => String(text).trim().split("\n").filter(Boolean).at(-1)?.slice(0, 300) ?? "";
 
 /**
  * Sends one code file and reads the outcome.
- * @returns {Promise<{ units: Map<string, object>, error: string | null, usage: object | null, tokens: number | null, warnings: string[], durationMs: number }>}
+ * @returns {Promise<{ units: Map<string, object>, changed: Set<string>, error: string | null, usage: object | null, tokens: number | null, warnings: string[], durationMs: number }>}
  *   units holds what the code reported for each unit, from calls that carried the file's code unchanged.
+ *   changed holds the units Figma wrote from code Codex had changed.
  */
 async function sendFile({ codex, args, code, workdir, timeoutMs, fileKey, eventsFile }) {
   const startedAt = Date.now();
@@ -277,6 +285,7 @@ async function sendFile({ codex, args, code, workdir, timeoutMs, fileKey, events
   const summary = summarizeEvents(events);
   const warnings = [];
   const units = new Map();
+  const changed = new Set();
   const errors = [];
   const text = code.toString("utf8").trim();
 
@@ -291,6 +300,9 @@ async function sendFile({ codex, args, code, workdir, timeoutMs, fileKey, events
     const sent = call.arguments?.code;
     if (typeof sent !== "string" || sent.trim() !== text) {
       errors.push(`Codex changed the code before it reached ${FIGMA_TOOL}, so its result is not trusted.`);
+      // Figma may still have drawn units from the changed code. Those sets may be wrong.
+      const drawn = call.status === "completed" ? readCodeResult(call.result) : null;
+      for (const unit of drawn?.units ?? []) if (unit.status === "written") changed.add(unit.id);
       continue;
     }
     if (call.arguments?.fileKey !== fileKey) {
@@ -331,6 +343,7 @@ async function sendFile({ codex, args, code, workdir, timeoutMs, fileKey, events
 
   return {
     units,
+    changed,
     error: errors.length > 0 ? [...new Set(errors)].join(" ") : null,
     usage: summary.usage,
     tokens: relayTokens(summary.usage),
@@ -343,6 +356,7 @@ async function sendFile({ codex, args, code, workdir, timeoutMs, fileKey, events
 function capReason({ totals, predicted, components, cap, maxCalls }) {
   if (maxCalls !== null && totals.calls + 1 > maxCalls) return "call-cap";
   if (totals.componentWrites + components > cap.maxComponentWrites) return "write-cap";
+  if (predicted > cap.maxRelayTokens) return "larger-than-token-cap";
   if (totals.tokens + predicted > cap.maxRelayTokens) return "token-cap";
   return null;
 }
@@ -481,33 +495,39 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
       }
 
       let sentHere = 0;
+      const marks = [];
       for (const entry of entries) {
         const returned = outcome.units.get(entry.id);
         const base = { ...unitBase(entry), figma: returned?.status, calls: share(1, entries.length), tokens: share(outcome.tokens, entries.length) };
-        if (SENT_STATUSES.has(returned?.status)) {
-          if (pending.includes(entry)) {
-            recordEntry(ledger, entry, SENT);
-            sent.push(entry.id);
-            sentHere += 1;
-            unitRecords.push({ ...base, status: "sent" });
-          } else unitRecords.push({ ...base, status: "already sent" });
-          continue;
-        }
         if (!pending.includes(entry)) {
           unitRecords.push({ ...base, status: "already sent" });
           continue;
         }
-        const error = returned?.status === "failed"
-          ? `Figma: ${String(returned.error ?? "the unit failed")}`
-          : outcome.error ?? `${FIGMA_TOOL}'s result does not list ${entry.id}.`;
+        let error = null;
+        if (outcome.changed.has(entry.id)) {
+          marks.push([entry, CHANGED]);
+          error = `Figma drew ${labelOf(entry)} from code Codex changed on the way, so the set may be wrong. Delete it in Figma, then run the relay again.`;
+        } else if (returned?.status === "exists" && entryStatus(ledger, entry) === CHANGED) {
+          error = `${labelOf(entry)} in Figma was drawn from code Codex changed in an earlier run. Delete it in Figma, then run the relay again.`;
+        } else if (SENT_STATUSES.has(returned?.status)) {
+          marks.push([entry, SENT]);
+          sent.push(entry.id);
+          sentHere += 1;
+          unitRecords.push({ ...base, status: "sent" });
+          continue;
+        } else if (returned?.status === "failed") error = `Figma: ${String(returned.error ?? "the unit failed")}`;
+        else error = outcome.error ?? `${FIGMA_TOOL}'s result does not list ${entry.id}.`;
         failed.push({ id: entry.id, error });
         unitRecords.push({ ...base, status: "failed", error });
       }
-      if (sentHere > 0) {
+      if (marks.length > 0) {
         // Apply this file's marks to the ledger as it is now, so a mark another run wrote
         // since this run read it is kept.
         const fresh = readLedger(ledgerPath);
-        for (const entry of pending) if (entrySent(ledger, entry)) recordEntry(fresh, entry, SENT);
+        for (const [entry, status] of marks) {
+          recordEntry(fresh, entry, status);
+          recordEntry(ledger, entry, status);
+        }
         writeJsonFile(ledgerPath, fresh);
       }
 
@@ -537,7 +557,9 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
     warnings.push(`The relay does not upload screenshots yet, so ${plural(uploads.length, "upload")}${manifest.afterUploads ? " and the retention file" : ""} were not sent.`);
   }
   if (totals.unmeasured > 0) warnings.push(`${plural(totals.unmeasured, "call")} ended without a token count, so actual tokens leave them out. The cap counted their predicted tokens.`);
-  if (stopped) warnings.push(`The relay stopped before a call that would pass the ${stopped}. The rest is deferred to the next run.`);
+  if (stopped === "larger-than-token-cap") {
+    warnings.push("The next code file alone needs more relay tokens than spendingCap.maxRelayTokens allows, so it will never be sent at this cap. Raise the cap, or lower outputs.figma.options.componentsPerCall.");
+  } else if (stopped) warnings.push(`The relay stopped before a call that would pass the ${stopped}. The rest is deferred to the next run.`);
 
   const actual = { calls: dryRun ? 0 : totals.calls, tokens: dryRun ? 0 : totals.measured, usd: 0 };
   const summary = dryRun

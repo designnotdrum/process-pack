@@ -60,7 +60,7 @@ node scripts/klaus/adapters/figma/relay/relay.mjs --run 1234567890 --repo acme/a
 3. For each code file in order, skips it when every unit in it is already sent. Otherwise it checks the spending cap, then runs `codex exec` once:
    - The code goes to Codex on stdin, byte for byte. The prompt holds no code. It tells Codex to call `use_figma` exactly once with that code, report the result, and do nothing else.
    - Codex runs with a clean config: only the `figma` server, only its `use_figma` tool, no plugins, no hooks, a read-only sandbox, in an empty folder. `--keep-codex-config` uses `~/.codex/config.toml` instead.
-   - The default model is `gpt-6-luna` at low effort, because the job is copying. `--model` and `--effort` change it.
+   - The default model is `gpt-6-luna` at low effort, because the job is copying. `--model` and `--effort` change it. See "What the first real run measured" below before relying on it.
 4. Reads Codex's JSON events. A unit is marked `sent` in the ledger only when all of these hold:
    - `use_figma` finished without an error.
    - The code it received, by Codex's own events, is the file's code. Whitespace at either end is ignored.
@@ -69,17 +69,34 @@ node scripts/klaus/adapters/figma/relay/relay.mjs --run 1234567890 --repo acme/a
 
 A unit that failed stays `generated`. The next relay run on the same folder sends its file again, and the next generator run plans it again. Sending a file twice is safe: the code leaves a set that already exists alone and reports it as `exists`.
 
+When Codex changed the code and Figma still wrote a unit from it, the set in Figma may be wrong. The relay records that unit as `changed` and the report says to delete the set in Figma. While a unit is `changed`, an `exists` from a later call does not count, because it only means a set of that name is there. The unit becomes `sent` when a call writes it again from the right code.
+
 ## The spending cap
 
-The cap comes from `spendingCap` in `klaus.config.json`, or the frame's defaults (50 component writes, 100,000 relay tokens). Before each call the relay adds the file's components and its predicted tokens to what the run has used. If either would pass its limit, the call is not made. That file and every file after it are reported as deferred, and they stay `generated`. `--max-calls <n>` adds a limit on calls. Going over the cap is not a failure.
+The cap comes from `spendingCap` in `klaus.config.json`, or the frame's defaults (50 component writes, 100,000 relay tokens). Before each call the relay adds the file's components and its predicted tokens to what the run has used. If either would pass its limit, the call is not made. That file and every file after it are reported as deferred, and they stay `generated`. A file that alone needs more tokens than the whole limit is deferred as `larger-than-token-cap`, with a warning that it will never fit. `--max-calls <n>` adds a limit on calls. Going over the cap is not a failure.
 
-A call's relay tokens are Codex's `input_tokens` plus `output_tokens`. Cached input is part of input. The prediction for the first call is a fixed cost plus a cost per character of code. A call measured during the run raises the prediction for the next ones, never lowers it. A call that ends without a token count is left out of the report's actual tokens, and the cap counts its prediction.
+A call's relay tokens are Codex's `input_tokens` plus `output_tokens`. Cached input is part of input, and reasoning output is part of output. The prediction is 71,000 tokens plus 1.4 tokens per character of code, from the first real run. A call measured during the run raises the prediction for the next ones, never lowers it. A call that ends without a token count is left out of the report's actual tokens, and the cap counts its prediction.
+
+## What the first real run measured
+
+On 2026-10-18 the relay ran three times on the laptop, with `gpt-6-luna` at low effort, into the Klaus prototype file:
+
+| Call | Code file | Characters | Relay tokens (input, cached input, output) | Seconds | Outcome |
+|---|---|---|---|---|---|
+| 1 | Button 1.0.0 | 18,750 | 92,662 (86,388, 53,120, 6,274) | 39 | sent: Figma reported `exists`, a set of that name from an earlier test |
+| 2 | Button 1.1.0 | 20,582 | 68,817 (61,694, 27,136, 7,123) | 44 | Figma drew the set; the relay refused it: Codex had added a duplicate `"pa":"C"` key |
+| 3 | Button 1.1.0, retry | 20,582 | 99,687 (92,508, 56,064, 7,179) | 45 | refused: Codex had added a primary fill to a secondary button; Figma reported `exists` |
+
+Two things follow:
+
+- **A call costs about 70,000 to 100,000 relay tokens, not 1,200 a component.** A call is two model requests, and each one reads Codex's instructions, the tool's definition and the code. At the frame's default cap of 100,000 tokens a run makes one call, and a file over about 20,000 characters never fits. The cap and the generator's estimate need new numbers before Klaus relies on the relay.
+- **`gpt-6-luna` at low effort did not copy a 20,582-character file exactly in two tries.** Call 1 dropped only the final newline, which the relay allows. The relay caught both changes, so nothing wrong was recorded as sent. Whether a stronger model copies exactly is unverified.
 
 ## The report
 
 Next to the frame's fields (`written`, `deferred`, `failed`, `estimated`, `actual`), `adapter.details` lists:
 
-- `files`: each code file with its status (`sent`, `partly sent`, `failed`, `deferred`, `already sent`), calls, tokens, Codex's token usage, predicted tokens and time taken.
+- `files`: each code file with its status (`sent`, `partly sent`, `failed`, `deferred`, `already sent`, `would send`), calls, tokens, Codex's token usage, predicted tokens and time taken.
 - `units`: each unit with its status, what Figma reported, and its share of its file's call and tokens. A file's call is shared evenly among its units.
 
 Exit code 1 means a unit failed. Exit code 2 means something to fix before a run, such as the Figma sign-in.
@@ -98,4 +115,4 @@ Exit code 1 means a unit failed. Exit code 2 means something to fix before a run
 node --test "plugins/process-pack/tools/klaus/adapters/figma/relay/**/*.test.mjs"
 ```
 
-The tests put a stub `codex` and a stub `gh` first on `PATH` (`tests/stub/`). The stub replays the event output in `tests/fixtures/`: a success, a tool error, a crash, a reply with no call, and code changed on the way.
+The tests put a stub `codex` and a stub `gh` first on `PATH` (`tests/stub/`). The stub replays the event output in `tests/fixtures/`. `success.jsonl` is the event stream of real call 1, with the code, file key and result replaced by placeholders. The stub also covers a tool error, a crash, a reply with no call, and code changed on the way. The no-call and crash fixtures follow Codex's documented event shapes, because no real run has produced them.
