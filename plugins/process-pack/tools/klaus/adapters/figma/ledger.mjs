@@ -21,6 +21,11 @@
  * A changed unit becomes sent only when a call writes it again, after a person
  * has deleted the set in Figma. Generating its code again does not clear it.
  *
+ * The relay's reconcile mode also records "sent", for a generated component
+ * version whose set it found in Figma, because the Klaus plugin wrote it and
+ * cannot write this file. It never touches a changed unit. The ledger does not
+ * say which way a unit became sent: the run report does.
+ *
  * The file sits in the adapter's output folder. If it is lost, the next run
  * plans everything again. That costs relay tokens and nothing else: the
  * generated code leaves a set that already exists alone.
@@ -106,6 +111,36 @@ export const screenSent = (ledger, route, release) => ownEntry(ledger.screens, r
 
 /** True when any version of the component has reached Figma. */
 export const anyVersionSent = (ledger, name) => Object.values(ownEntry(ledger.components, name) ?? {}).includes(SENT);
+
+/**
+ * Every component version the ledger holds as generated, as ledger entries. Sent and changed
+ * versions are left out: reconcile looks only for what has not been confirmed in Figma.
+ */
+export function generatedComponents(ledger) {
+  const out = [];
+  for (const [name, versions] of Object.entries(ledger.components)) {
+    for (const [version, status] of Object.entries(versions)) {
+      if (status === GENERATED) out.push({ kind: "component", name, version });
+    }
+  }
+  return out;
+}
+
+/** Counts the screen releases the ledger holds as generated. */
+export function generatedScreenCount(ledger) {
+  return Object.values(ledger.screens).reduce((n, releases) => n + Object.values(releases).filter((status) => status === GENERATED).length, 0);
+}
+
+/**
+ * Records a unit as sent only if the ledger still holds it as generated. A changed unit stays
+ * changed, and a unit already sent is left as it is.
+ * @returns {boolean}  True when the entry was generated and is now sent.
+ */
+export function markGeneratedAsSent(ledger, entry) {
+  if (entryStatus(ledger, entry) !== GENERATED) return false;
+  recordEntry(ledger, entry, SENT);
+  return true;
+}
 
 /** The ledger entry of a generated unit, as the manifest lists it for the relay. */
 export function entryOf(unit) {
