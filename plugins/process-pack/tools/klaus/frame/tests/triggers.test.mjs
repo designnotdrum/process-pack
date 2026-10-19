@@ -53,6 +53,12 @@ test("a last release that is no longer a tag falls back to the newest and says s
   assert.match(notes[0], /v0\.1\.0 is no longer a tag/);
 });
 
+test("a last release that is no longer a tag, with no releases at all, says no release is covered", () => {
+  const { covered, notes } = releasesToCover({ releases: [], trigger: "manual", lastRelease: "v0.1.0" });
+  assert.deepEqual(covered, []);
+  assert.deepEqual(notes, ["The last recorded release v0.1.0 is no longer a tag, so no release is covered."]);
+});
+
 test("only the configured trigger starts a run, and a manual run always may", () => {
   const config = { trigger: { mode: "release" } };
   assert.equal(triggerEnabled(config, "release"), true);

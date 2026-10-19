@@ -1,16 +1,23 @@
 /** The state file the runner reads and writes between runs. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { emptyState, readState, writeState } from "../state.mjs";
+import { UserError } from "../errors.mjs";
+import { readState, writeState } from "../state.mjs";
 
 const dir = () => mkdtempSync(path.join(tmpdir(), "klaus-state-"));
 
 test("a missing state file is a first run", () => {
-  assert.deepEqual(readState(path.join(dir(), "none.json")), emptyState());
+  assert.deepEqual(readState(path.join(dir(), "none.json")), { version: 1, outputs: {} });
+});
+
+test("a state path that cannot be read as a file is a usage error, not a crash", () => {
+  const folder = path.join(dir(), "state.json");
+  mkdirSync(folder);
+  assert.throws(() => readState(folder), (error) => error instanceof UserError && /could not be read \(EISDIR\)/.test(error.message));
 });
 
 test("writes and reads back, creating folders and leaving no temporary file", () => {

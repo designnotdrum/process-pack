@@ -43,6 +43,7 @@ export function readState(file) {
     text = readFileSync(file, "utf8");
   } catch (error) {
     if (error.code === "ENOENT") return emptyState();
+    if (error.syscall && error.code) throw new UserError(`${file} could not be read (${error.code}).`);
     throw error;
   }
   let state;

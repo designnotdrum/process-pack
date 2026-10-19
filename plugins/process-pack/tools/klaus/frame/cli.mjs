@@ -55,8 +55,12 @@ function listReleases(pattern) {
   const args = ["tag", "--list", pattern, "--sort=version:refname", "--sort=creatordate"];
   try {
     return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).split("\n").filter(Boolean);
-  } catch {
-    throw new UserError("Could not list release tags. Run this inside the repo's git checkout, with tags fetched.");
+  } catch (error) {
+    if (error?.code === "ENOENT") throw new UserError("Could not run git to list release tags. Install git, or run this where git is on the PATH.");
+    // Git ran and refused: say what it said. Any other failure to start it is not something the reader can fix here.
+    if (typeof error?.status !== "number") throw error;
+    const said = String(error.stderr ?? "").trim().split("\n")[0];
+    throw new UserError(`Could not list release tags${said ? ` (git said: ${said})` : ""}. Run this inside the repo's git checkout, with tags fetched.`);
   }
 }
 
@@ -131,11 +135,20 @@ async function runCommand(values) {
   });
 
   let reportFile = null;
+  let reportError = null;
   if (!values["dry-run"]) {
+    // The state is saved first: the outputs are already written, so a rerun must not write them again.
     writeState(values.state, nextState);
-    reportFile = writeReport(values["report-dir"], report);
+    try {
+      reportFile = writeReport(values["report-dir"], report);
+    } catch (error) {
+      reportError = error;
+    }
   }
   console.log(values.json ? JSON.stringify(report, null, 2) : summarize(report, reportFile));
+  if (reportError) {
+    throw new UserError(`The run finished and ${values.state} was updated, but the report could not be written to ${values["report-dir"]} (${reportError.code ?? reportError.message}).`);
+  }
   return report.status === "failed" ? 1 : 0;
 }
 
@@ -148,11 +161,12 @@ async function main(argv) {
     if (command === "run") return await runCommand(values);
     throw new UserError(USAGE);
   } catch (error) {
-    if (error instanceof UserError || error.code?.startsWith("ERR_PARSE_ARGS")) {
+    // The code is not always a string, and a module can throw a value that is not an Error at all.
+    if (error instanceof UserError || (typeof error?.code === "string" && error.code.startsWith("ERR_PARSE_ARGS"))) {
       console.error(error.message);
       return 2;
     }
-    console.error(error.stack ?? error);
+    console.error(error?.stack ?? error);
     return 3;
   }
 }

@@ -51,7 +51,8 @@ export function releasesToCover({ releases, trigger, release, lastRelease }) {
       // A deleted or renamed tag leaves no way to tell which releases came after it. Stopping would
       // wedge every later run until someone edits the state file, so recover from one release
       // and leave the note in the run report.
-      notes.push(`The last recorded release ${lastRelease} is no longer a tag, so only ${covered[0] ?? "no release"} is covered.`);
+      const now = covered.length > 0 ? `only ${covered[0]} is covered` : "no release is covered";
+      notes.push(`The last recorded release ${lastRelease} is no longer a tag, so ${now}.`);
     }
     return { covered, notes };
   }

@@ -4,10 +4,12 @@ import { isRepoFile, isScreenFile, screenLabel, toPosix, walk } from './files.mj
 
 const EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']
 
-const readJson = (file) => {
+/** A package.json that cannot be read or parsed counts as empty, with a warning, so the scan carries on. */
+const readJson = (file, root) => {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'))
-  } catch {
+  } catch (error) {
+    console.warn(`Skipped ${toPosix(path.relative(root, file))}: ${error.code ?? 'not valid JSON'}`)
     return {}
   }
 }
@@ -38,8 +40,8 @@ function targetsOf(entry) {
  * Where a workspace package's source lives. The package.json points at the built files in
  * `dist`, which a fresh checkout does not have, so each target is mapped back to `src`.
  */
-function workspaceSource(dir, subpath) {
-  const pkg = readJson(path.join(dir, 'package.json'))
+function workspaceSource(dir, subpath, root) {
+  const pkg = readJson(path.join(dir, 'package.json'), root)
   const targets = subpath === '.' ? [...targetsOf(pkg.exports?.['.']), pkg.module, pkg.main, pkg.types] : [...targetsOf(pkg.exports?.[subpath]), subpath]
   for (const target of targets.filter((t) => typeof t === 'string')) {
     const stripped = target.replace(/\.d\.[cm]?ts$|\.[cm]?[jt]sx?$/, '')
@@ -59,7 +61,7 @@ function workspaceSource(dir, subpath) {
 function findPackages(root) {
   const packages = new Map()
   for (const file of walk(root, (name) => name === 'package.json')) {
-    const name = readJson(file).name
+    const name = readJson(file, root).name
     if (typeof name === 'string') packages.set(name, path.dirname(file))
   }
   return packages
@@ -165,7 +167,7 @@ export function readUsage({ ts, root, tsconfigs }) {
 
   function resolveImportUncached(spec, from) {
     const name = packageNames.find((n) => spec === n || spec.startsWith(`${n}/`))
-    if (name) return workspaceSource(packages.get(name), spec === name ? '.' : `./${spec.slice(name.length + 1)}`)
+    if (name) return workspaceSource(packages.get(name), spec === name ? '.' : `./${spec.slice(name.length + 1)}`, root)
     const options = tsconfigs.optionsFor(from)
     if (!resolutionCaches.has(options)) resolutionCaches.set(options, ts.createModuleResolutionCache(root, (f) => f, options))
     const resolved = ts.resolveModuleName(spec, from, options, ts.sys, resolutionCaches.get(options)).resolvedModule

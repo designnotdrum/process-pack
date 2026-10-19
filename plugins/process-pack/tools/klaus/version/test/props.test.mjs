@@ -318,6 +318,18 @@ describe('when the compiler cannot load a file', () => {
   })
 })
 
+describe('when the compiler cannot load a file on either side', () => {
+  test('the note names both files', () => {
+    const base = makeTree(['common'])
+    const head = makeTree(['common'])
+    const result = compare(base, head, [{ primary: 'Widget', file: `${COMPONENTS}/Widget.tsx` }]).get('Widget')
+    assert.equal(result.level, 'none')
+    assert.match(result.note, /^The compiler could not load .*\/Widget\.tsx or .*\/Widget\.tsx\.$/)
+    const [first, second] = /could not load (.*)\.$/.exec(result.note)[1].split(' or ')
+    assert.notEqual(first, second)
+  })
+})
+
 describe('with a TypeScript that cannot say which way a type changed', () => {
   test('any difference in a prop type is major, and the result says it compared text only', () => {
     const file = `${COMPONENTS}/Widget.tsx`

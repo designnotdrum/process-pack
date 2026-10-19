@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -7,7 +7,7 @@ import { after, before, describe, mock, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { groupFamilies, ownProp, parsePurpose } from '../components.mjs'
 import { readFolders } from '../config.mjs'
-import { isInside, isRepoFile, toPosix } from '../files.mjs'
+import { isInside, isRepoFile, localRouteOf, resetCaches, toPosix } from '../files.mjs'
 import { buildInventory } from '../inventory.mjs'
 import { renderMarkdown } from '../markdown.mjs'
 
@@ -161,6 +161,7 @@ describe('where used', () => {
 
 describe('the entry', () => {
   test('leaves version and screenshot present but empty', () => {
+    assert.ok(inventory.entries.length > 0, 'the fixture must produce entries, or the loop below checks nothing')
     for (const e of inventory.entries) {
       assert.equal(e.version, '')
       assert.equal(e.screenshot, '')
@@ -237,6 +238,7 @@ describe('paths', () => {
   })
 
   test('are repo-relative and POSIX in the inventory', () => {
+    assert.ok(inventory.entries.length > 0, 'the fixture must produce entries, or the loop below checks nothing')
     for (const e of inventory.entries) {
       assert.ok(!e.file.includes('\\') && !path.isAbsolute(e.file), e.file)
       // Shared entries list importing files; the rest list routes, which start with a slash by design.
@@ -263,6 +265,65 @@ describe('a file that cannot be read', () => {
     } finally {
       warn.mock.restore()
       fs.rmSync(locked, { force: true })
+    }
+  })
+})
+
+describe('a folder that cannot be listed', () => {
+  const canLock = process.platform !== 'win32' && process.getuid?.() !== 0
+
+  test('is skipped once with a warning, and the rest of the scan carries on', { skip: !canLock }, () => {
+    const locked = path.join(fixture, 'apps/web/pgdata')
+    fs.mkdirSync(locked, { recursive: true })
+    fs.writeFileSync(path.join(locked, 'data.js'), 'export const x = 1\n')
+    fs.chmodSync(locked, 0o000)
+    const warn = mock.method(console, 'warn', () => {})
+    try {
+      const again = buildInventory({ root: fixture, folders: readFolders(fixture) })
+      assert.deepEqual(warn.mock.calls.map((c) => c.arguments[0]), [`Skipped ${toPosix(fs.realpathSync(fixture))}/apps/web/pgdata: EACCES`])
+      assert.deepEqual(again, inventory)
+    } finally {
+      warn.mock.restore()
+      fs.chmodSync(locked, 0o755)
+      fs.rmSync(locked, { recursive: true, force: true })
+    }
+  })
+
+  test('is not read for a screen file when it sits above the scanned folder', { skip: !canLock }, () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'klaus-locked-'))
+    const middle = path.join(root, 'app', 'projects')
+    const file = path.join(middle, 'components', 'Chip.tsx')
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, 'export function Chip() { return null }\n')
+    // Searchable but not listable: the scan can reach the file through it, and cannot ask what it holds.
+    fs.chmodSync(middle, 0o311)
+    const warn = mock.method(console, 'warn', () => {})
+    try {
+      resetCaches()
+      assert.equal(localRouteOf(toPosix(file), toPosix(root)), null)
+      assert.equal(warn.mock.calls.length, 1)
+      assert.match(warn.mock.calls[0].arguments[0], /projects: EACCES, so a component below it is not marked local/)
+    } finally {
+      warn.mock.restore()
+      fs.chmodSync(middle, 0o755)
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('a package.json that cannot be parsed', () => {
+  test('is skipped with a warning naming it, and the scan carries on', () => {
+    const broken = path.join(fixture, 'packages/broken')
+    fs.mkdirSync(broken, { recursive: true })
+    fs.writeFileSync(path.join(broken, 'package.json'), '{ "name": "@fixture/broken",')
+    const warn = mock.method(console, 'warn', () => {})
+    try {
+      const again = buildInventory({ root: fixture, folders: readFolders(fixture) })
+      assert.deepEqual(warn.mock.calls.map((c) => c.arguments[0]), ['Skipped packages/broken/package.json: not valid JSON'])
+      assert.deepEqual(again, inventory)
+    } finally {
+      warn.mock.restore()
+      fs.rmSync(broken, { recursive: true, force: true })
     }
   })
 })
@@ -322,7 +383,7 @@ describe('the command', () => {
     }
   })
 
-  test('takes the folders from arguments when there is no config', () => {
+  test('takes the folders from arguments in place of the ones listed in the config', () => {
     const out = fs.mkdtempSync(path.join(os.tmpdir(), 'klaus-out-'))
     try {
       execFileSync('node', [cli, '--root', fixture, '--out', out, 'packages/ui/src'], { encoding: 'utf8' })
@@ -331,6 +392,39 @@ describe('the command', () => {
       assert.ok(written.entries.every((e) => e.folder === 'packages/ui/src'))
     } finally {
       fs.rmSync(out, { recursive: true, force: true })
+    }
+  })
+
+  test('prints a stack and exits 3 for a failure while reading the repo, not the usage text', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'klaus-crash-'))
+    try {
+      fs.mkdirSync(path.join(repo, 'src'))
+      fs.writeFileSync(path.join(repo, 'src', 'a.tsx'), 'export function A() { return null }\n')
+      // A compiler package that loads and then fails when used.
+      fs.mkdirSync(path.join(repo, 'node_modules', 'typescript'), { recursive: true })
+      fs.writeFileSync(path.join(repo, 'node_modules', 'typescript', 'package.json'), '{ "name": "typescript", "version": "0.0.0", "main": "index.js" }')
+      fs.writeFileSync(path.join(repo, 'node_modules', 'typescript', 'index.js'), 'module.exports = {}\n')
+      const result = spawnSync('node', [cli, '--root', repo, '--out', path.join(repo, 'out'), 'src'], { encoding: 'utf8' })
+      assert.equal(result.status, 3)
+      assert.match(result.stderr, /TypeError/)
+      assert.match(result.stderr, /\n\s+at /)
+      assert.doesNotMatch(result.stderr, /inventory\.mjs \[--root/)
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true })
+    }
+  })
+
+  test('still prints the usage text with exit 2 when the repo has no typescript package', () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'klaus-nots-'))
+    try {
+      fs.mkdirSync(path.join(repo, 'src'))
+      fs.writeFileSync(path.join(repo, 'src', 'a.tsx'), 'export function A() { return null }\n')
+      const result = spawnSync('node', [cli, '--root', repo, '--out', path.join(repo, 'out'), 'src'], { encoding: 'utf8' })
+      assert.equal(result.status, 2)
+      assert.match(result.stderr, /Cannot find the "typescript" package/)
+      assert.match(result.stderr, /inventory\.mjs \[--root/)
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true })
     }
   })
 })

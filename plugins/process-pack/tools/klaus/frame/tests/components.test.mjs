@@ -11,7 +11,8 @@ test("usage is the number of files in usedIn, and 0 when there are none", () => 
 });
 
 test("components are the inventory's entries, and every entry needs a name", () => {
-  assert.equal(listComponents({ schemaVersion: 1, folders: [], entries: [{ name: "A" }] }).length, 1);
+  const entries = [{ name: "A" }, { name: "B", file: "b.tsx" }];
+  assert.deepEqual(listComponents({ schemaVersion: 1, folders: [], entries }), entries);
   assert.throws(() => listComponents({ entries: [{ file: "x" }] }), /without a name/);
   assert.throws(() => listComponents({}), /with an entries array/);
   assert.throws(() => listComponents([{ name: "A" }]), /with an entries array/);
