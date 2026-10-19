@@ -9,7 +9,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { loadTypeScript } from '../inventory/components.mjs'
-import { resetCaches, toPosix } from '../inventory/files.mjs'
+import { resetCaches, toPosix, walk } from '../inventory/files.mjs'
 import { buildInventory } from '../inventory/inventory.mjs'
 import { createTsconfigLoader } from '../inventory/tsconfig.mjs'
 import { readUsage } from '../inventory/usage.mjs'
@@ -46,6 +46,20 @@ export function planPurposes({ root, ts, inventory }) {
 const hashText = (text) => crypto.createHash('sha256').update(text).digest('hex')
 
 /**
+ * What the plan id holds for one inventory `file`. The file of an icon set is its folder, so the
+ * folder is read as every file inside it, by path below the folder and by contents. A link inside
+ * the folder is not followed, and a hidden file or folder is left out, as the inventory does.
+ */
+function fingerprintOf({ root, file, kind }) {
+  const abs = path.join(root, file)
+  if (kind !== 'icon-set') return hashText(fs.readFileSync(abs, 'utf8'))
+  const folder = toPosix(abs)
+  return walk(folder, (name) => !name.startsWith('.'))
+    .map((inside) => [path.posix.relative(folder, inside), hashText(fs.readFileSync(inside))])
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+}
+
+/**
  * Builds the plan for a repo.
  *
  * @param {object} options
@@ -74,7 +88,8 @@ export function buildPlan({ root: given, folders, onboarding }) {
   const stories = planStories({ ts, root, tsconfigs, inventory, dataBoundImports: onboarding.dataBoundImports })
   const duplicates = findDuplicates({ ts, root, inventory })
 
-  const files = [...new Set(inventory.entries.map((e) => e.file))].sort()
-  const id = hashText(JSON.stringify({ onboarding, files: files.map((f) => [f, hashText(fs.readFileSync(path.join(root, f), 'utf8'))]), calls: calls.map((c) => c.id), stories: stories.items.map((s) => [s.id, s.status]), pairs: duplicates.map((d) => d.id) })).slice(0, 12)
+  const kinds = new Map(inventory.entries.map((e) => [e.file, e.kind]))
+  const files = [...kinds.keys()].sort()
+  const id = hashText(JSON.stringify({ onboarding, files: files.map((f) => [f, fingerprintOf({ root, file: f, kind: kinds.get(f) })]), calls: calls.map((c) => c.id), stories: stories.items.map((s) => [s.id, s.status]), pairs: duplicates.map((d) => d.id) })).slice(0, 12)
   return { id, root, ts, tsconfigs, usage, inventory, purposes, calls, stories, duplicates, folders }
 }
