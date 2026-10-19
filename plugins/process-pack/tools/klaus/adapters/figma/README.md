@@ -1,6 +1,6 @@
 # Klaus Figma adapter
 
-Turns a release's planned writes into the data for Figma Plugin API code. It uses no model and makes no Figma call. The relay (`relay/`) builds each call's code from that data and the runtime in its own checkout, and sends it through a signed-in agent, because Figma's MCP server refuses a plain script.
+Turns a release's planned writes into the data for Figma Plugin API code. It uses no model and makes no Figma call. The relay (`relay/`) builds each call's code from that data and the runtime in its own checkout, and sends it through a signed-in agent, because Figma's MCP server refuses a plain script. The Figma plugin (`plugin/`) applies a whole release's data in one run, for the first large load.
 
 The values come from the browser's computed styles, not from the CSS files. On Meridian's Button the CSS file says an 8px radius and the browser draws 6px, because Tailwind's `rounded-md` wins. The text size of the large Button differs the same way: the browser draws 14px where the CSS file says 16px.
 
@@ -30,6 +30,47 @@ An entry in `uploads` has the image path, the page, and the name the frame must 
 The code built from each data file returns, for every unit, `written`, `exists` or `failed` with an error. A set that fails is removed again and the next unit still runs. The relay reports failures back to Klaus.
 
 `.klaus/figma/ledger.json` records each component version and screen release as `generated` when its data file exists, and as `sent` once the relay has seen `use_figma` report it written or already there. A run plans every unit that is not sent, so a unit whose relay call failed is generated and sent again. A unit Figma drew from code the relaying model changed is `changed` until a person deletes the set and the relay writes it again. The manifest's `ledgerEntries` tell the relay which version each unit is. If the ledger is lost, the next run plans everything again. The code leaves a set that already exists alone, so the only cost is relay tokens. The relay is in [`relay/`](relay/README.md).
+
+## The Figma plugin
+
+A Figma plugin in [`plugin/`](plugin/) applies a whole release's data in one run. It is for the first, large load of a repo's components. The relay carries the small updates after each release, because one relay call costs about 70,000 to 100,000 relay tokens. The plugin uses no model and makes no network request: its manifest sets `networkAccess` to `{ "allowedDomains": ["none"] }`.
+
+### Install it once
+
+1. Use the Figma desktop app, which exists for Mac and Windows. Figma's docs say development plugins need it.
+2. Open a design file you can edit. In the menu choose Plugins, Development, Import new plugin from manifest. Pick `scripts/klaus/adapters/figma/plugin/manifest.json` in your repo (`plugin/manifest.json` in this folder).
+3. Leave `manifest.json`, `code.js` and `ui.html` together in that folder. Figma runs them from there.
+
+### Does a development plugin need a paid plan?
+
+No. Figma's Help Center says creating a plugin for development is "supported on any team or plan": [Create a classic plugin for development](https://help.figma.com/hc/en-us/articles/360042786733-Create-a-plugin-for-development). Running it needs a seat that can use plugins in Figma Design files: a Starter plan, or a Full seat on a paid plan. Dev, Collab and View seats cannot: [Use plugins in files](https://help.figma.com/hc/en-us/articles/360042532714-Run-plugins-in-files).
+
+Nick's account is on the Professional plan (tier `pro`) with a Full seat, from Figma's `whoami` on 2026-10-18. The table on the second page lists the Full seat as allowed in Figma Design, so a development plugin should run. That is read from the docs, not tried: the page's own heading says "Starter plan or a paid seat in an organization or enterprise" and does not name Professional. Two more things are unverified. The page says organization admins can limit plugins to approved ones, which the docs tie to organizations and not to Professional. And `manifest.json` carries a placeholder `id`, because the docs describe `id` as the ID to publish updates to; whether the import accepts it was not tried, because an agent cannot click in the desktop app. The first real click is in the onboarding run (#30).
+
+### Apply a release
+
+1. Get the release's data: the `.zip` of the CI artifact, or the folder `.klaus/figma/<release>/`.
+2. Choose Plugins, Development, Klaus: apply a release.
+3. Choose the `.zip`, or `manifest.json` together with the `figma-001.json` files, or drop them on the window. The window opens only `manifest.json` and the `figma-NNN.json` files. Everything else in a zip, such as screenshots, is not opened.
+4. The window lists the units and says which variable collection and pages the release writes to. Check them.
+5. Choose Apply to this file. Every unit is listed as `written`, `exists` (already in the file, left alone) or `failed` with the error. A unit that fails leaves nothing behind, and the units after it still run. Applying the same release again changes nothing.
+
+The rules from "What lands in Figma" hold: earlier versions move to `Older versions` and are frozen, and nothing is overwritten.
+
+### What it does
+
+- **No code from the files runs.** The window sends file text to the plugin's main thread. `plugin/src/release.mjs` reads it with `data-file.mjs` `readData`, the same reader the relay uses, so a file that is not JSON or not generator data is refused with a plain message and nothing is applied. The values reach the bundled runtime as the arguments of a function, never as text that is run. There is no `eval` and no `new Function`, and a test fails if either appears in `code.js` or `ui.html`.
+- **The runtime is `runtime.js` word for word.** `node plugin/build.mjs` (from this folder) writes `plugin/code.js` and `plugin/ui.html` from `runtime.js`, `data-file.mjs` and the sources in `plugin/src/`. A test fails while the committed files differ from what the build makes, so run it after changing any of them. `node plugin/build.mjs --check` reports without writing.
+- **The zip is read in the window.** `plugin/src/sources.mjs` reads the zip's central directory and unpacks only the files it needs, with the browser's `DecompressionStream`. It adds no npm dependency. It refuses an encrypted or Zip64 zip, and any file over 1 MB.
+- **One run for the whole release.** The data files go to the runtime together, in the manifest's order, with their tokens joined by name. A token colour that changed is then written after every older set in the release has been frozen. The relay sends one file at a time, so with several components in a release it freezes the later files' older versions at the new colour. The fake Plugin API shows this in `plugin/tests/apply.test.mjs`; it is not checked in real Figma.
+- **No settings file.** The relay holds a release to the collection and page names in `klaus.config.json`. The plugin has no such file. It takes the collection from the data and shows it, treats the components' own names (or the one page they all share) as the page setting, and still runs `checkTargets`, which keeps earlier versions on `Older versions`, keeps components off `Older versions` and `Screens`, and keeps screens on `Screens`.
+- **Not applied here.** Screenshot uploads and the retention file go through the relay. The window says how many there are.
+
+### What was checked
+
+The plugin tests (`plugin/tests/`) cover: reading a zip with data descriptors, a zip of stored entries and loose files; refusing code, unknown keys and other files that are not generator data; the bundled runtime matching `runtime.js`; and Button 1.0.0 then 1.1.0 giving 18 and 30 variants with 1.0.0 frozen on `Older versions`. Run `node plugin/build.mjs` before them if `runtime.js` changed.
+
+On 2026-10-18 one `use_figma` call ran `plugin/code.js`'s `applyRelease` with Button 1.1.0 (icons on) in the prototype file: it wrote the 30 variants to a new page, `Plugin test`, and 8 variables to `Meridian tokens (plugin test)`. That call stands in for the click. The window itself (`ui.html`) has not been opened in Figma.
 
 ## Which pages it touches
 

@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Klaus: apply a release</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    font: 12px/1.5 Inter, system-ui, sans-serif;
+    color: var(--figma-color-text, #1a1a1a);
+    background: var(--figma-color-bg, #fff);
+  }
+  h1 { margin: 0 0 4px; font-size: 14px; font-weight: 600; }
+  h2 { margin: 16px 0 4px; font-size: 12px; font-weight: 600; }
+  p { margin: 0 0 8px; }
+  .hint { color: var(--figma-color-text-secondary, #666); }
+  .drop {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: 12px 0;
+    padding: 16px;
+    border: 1px dashed var(--figma-color-border, #bbb);
+    border-radius: 6px;
+  }
+  .drop.over { border-color: var(--figma-color-border-selected, #0d99ff); background: var(--figma-color-bg-hover, #f5f5f5); }
+  button, .choose {
+    display: inline-block;
+    padding: 6px 12px;
+    font: inherit;
+    font-weight: 500;
+    color: var(--figma-color-text-onbrand, #fff);
+    background: var(--figma-color-bg-brand, #0d99ff);
+    border: 0;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .choose { color: var(--figma-color-text, #1a1a1a); background: var(--figma-color-bg-secondary, #eee); }
+  button:focus-visible, .choose:focus-within { outline: 2px solid var(--figma-color-border-selected, #0d99ff); outline-offset: 2px; }
+  .choose input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  .refused, .failed {
+    margin: 0 0 8px;
+    padding: 8px;
+    border-radius: 6px;
+    color: var(--figma-color-text-danger, #c0261b);
+    background: var(--figma-color-bg-danger-tertiary, #fdecea);
+  }
+  ul { margin: 0 0 8px; padding: 0; list-style: none; }
+  li { padding: 4px 0; border-top: 1px solid var(--figma-color-border, #e5e5e5); }
+  .status { display: inline-block; min-width: 64px; margin-right: 6px; font-weight: 600; }
+  .status.failed-status { color: var(--figma-color-text-danger, #c0261b); }
+  .detail { display: block; color: var(--figma-color-text-secondary, #666); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Klaus: apply a release</h1>
+  <p class="hint">Add the Figma data a Klaus run made: the .zip from the CI artifact, or manifest.json with the figma-001.json files next to it. Nothing is sent anywhere.</p>
+
+  <div id="drop" class="drop">
+    <label class="choose">Choose files<input id="files" type="file" multiple accept=".zip,.json"></label>
+    <span class="hint">or drop them here</span>
+  </div>
+
+  <div id="problem" class="refused" role="alert" hidden></div>
+  <p id="working" class="hint" role="status" hidden></p>
+
+  <section id="release" hidden aria-labelledby="release-title">
+    <h2 id="release-title">Ready to apply</h2>
+    <p id="targets"></p>
+    <ul id="units"></ul>
+    <p id="notes" class="hint"></p>
+    <button id="apply" type="button">Apply to this file</button>
+  </section>
+
+  <section id="results" hidden aria-labelledby="results-title">
+    <h2 id="results-title">Result</h2>
+    <p id="tally"></p>
+    <ul id="outcomes"></ul>
+    <p id="variables"></p>
+    <ul id="warnings" class="hint"></ul>
+  </section>
+</main>
+<script>
+/* @bundle:sources */
+
+const $ = (id) => document.getElementById(id);
+let summary = null;
+
+function send(message) {
+  parent.postMessage({ pluginMessage: message }, "*");
+}
+
+function show(id, visible) {
+  $(id).hidden = !visible;
+}
+
+function problem(text) {
+  $("problem").textContent = text;
+  show("problem", true);
+  show("working", false);
+}
+
+function reset() {
+  show("problem", false);
+  show("release", false);
+  show("results", false);
+  summary = null;
+}
+
+function item(parent, status, text, detail, bad) {
+  const li = document.createElement("li");
+  const label = document.createElement("span");
+  label.className = bad ? "status failed-status" : "status";
+  label.textContent = status;
+  li.append(label, document.createTextNode(text));
+  if (detail) {
+    const more = document.createElement("span");
+    more.className = "detail";
+    more.textContent = detail;
+    li.append(more);
+  }
+  parent.append(li);
+}
+
+async function take(list) {
+  reset();
+  $("working").textContent = "Reading the files.";
+  show("working", true);
+  try {
+    const files = [];
+    for (const file of list) files.push({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
+    send({ type: "load", sources: await readSources(files) });
+  } catch (error) {
+    problem(error.message);
+  }
+}
+
+function showRelease(found) {
+  summary = found;
+  show("working", false);
+  $("targets").textContent = "Release " + (found.release || "(unnamed)") + " writes to the variable collection “" + found.collection + "” and these pages: " + found.pages.join(", ") + ".";
+  $("units").replaceChildren();
+  for (const unit of found.units) item($("units"), unit.kind, unit.label, unit.variants ? unit.variants + " variants" : "");
+  const notes = [];
+  if (found.notApplied.screenshots > 0) notes.push(found.notApplied.screenshots + " screenshot(s) in this release are not applied here; the relay uploads them.");
+  if (found.notApplied.retention) notes.push("The screen retention file is not applied here either.");
+  $("notes").textContent = notes.join(" ");
+  $("apply").disabled = false;
+  show("release", true);
+}
+
+function showResult(result) {
+  const labels = new Map(summary.units.map((unit) => [unit.id, unit.label]));
+  show("working", false);
+  show("release", false);
+  const counts = { written: 0, exists: 0, failed: 0 };
+  $("outcomes").replaceChildren();
+  for (const unit of result.units) {
+    counts[unit.status] = (counts[unit.status] || 0) + 1;
+    const label = labels.get(unit.id) || unit.name || unit.id;
+    if (unit.status === "failed") item($("outcomes"), "failed", label, unit.error, true);
+    else if (unit.status === "exists") item($("outcomes"), "exists", label, "Already in the file, so it was left alone.");
+    else {
+      const parts = [];
+      if (unit.variants > 1) parts.push(unit.variants + " variants");
+      if (unit.movedToOlder && unit.movedToOlder.length > 0) parts.push("moved " + unit.movedToOlder.join(", ") + " to Older versions");
+      if (unit.removed && unit.removed.length > 0) parts.push("removed " + unit.removed.join(", "));
+      item($("outcomes"), "written", label, parts.join("; "));
+    }
+  }
+  $("tally").textContent = counts.written + " written, " + counts.exists + " already there, " + counts.failed + " failed.";
+  const tokens = result.tokens;
+  $("variables").textContent = tokens.error ? "Variables could not be written: " + tokens.error : "Variables: " + tokens.made.length + " made, " + tokens.updated.length + " changed.";
+  $("warnings").replaceChildren();
+  for (const warning of result.warnings) item($("warnings"), "note", warning);
+  show("results", true);
+}
+
+window.onmessage = (event) => {
+  const message = event.data && event.data.pluginMessage;
+  if (!message) return;
+  if (message.type === "loaded") showRelease(message.summary);
+  else if (message.type === "applying") {
+    $("apply").disabled = true;
+    $("working").textContent = "Applying. A large release can take a few minutes; keep this window open.";
+    show("working", true);
+  } else if (message.type === "applied") showResult(message.result);
+  else if (message.type === "refused") {
+    $("apply").disabled = false;
+    problem("Nothing was applied. " + message.message);
+  } else if (message.type === "failed") {
+    $("apply").disabled = false;
+    problem("Figma stopped the run: " + message.message + " Some units may already be in the file. Run again to see which.");
+  }
+};
+
+$("files").addEventListener("change", (event) => {
+  take(event.target.files);
+  event.target.value = "";
+});
+$("apply").addEventListener("click", () => {
+  show("problem", false);
+  send({ type: "apply" });
+});
+const drop = $("drop");
+drop.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  drop.classList.add("over");
+});
+drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+drop.addEventListener("drop", (event) => {
+  event.preventDefault();
+  drop.classList.remove("over");
+  take(event.dataTransfer.files);
+});
+</script>
+</body>
+</html>

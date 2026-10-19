@@ -1,0 +1,10 @@
+{
+  "name": "Klaus: apply a release",
+  "id": "klaus-figma-plugin-dev",
+  "api": "1.0.0",
+  "editorType": ["figma"],
+  "main": "code.js",
+  "ui": "ui.html",
+  "documentAccess": "dynamic-page",
+  "networkAccess": { "allowedDomains": ["none"] }
+}
