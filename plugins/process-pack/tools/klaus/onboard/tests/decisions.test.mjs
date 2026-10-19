@@ -179,6 +179,14 @@ test('nothing the run writes uses an em dash or claims an accessibility effect',
   }
 })
 
+test('when every pair is set aside, duplicates.md still lists them with their reasons', () => {
+  const none = Object.assign([], { dismissed: [{ id: 'x', keep: entry('A', 'app', 'apps/web/app', 1), drop: entry('B', 'app', 'apps/web/app', 1), reason: 'the names differ and the look differs, so they are different components' }] })
+  const list = duplicates.renderDuplicatesList(none)
+  assert.doesNotMatch(list, /No likely duplicates were found/)
+  assert.match(list, /No pair needs a ticket or a question\./)
+  assert.match(list, /## Set aside: not asked about[\s\S]*`A` \(apps\/web\/app\/A\.tsx\) \| `B` \(apps\/web\/app\/B\.tsx\) \| the names differ/)
+})
+
 test('an empty result still reads as a result', () => {
   assert.match(duplicates.renderDecisions([]), /No pairs need a decision/)
 })

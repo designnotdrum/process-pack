@@ -115,6 +115,26 @@ function declaringFile({ ts, tsconfigs, file, name, seen = new Set() }) {
   return null
 }
 
+/** Every file a barrel file re-exports, through other barrel files too. A namespace import reaches all of them. */
+function reExportedFiles({ ts, tsconfigs, file, seen = new Set() }) {
+  if (seen.has(file) || seen.size > 500) return []
+  seen.add(file)
+  let sourceFile
+  try {
+    sourceFile = parseSource(ts, file)
+  } catch {
+    return []
+  }
+  const found = []
+  for (const statement of sourceFile.statements) {
+    if (!ts.isExportDeclaration(statement) || !statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier)) continue
+    const target = ts.resolveModuleName(statement.moduleSpecifier.text, file, tsconfigs.optionsFor(file), ts.sys).resolvedModule?.resolvedFileName
+    if (!target || target.endsWith('.d.ts')) continue
+    found.push(toPosix(target), ...reExportedFiles({ ts, tsconfigs, file: toPosix(target), seen }))
+  }
+  return found
+}
+
 /** The story files that import each component file, directly or through a barrel file, resolved with the repo's own TypeScript. */
 export function storyImports({ ts, root, tsconfigs }) {
   const byComponent = new Map()
@@ -136,6 +156,8 @@ export function storyImports({ ts, root, tsconfigs }) {
         const declared = declaringFile({ ts, tsconfigs, file: module, name: imported })
         if (declared && declared !== module) record(declared, story)
       }
+      // A namespace import reaches everything the barrel re-exports. Only a story named for the component is used later, so a story that draws a whole screen does not count for them all.
+      if (item.namespace) for (const target of reExportedFiles({ ts, tsconfigs, file: module })) record(target, story)
     }
   }
   return byComponent

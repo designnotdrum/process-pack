@@ -235,15 +235,19 @@ export function renderDuplicatesList(pairs) {
     'What happens to a pair: if one copy is used in no place, it becomes a removal ticket. If the two look the same, it becomes a merge ticket. Otherwise it is a question for the owner, in decisions.md.',
     '',
   ]
-  if (pairs.length === 0) return [...lines, 'No likely duplicates were found.', ''].join('\n')
-  lines.push('| Keep | The other copy | Props in common | Class names in common | What happens |', '| --- | --- | --- | --- | --- |')
-  for (const p of pairs) {
-    lines.push(`| ${code(p.keep.name)} (${p.keep.file}) | ${code(p.drop.name)} (${p.drop.file}) | ${percent(p.propsSimilarity)} | ${percent(p.lookSimilarity)} | ${whatText(p)} |`)
+  const away = pairs.dismissed ?? []
+  if (pairs.length === 0 && away.length === 0) return [...lines, 'No likely duplicates were found.', ''].join('\n')
+  if (pairs.length === 0) lines.push('No pair needs a ticket or a question. What was found is set aside, below.', '')
+  else {
+    lines.push('| Keep | The other copy | Props in common | Class names in common | What happens |', '| --- | --- | --- | --- | --- |')
+    for (const p of pairs) {
+      lines.push(`| ${code(p.keep.name)} (${p.keep.file}) | ${code(p.drop.name)} (${p.drop.file}) | ${percent(p.propsSimilarity)} | ${percent(p.lookSimilarity)} | ${whatText(p)} |`)
+    }
+    lines.push('', 'The entry to keep is the one that is used, then the shared one, then the one used in more places, then the first by name.', '')
   }
-  lines.push('', 'The entry to keep is the one that is used, then the shared one, then the one used in more places, then the first by name.', '')
-  if (pairs.dismissed?.length > 0) {
+  if (away.length > 0) {
     lines.push('## Set aside: not asked about', '', 'These pairs matched by name and props, and the code says they are different components. No ticket and no question were made for them.', '', '| One | The other | Why it was set aside |', '| --- | --- | --- |')
-    for (const d of pairs.dismissed) lines.push(`| ${code(d.keep.name)} (${d.keep.file}) | ${code(d.drop.name)} (${d.drop.file}) | ${d.reason} |`)
+    for (const d of away) lines.push(`| ${code(d.keep.name)} (${d.keep.file}) | ${code(d.drop.name)} (${d.drop.file}) | ${d.reason} |`)
     lines.push('')
   }
   return lines.join('\n')

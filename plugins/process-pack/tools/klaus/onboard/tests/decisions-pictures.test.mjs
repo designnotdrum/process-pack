@@ -161,7 +161,7 @@ test('the static build is the configured one, else the one next to a Storybook c
   assert.equal(pictures.findStorybookBuild({ root: sample.repo }), null)
 })
 
-test('a story finds its component through a barrel file, by a named import or by a default one', async () => {
+test('a story finds its component through a barrel file, by a named, a default or a namespace import', async () => {
   const second = makeDecisionsSample()
   try {
     const src = path.join(second.repo, 'packages/ui/src')
@@ -171,11 +171,12 @@ test('a story finds its component through a barrel file, by a named import or by
     fs.writeFileSync(path.join(src, 'Pill.stories.tsx'), "import Pill from './barrel'\nexport default { component: Pill }\n")
     fs.writeFileSync(path.join(src, 'PillAgain.stories.tsx'), "import { PillAgain } from './barrel'\nexport default { component: PillAgain }\n")
     fs.writeFileSync(path.join(src, 'Chip.stories.tsx'), "import { Chip } from './barrel'\nexport default { component: Chip }\n")
+    fs.writeFileSync(path.join(src, 'Space.stories.tsx'), "import * as UI from './barrel'\nexport default { component: UI.Chip }\n")
     const found = planOf(second.repo)
     const imports = pictures.storyImports({ ts: found.ts, root: found.root, tsconfigs: found.tsconfigs })
     const storiesOf = (file) => (imports.get(path.join(found.root, file)) ?? []).map((f) => path.basename(f)).sort()
-    assert.deepEqual(storiesOf('packages/ui/src/Pill.tsx'), ['Pill.stories.tsx', 'PillAgain.stories.tsx'])
-    assert.deepEqual(storiesOf('packages/ui/src/Chip.tsx'), ['Chip.stories.tsx'])
+    assert.deepEqual(storiesOf('packages/ui/src/Pill.tsx'), ['Pill.stories.tsx', 'PillAgain.stories.tsx', 'Space.stories.tsx'])
+    assert.deepEqual(storiesOf('packages/ui/src/Chip.tsx'), ['Chip.stories.tsx', 'Space.stories.tsx'], 'a namespace import reaches what the barrel re-exports')
   } finally {
     second.cleanup()
   }
