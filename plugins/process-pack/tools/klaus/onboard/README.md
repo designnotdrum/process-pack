@@ -32,7 +32,17 @@ Run from the repo's default branch, with a clean tree, after the Klaus install c
 
 The checker's key is read from the environment variable the settings name (`OPENROUTER_API_KEY`). Start the command through the secret store so the variable exists for that command only, for example `2password run --env "OPENROUTER_API_KEY=op://..." -- node onboard/onboard.mjs run ...`. The key is sent in one header, appears in no log and no file, and is removed from the environment of the writer's process.
 
-To start over after a failure, delete the three branches (`klaus/onboarding-1-list`, `-2-purposes`, `-3-stories`) and close their pull requests. The run refuses to start while one exists.
+To start over after a failure, delete the branches the run made (`klaus/onboarding-1-list`, `-2-purposes`, `-3-stories`), here and on `origin`, and close their pull requests. The run refuses to start while one exists. It names them when it stops, and puts back any file of the commit that failed.
+
+### Before any model call: the commit hook
+
+The run commits three times, after the model work. On Meridian the first commit was refused by the repo's pre-commit hook after 3,583,498 writer tokens and 235 checks had been spent. So before any model call the run tries each commit first. It writes that commit's files, stages them, and runs the hook on them, in the order it commits: the list and the duplicates, then the purpose comments, then the stories. The files of the commits before stay on disk, unstaged, as they would be in the branch. The purpose comments cannot exist yet, so each file the writer is given gets a placeholder purpose that passes the same text checks a real one must. A hook that refuses stops the run with its message, before anything is spent. Either way the index is put back to `HEAD`, every file the check wrote or the hook changed is restored, and the run checks that `HEAD` and the branch did not move.
+
+The hook is run with `git hook run pre-commit`, which finds it the way a commit does (`core.hooksPath`, as husky sets it, then `.git/hooks`). That needs git 2.36 or later. With an older git the run takes the path `git rev-parse --git-path hooks/pre-commit` gives, which also follows `core.hooksPath`, and runs that file from the repo root when it is executable. Only the pre-commit hook is tried: a `commit-msg` hook and the `pre-push` hook run at the real commit and push, and are not tried first.
+
+### A stop after the model work keeps it
+
+Each writer call that finishes and each check that answers pass or fail is saved under `.git/klaus-onboarding/results/<plan id>/` as soon as it arrives, written to a temporary file and renamed. A later `run` with the same plan uses a saved result instead of calling the model, when the file it is about hashes the same as now and the prompt would be the same (the prompt holds the usage lines, which come from files the plan id does not cover). A saved writer result is judged again by `verify.mjs`, the same as a new one. A writer call that failed and a check that could not answer are made again. The report counts the reused calls separately and at no cost.
 
 ## Settings
 
@@ -71,8 +81,8 @@ With `"route": "external"` the run does not call that agent. It writes briefs an
 
 `estimate` prints what each part will do and cost, and `run` ends by setting the same numbers beside what happened (a table in the third pull request and in `.git/klaus-onboarding/report.json`).
 
-- **Counts are exact.** Entries, components needing a purpose, writer calls, checker calls, stories, duplicate pairs, tickets and decisions must match.
-- **Tokens must land within 30%.**
+- **Counts are exact.** Entries, components needing a purpose, writer calls, checker calls, stories, duplicate pairs, tickets and decisions must match. Every call the estimate counted is accounted for. A writer call is made or reused. A check is made, reused, or not reached: the estimate counts a check for every component used somewhere, and a component whose written purpose was rejected before the check (or never written) gets none. The estimate cannot know beforehand which text will be rejected, so the report counts those and says how many under the table. On Meridian that was 13 of 248: the run made 235 checks, and every one of its 55 writer calls had finished.
+- **Tokens must land within 30%.** They are compared for the calls made in that run, against the estimate's figure for each of those calls.
 - **Dollars must land within 100% or USD 0.001, whichever is more.** The checker's cost is a few hundredths of a cent for a handful of components, so the floor is what applies to a small repo.
 
 The rates behind the token predictions are in `estimate.mjs`, each with the calls it was fitted on:
@@ -135,4 +145,4 @@ A component shows live data when its own file imports a data or auth package (`@
 node --test "plugins/process-pack/tools/klaus/onboard/**/*.test.mjs"
 ```
 
-The tests run on a copy of a small sample repo in `tests/fixtures/sample` (the same five components as the real sample, `designnotdrum/klaus-onboarding-sample`, with a stub for React's types), a local bare repository as `origin`, a stub `gh` and a stub `codex` in `tests/stub/`, and a fake `fetch` for the checker. They call no model and no network. The quoted glob is needed on Node 22, where a bare directory argument is not expanded.
+The tests run on a copy of a small sample repo in `tests/fixtures/sample` (the same five components as the real sample, `designnotdrum/klaus-onboarding-sample`, with a stub for React's types), a local bare repository as `origin`, a stub `gh` and a stub `codex` in `tests/stub/`, and a fake `fetch` for the checker. They call no model and no network. The quoted glob is needed on Node 22, where a bare directory argument is not expanded. `hooks-and-resume.test.mjs` installs a pre-commit hook in the copy, a shell script that reads what is staged, to show a refusal before the writer and a run that reuses what a stopped run saved.

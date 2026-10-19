@@ -12,6 +12,8 @@ const dir = args[args.indexOf('-C') + 1]
 const prompt = fs.readFileSync(0, 'utf8')
 const mode = process.env.STUB_MODE ?? 'good'
 const log = process.env.STUB_LOG
+// STUB_ORDER_LOG gets one line for each call, so a test can tell what ran before it.
+if (process.env.STUB_ORDER_LOG) fs.appendFileSync(process.env.STUB_ORDER_LOG, 'codex\n')
 if (log) {
   fs.appendFileSync(log, `${JSON.stringify({ args, key: process.env.OPENROUTER_API_KEY ?? null, promptChars: prompt.length })}\n`)
   fs.writeFileSync(`${log}.prompt-${Date.now()}-${process.pid}.txt`, prompt)

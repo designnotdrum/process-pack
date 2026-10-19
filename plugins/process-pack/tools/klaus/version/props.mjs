@@ -1,6 +1,8 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import { isInside, pascalCase } from '../inventory/files.mjs'
 import { createTsconfigLoader } from '../inventory/tsconfig.mjs'
+import { relativeTypeText } from '../inventory/type-text.mjs'
 import { higher } from './bump.mjs'
 
 /**
@@ -52,6 +54,8 @@ export function compareTrees({ ts, base, head, jobs }) {
     { root: head, loader: createTsconfigLoader(ts, head) },
   ]
   const headLoader = trees[1].loader
+  // A type printed with a file's path names it from its own release's folder, so the two releases print the same.
+  const roots = [base, head].flatMap((root) => [root, realPath(root)])
   const groups = new Map()
   for (const job of jobs) {
     const key = headLoader.configFor(job.headFile) ?? ''
@@ -65,7 +69,7 @@ export function compareTrees({ ts, base, head, jobs }) {
     const failed = []
     const program = createCombinedProgram(ts, trees, headLoader.optionsFor(group[0].headFile), rootNames, failed)
     const checker = program.getTypeChecker()
-    const differ = createDiffer(ts, checker)
+    const differ = createDiffer(ts, checker, roots)
     const isAmbient = ambientMatcher(checker)
     for (const job of group) {
       const result = compareJob(ts, checker, differ, program, job)
@@ -74,6 +78,14 @@ export function compareTrees({ ts, base, head, jobs }) {
     }
   }
   return results
+}
+
+function realPath(dir) {
+  try {
+    return fs.realpathSync(dir)
+  } catch {
+    return dir
+  }
 }
 
 /** Imports of files that are not code, such as a stylesheet or an image, have no types to lose. */
@@ -203,9 +215,9 @@ function readProps(ts, checker, exported, location) {
   return { props, generic }
 }
 
-function createDiffer(ts, checker) {
+function createDiffer(ts, checker, roots) {
   const PRINT = ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope
-  const print = (type) => checker.typeToString(type, undefined, PRINT)
+  const print = (type) => relativeTypeText(checker.typeToString(type, undefined, PRINT), roots)
   const isUndefined = (type) => Boolean(type.flags & ts.TypeFlags.Undefined)
   const unionMembers = (type, dropUndefined) => (type.isUnion() ? type.types : [type]).filter((t) => !(dropUndefined && isUndefined(t))).map(print).sort()
   // `isTypeAssignableTo` is public from TypeScript 5.4. Before that, any difference in the printed type
