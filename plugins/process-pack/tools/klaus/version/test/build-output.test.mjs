@@ -13,7 +13,7 @@ after(cleanup)
  * source imports `@repo/ui`, `node_modules/@repo/ui` is a link to `packages/ui`, and the package's
  * types are in `dist/` in a file named with a hash. A rebuild changes the hash and nothing else.
  */
-function builtTree(hash, props = '  edges: typeof alignment') {
+function builtTree(hash, props) {
   const dir = tmpDir('klaus-built')
   writeFiles(dir, {
     'package.json': '{ "name": "built-repo", "private": true }\n',
@@ -51,6 +51,7 @@ describe('a prop typed from a package\'s build output', () => {
     const result = compare(base, head)
     assert.equal(result.changes.find((c) => c.kind === 'type widened' && c.where === 'edges').detail, '+ typeof import("packages/ui")')
     assert.equal(result.level, 'minor')
+    assert.equal(result.changes.length, 1)
     assert.doesNotMatch(JSON.stringify(result), /N1JdL0Og|AvFrEbNh|\/dist\//)
   })
 
@@ -59,6 +60,7 @@ describe('a prop typed from a package\'s build output', () => {
     const head = builtTree('N1JdL0Og', '  edges: typeof alignment | null')
     const result = compare(base, head)
     assert.deepEqual(result.changes.map((c) => [c.kind, c.where, c.detail]), [['type widened', 'edges', '+ typeof import("packages/ui")']])
+    assert.equal(result.level, 'minor')
     assert.doesNotMatch(JSON.stringify(result), /N1JdL0Og|AvFrEbNh|\/dist\//)
   })
 })
