@@ -109,6 +109,25 @@ test('the writer is shown the existing comment and told to keep it, and the chec
   }
 })
 
+test('a comment with an @ after text on a line is left for a person: TypeScript reads it as a tag, and the lines would split that line', () => {
+  const sample = makeGitSample()
+  try {
+    const file = path.join(sample.repo, 'packages/ui/src/PrimaryButton.tsx')
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('export function PrimaryButton', '/**\n * The main button.\n *\n * Lives in @sample/ui because both apps render it.\n */\nexport function PrimaryButton'))
+    const hero = path.join(sample.repo, 'apps/web/src/marketing/Hero.tsx')
+    fs.writeFileSync(hero, fs.readFileSync(hero, 'utf8').replace('export function Hero', '/** @deprecated use Banner */\nexport function Hero'))
+    const { onboarding, folders } = readOnboardingConfig(sample.repo)
+    const plan = buildPlan({ root: sample.repo, folders, onboarding })
+    assert.match(plan.purposes.skipped.find((s) => s.name === 'PrimaryButton').reason, /an @ after text on a line/)
+    // A tag on a line of its own, here the one-line comment's only text, is fine: the lines go before it.
+    const component = plan.purposes.components.find((c) => c.name === 'Hero')
+    const out = applyPurposes(ts, path.join(plan.root, component.file), fs.readFileSync(hero, 'utf8'), [{ name: 'Hero', useWhen: 'a page opens with a headline.', notFor: 'a section further down.' }])
+    assert.match(out, /\/\*\*\n \* Use when: a page opens with a headline\.\n \* Not for: a section further down\.\n \*\n \* @deprecated use Banner\n \*\/\nexport function Hero/)
+  } finally {
+    sample.cleanup()
+  }
+})
+
 test('a comment with half a purpose is left for a person, since a second label would hide the new one', () => {
   const sample = makeGitSample()
   try {
