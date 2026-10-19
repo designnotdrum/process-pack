@@ -17,7 +17,8 @@ import { UserError } from "../frame/errors.mjs";
 import { resolveConfig } from "../frame/config.mjs";
 import { readJsonFile } from "../frame/json-file.mjs";
 import { SOURCE_ROOT } from "./copy.mjs";
-import { checkRuleset } from "./ruleset.mjs";
+import { checkRuleset, unapprovedMessage } from "./ruleset.mjs";
+import { writePlainFile } from "./safe-write.mjs";
 
 const BEGIN = /^(\s*)# klaus:begin (\S+)\s*$/;
 const END = /^\s*# klaus:end (\S+)\s*$/;
@@ -152,14 +153,18 @@ export function lintWorkflow(file) {
 
 /**
  * Release mode runs on a pushed tag, and a pushed tag runs the workflow file from the tagged commit,
- * so only a tag ruleset protects it. This refuses to render release mode without one.
- * @returns {object | null}  The ruleset that protects the tags, or null when the trigger is not release.
+ * so only a tag ruleset protects it. This refuses to render release mode unless an active ruleset
+ * limits creating and updating the tags and every one of its bypass actors is a repository admin or
+ * is listed in trigger.approvedTagBypass. A ruleset that gained someone since the list was made
+ * is refused the next time this runs.
+ * @returns {object[] | null}  The rulesets that protect the tags, or null when the trigger is not release.
  */
 export function requireTagRuleset({ repo, config, checkTags = checkRuleset }) {
   if (config.trigger.mode !== "release") return null;
   const tagPattern = config.trigger.tagPattern;
-  const found = checkTags({ repo, tagPattern });
-  if (found.status === "protected") return found.ruleset;
+  const found = checkTags({ repo, tagPattern, approved: config.trigger.approvedTagBypass ?? [] });
+  if (found.status === "protected") return found.rulesets;
+  if (found.status === "unapproved") throw new UserError(unapprovedMessage(found, tagPattern));
   const why = found.status === "unknown" ? `The repo's rulesets could not be read (${found.reason}).` : `No active ruleset limits who can create or update tags matching ${tagPattern}.`;
   throw new UserError(`${why} Release mode runs on a pushed tag, and a pushed tag runs the workflow file from the tagged commit, so only a tag ruleset protects the repo's secrets from a hostile tag. Create one with \`install.mjs ruleset --repo <repo> --tag-pattern ${tagPattern} --create\` after the person agrees, or set trigger.mode to "schedule" in klaus.config.json.`);
 }
@@ -167,11 +172,9 @@ export function requireTagRuleset({ repo, config, checkTags = checkRuleset }) {
 /** Reads the config and the template, renders, writes, and lints. */
 export function writeWorkflow({ repo, config: configFile = path.join(repo, "klaus.config.json"), to = ".github/workflows/klaus.yml", checkTags, ...options }) {
   const config = resolveConfig(readJsonFile(configFile, "Config"));
-  const ruleset = requireTagRuleset({ repo, config, checkTags });
+  const rulesets = requireTagRuleset({ repo, config, checkTags });
   const template = fs.readFileSync(path.join(SOURCE_ROOT, "templates", "klaus.yml"), "utf8");
   const { text, kept, secrets } = renderWorkflow({ template, config, ...options });
-  const destination = path.resolve(repo, to);
-  fs.mkdirSync(path.dirname(destination), { recursive: true });
-  fs.writeFileSync(destination, text.endsWith("\n") ? text : `${text}\n`);
-  return { destination, kept, secrets, ruleset, lint: lintWorkflow(destination) };
+  const destination = writePlainFile(repo, path.resolve(repo, to), text.endsWith("\n") ? text : `${text}\n`);
+  return { destination, kept, secrets, rulesets, lint: lintWorkflow(destination) };
 }

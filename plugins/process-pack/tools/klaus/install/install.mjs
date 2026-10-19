@@ -23,22 +23,30 @@
  *       --config <file>            default <repo>/klaus.config.json
  *       --to <file>                default .github/workflows/klaus.yml
  *
- *   node install/install.mjs ruleset --repo <dir> --tag-pattern <pattern> [--bypass-app <id>]... [--bypass-team <id>]... [--create]
+ *   node install/install.mjs ruleset --repo <dir> --tag-pattern <pattern> [--approve <Type>:<id>:<name>]... [--bypass-app <id>:<name>]... [--bypass-team <id>:<name>]... [--create]
  *       Release mode runs on a pushed tag, and only a tag ruleset protects the repo's secrets from a
- *       hostile tag. Without --create this only reads: it says whether an active ruleset already limits
- *       who can create or update tags matching the pattern, and if not, shows the ruleset it would create
- *       and why. With --create it creates it. Admins always bypass it. The workflow command refuses
- *       to render release mode until one exists.
+ *       hostile tag. Without --create this only reads: it reads every active tag ruleset in full and says
+ *       whether they limit creating and updating the tags and let only repository admins and approved
+ *       actors bypass them. If a ruleset lets anyone else bypass it, it lists them and stops. If none
+ *       exists it shows the ruleset it would create and why. With --create it creates it. Admins always
+ *       bypass it. --approve names an actor the person approves besides admins (Type is Integration,
+ *       Team, User, RepositoryRole, OrganizationAdmin or DeployKey), --bypass-app and --bypass-team add one
+ *       to the ruleset that is created. Approved actors are read from trigger.approvedTagBypass in
+ *       klaus.config.json too, and printed again so they can be recorded there. The workflow command
+ *       refuses to render release mode until the check passes, and again if a later render finds an
+ *       actor that is not on the list.
  *
  * Exit 0 on success, 1 when a checked workflow has errors, 2 on an error the person running it can fix,
  * 3 on any other error. No dependencies.
  */
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { UserError } from "../frame/errors.mjs";
+import { readJsonFile } from "../frame/json-file.mjs";
 import { copyKlaus } from "./copy.mjs";
 import { estimateOutputs, formatCosts, OUTPUTS } from "./costs.mjs";
-import { checkRuleset, createRuleset, explainRuleset, rulesetBody } from "./ruleset.mjs";
+import { approvalsInUse, checkRuleset, createRuleset, explainRuleset, parseActor, rulesetBody, unapprovedMessage } from "./ruleset.mjs";
 import { writeWorkflow } from "./workflow.mjs";
 
 const OPTIONS = {
@@ -58,6 +66,7 @@ const OPTIONS = {
   playwright: { type: "string" },
   captures: { type: "string" },
   "tag-pattern": { type: "string" },
+  approve: { type: "string", multiple: true },
   "bypass-app": { type: "string", multiple: true },
   "bypass-team": { type: "string", multiple: true },
   create: { type: "boolean" },
@@ -92,25 +101,52 @@ function copyCommand(values) {
   return 0;
 }
 
+/** The actors klaus.config.json already records as approved. A missing file or key means none. */
+function recordedApprovals(repo) {
+  const file = path.join(repo, "klaus.config.json");
+  if (!existsSync(file)) return [];
+  const list = readJsonFile(file, "Config").trigger?.approvedTagBypass;
+  return Array.isArray(list) ? list : [];
+}
+
+const recordLine = (approved) => `Record this in klaus.config.json, under "trigger": "approvedTagBypass": ${JSON.stringify(approved)}`;
+
 function rulesetCommand(values) {
   const repo = repoOf(values);
   const tagPattern = values["tag-pattern"];
   if (!tagPattern) throw new UserError("--tag-pattern <pattern> is needed: the release tag pattern, for example v*.");
-  const found = checkRuleset({ repo, tagPattern });
+  const apps = (values["bypass-app"] ?? []).map((text) => parseActor(text, "Integration"));
+  const teams = (values["bypass-team"] ?? []).map((text) => parseActor(text, "Team"));
+  const fromFlags = (values.approve ?? []).map((text) => parseActor(text));
+  const approved = [...recordedApprovals(repo), ...fromFlags].filter((entry, i, all) => all.findIndex((other) => other.type === entry.type && other.id === entry.id) === i);
+
+  const found = checkRuleset({ repo, tagPattern, approved });
   if (found.status === "protected") {
-    console.log(`A ruleset already limits who can create or update tags matching ${tagPattern}: "${found.ruleset.name}" (id ${found.ruleset.id}). Nothing to create.`);
+    const names = found.rulesets.map((ruleset) => `"${ruleset.name}" (id ${ruleset.id})`).join(", ");
+    const extra = approvalsInUse(found, approved);
+    console.log([
+      `Tags matching ${tagPattern} are protected by ${names}. Every bypass actor is a repository admin or approved by name.`,
+      ...(extra.length > 0 ? [`Approved besides admins: ${extra.map((entry) => `${entry.name} (${entry.type} ${entry.id})`).join(", ")}.`, recordLine(extra)] : []),
+      "Nothing to create.",
+    ].join("\n"));
     return 0;
   }
-  const body = rulesetBody({ tagPattern, apps: values["bypass-app"], teams: values["bypass-team"] });
+  if (found.status === "unapproved") throw new UserError(unapprovedMessage(found, tagPattern));
   if (found.status === "unknown") {
     throw new UserError(`The repo's rulesets could not be read, so it is not known whether the release tags are protected (${found.reason}). Creating rulesets needs admin rights on the repo, and some plans do not have rulesets. Use the schedule trigger instead, or ask an admin.`);
   }
+  const body = rulesetBody({ tagPattern, apps, teams });
+  const names = new Map([...apps, ...teams].map((entry) => [`${entry.type}:${entry.id}`, entry.name]));
   if (!values.create) {
-    console.log([`No active ruleset limits who can create or update tags matching ${tagPattern}. Nothing has been created. This is what would be:`, "", explainRuleset(body), "", JSON.stringify(body, null, 2)].join("\n"));
+    console.log([`No active ruleset limits who can create or update tags matching ${tagPattern}. Nothing has been created. This is what would be:`, "", explainRuleset(body, names), "", JSON.stringify(body, null, 2)].join("\n"));
     return 0;
   }
   const created = createRuleset({ repo, body });
-  console.log(`Created the ruleset "${created?.name ?? body.name}" (id ${created?.id ?? "unknown"}). Only the bypass list can create or update tags matching ${tagPattern} from now on.`);
+  const recorded = [...apps, ...teams];
+  console.log([
+    `Created the ruleset "${created?.name ?? body.name}" (id ${created?.id ?? "unknown"}). Only the bypass list can create or update tags matching ${tagPattern} from now on.`,
+    ...(recorded.length > 0 ? [recordLine(recorded)] : []),
+  ].join("\n"));
   return 0;
 }
 
@@ -131,7 +167,7 @@ function workflowCommand(values) {
   console.log([
     `Workflow written to ${path.relative(process.cwd(), result.destination)}`,
     `  parts kept: ${result.kept.join(", ") || "none"}`,
-    ...(result.ruleset ? [`  release tags are protected by the ruleset "${result.ruleset.name}" (id ${result.ruleset.id})`] : []),
+    ...(result.rulesets ? [`  release tags are protected by ${result.rulesets.map((r) => `"${r.name}" (id ${r.id})`).join(", ")}`] : []),
     `  secrets to set in the repo: ${result.secrets.join(", ") || "none"}`,
     `  ${result.lint.tool}: ${result.lint.ok === null ? "not checked" : result.lint.ok ? "ok" : "errors"}`,
     ...(result.lint.message ? [`  ${result.lint.message.split("\n").join("\n  ")}`] : []),
