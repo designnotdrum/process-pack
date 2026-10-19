@@ -114,8 +114,10 @@ test('a run whose first pull request merged continues at the second: no model ca
   const listOnOrigin = onOrigin(BRANCHES[0])
   const oldPurposes = onOrigin(BRANCHES[1])
 
+  // Every result is saved, so the run needs neither the Codex CLI nor the checker's key.
+  delete process.env.OPENROUTER_API_KEY
   const messages = []
-  const { report } = await run(estimated, { log: (m) => messages.push(m) })
+  const { report } = await run(estimated, { log: (m) => messages.push(m), env: process.env, codex: path.join(sample.base, 'no-codex-here') })
   assert.deepEqual([codexCalls(), checks], [3, 4], 'the second run made no model call')
   assert.equal(report.continuedAt, 2)
   assert.deepEqual(report.alreadyMerged, [{ step: 1, number: 1, url: 'https://github.com/acme/sample/pull/1' }])
@@ -145,6 +147,21 @@ test('a run whose first pull request merged continues at the second: no model ca
   assert.ok(report.comparison.every((r) => r.within !== false), JSON.stringify(report.comparison.filter((r) => r.within === false)))
   assert.equal(sample.git('rev-parse', '--abbrev-ref', 'HEAD').trim(), 'main')
   assert.equal(sample.git('status', '--porcelain', '--untracked-files=all').trim(), '')
+})
+
+test('a continue run with a writer call not saved still needs the key and the Codex CLI, and says so before any branch is made', async () => {
+  const estimated = await estimate()
+  const restore = ghThatStopsAfter(2)
+  await assert.rejects(() => run(estimated), /failed/)
+  restore()
+  mergeWithFormatting(BRANCHES[0], [1])
+  const writer = path.join(workFolder(sample.repo), 'results', estimated.id, 'writer')
+  fs.rmSync(path.join(writer, fs.readdirSync(writer)[0]))
+  delete process.env.OPENROUTER_API_KEY
+  const branch = tip(BRANCHES[1])
+  await assert.rejects(() => run(estimated, { env: process.env }), /OPENROUTER_API_KEY is not set/)
+  await assert.rejects(() => run(estimated, { env: { ...process.env, OPENROUTER_API_KEY: 'k' }, codex: path.join(sample.base, 'no-codex-here') }), /The Codex CLI is not installed/)
+  assert.equal(tip(BRANCHES[1]), branch, 'no branch was touched')
 })
 
 test('the estimate says where a run would continue and which model results it would use again', async () => {

@@ -37,7 +37,7 @@ import { changedFiles, closePullRequest, commit, createPullRequest, currentBranc
 import { checkCommitHooks } from './hook-check.mjs'
 import { buildPlan } from './plan.mjs'
 import { mkdirPlain, removePlainFile, writePlainFile } from './plain-path.mjs'
-import { obtainPurposes } from './purposes-stage.mjs'
+import { obtainPurposes, savedWork } from './purposes-stage.mjs'
 import { createResultStore } from './results.mjs'
 import { findMerged } from './stages.mjs'
 import { renderStory } from './stories.mjs'
@@ -146,16 +146,16 @@ function preflight({ repo }) {
   return base
 }
 
-/** The writer and the checker can run: checked only when the run has model work to do. */
-function checkModelRoutes({ onboarding, env, codex }) {
-  if (onboarding.writer.route === 'codex-cli') {
+/** The writer and the checker can run: each is checked only when the run will call it. */
+function checkModelRoutes({ onboarding, env, codex, writer, checker }) {
+  if (writer && onboarding.writer.route === 'codex-cli') {
     try {
       execFileSync(codex ?? 'codex', ['--version'], { stdio: 'ignore' })
     } catch {
       throw new UserError('The Codex CLI is not installed. Install it and sign in with codex login, or set onboarding.writer.route to external.')
     }
   }
-  if (onboarding.checker.route === 'openrouter') {
+  if (checker && onboarding.checker.route === 'openrouter') {
     const name = onboarding.checker.secrets[0]
     if (!name || !env[name]) throw new UserError(`${name ?? 'The checker key'} is not set in the environment. Run this command through your secret store so it is set for this command only.`)
   }
@@ -211,13 +211,19 @@ export async function runOnboarding(options) {
     return { done: true, state, report: null }
   }
   const modelWork = start <= 2
-  if (modelWork) checkModelRoutes({ onboarding, env, codex })
+  mkdirPlain(repo, work)
+  const store = createResultStore({ repo, work, planId: plan.id })
+  if (modelWork) {
+    // A run that has every result it needs saved calls no model, so it needs neither the Codex CLI nor the key.
+    // Which checks are needed is known only once every writer call is: until then the key is needed.
+    const saved = savedWork({ plan, onboarding, store })
+    const allWritten = saved.writerCalls.length === plan.calls.length
+    checkModelRoutes({ onboarding, env, codex, writer: !allWritten, checker: !allWritten || saved.checkable > saved.checks })
+  }
   log(`Base branch ${base}. The estimate's plan ${approve} matches.`)
   const { check } = plan.stories
   log(`Stories: ${check.typeChecked} type-checked with the repo's own TypeScript before any branch or model call. Left for a person: ${plan.stories.items.filter((i) => i.status === 'skipped').length} (${check.noStorybook} in folders no Storybook loads, ${check.needsValue} with a required prop to fill in, ${check.storybookMissing + check.didNotCompile} that did not compile).`)
 
-  mkdirPlain(repo, work)
-  const store = createResultStore({ repo, work, planId: plan.id })
   const sources = new Map(plan.calls.flatMap((call) => call.files.map((f) => [f.file, f.source])))
   const ctx = { repo, plan, estimate, onboarding, log, env, fetchImpl, codex, work, base, options, store, sources }
 

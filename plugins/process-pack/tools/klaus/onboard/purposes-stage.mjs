@@ -223,13 +223,16 @@ function readChecksFile({ ctx, state, items, todo, file }) {
 
 /**
  * The model results an earlier run saved for this plan that a run would use again: the writer
- * calls, and the checks of the purposes those calls wrote. Calls no model and changes nothing.
+ * calls, and the checks of the purposes those calls wrote. `checkable` is how many of those
+ * purposes have something to be checked against, so `checkable - checks` are the checks still to
+ * make for them. Calls no model and changes nothing.
  *
- * @returns {{ writerCalls: string[], checks: number }}
+ * @returns {{ writerCalls: string[], checks: number, checkable: number }}
  */
 export function savedWork({ plan, onboarding, store }) {
   const writerCalls = []
   let checks = 0
+  let checkable = 0
   const ctx = { repo: plan.root, plan }
   for (const call of plan.calls) {
     const saved = store.loadWriterCall(call)
@@ -241,10 +244,12 @@ export function savedWork({ plan, onboarding, store }) {
     for (const p of pending) {
       const context = contextOf({ plan, onboarding }, p.component)
       const source = call.files.find((f) => f.file === p.file).source
-      if (isCheckable(context) && store.loadCheck({ ...p, ...context }, source)) checks += 1
+      if (!isCheckable(context)) continue
+      checkable += 1
+      if (store.loadCheck({ ...p, ...context }, source)) checks += 1
     }
   }
-  return { writerCalls, checks }
+  return { writerCalls, checks, checkable }
 }
 
 /**
