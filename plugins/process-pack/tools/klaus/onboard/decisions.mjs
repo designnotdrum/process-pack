@@ -189,7 +189,7 @@ export function renderDecisions(pairs, pictures = new Map()) {
     `Klaus found components that may do the same job twice. This list holds only the ones it could not settle from the code: ${count(decide.length, 'question')}.${settled.length > 0 ? ` It settled the others without asking, as ${settled.join(' and ')} in the [tickets folder](tickets/).` : ''}${away > 0 ? ` It set aside ${count(away, 'pair')} as different components, such as one built on the other. They are listed with the reason at the end of duplicates.md.` : ''}`,
     '',
   ]
-  if (decide.length === 0) return [...lines, 'No pairs need a decision.', ''].join('\n')
+  if (decide.length === 0) return [...lines, 'There is nothing to decide. No pairs need a decision.', ''].join('\n')
   lines.push('Tick one box under each question. Nothing in the code changes because of this list: a yes is written up afterwards as a ticket like the ones in the tickets folder.', '', 'Klaus is the tool that keeps the list of this repo\'s components. It draws a component from its story, a Storybook example page for that one component. Where a component has no story it cannot be drawn, and the item says so.', '')
   decide.forEach((pair, index) => {
     const sides = sidesOf(pair)

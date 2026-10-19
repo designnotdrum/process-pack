@@ -188,7 +188,7 @@ test('when every pair is set aside, duplicates.md still lists them with their re
 })
 
 test('an empty result still reads as a result', () => {
-  assert.match(duplicates.renderDecisions([]), /No pairs need a decision/)
+  assert.match(duplicates.renderDecisions([]), /There is nothing to decide\. No pairs need a decision\./)
 })
 
 // ---- pairs built by hand, for wording that the fixture does not reach
@@ -330,9 +330,9 @@ test('a wrapper is found by the file it imports, under any local name and throug
     assert.ok(reasons.includes("the web app's FancyBaseTile is built on BaseTile"), reasons.join(' | '))
     assert.ok(reasons.includes("the web app's BigBaseTile is built on BaseTile"), reasons.join(' | '))
     assert.equal(found.some((p) => [p.keep.name, p.drop.name].includes('BaseTile')), false, 'neither wrapper is asked about against what it is built on')
-    // The two wrappers write no class names, so their look cannot be compared. That is not evidence that they differ, so it stays a question.
-    const wrappers = found.find((p) => [p.keep.name, p.drop.name].sort().join('+') === 'BigBaseTile+FancyBaseTile')
-    assert.equal(wrappers?.verdict, 'decide-look-unknown')
+    // The two wrappers have different names and write no class names, so their look cannot be compared. They are set aside, not asked about.
+    assert.equal(found.some((p) => [p.keep.name, p.drop.name].sort().join('+') === 'BigBaseTile+FancyBaseTile'), false)
+    assert.ok(found.dismissed.some((d) => d.reason === 'different names, and the look could not be compared' && [d.keep.name, d.drop.name].sort().join('+') === 'BigBaseTile+FancyBaseTile'))
   } finally {
     second.cleanup()
   }
@@ -454,6 +454,32 @@ test('an import of a package of this repo that resolves to source is followed, s
     assert.ok(reasons.some((r) => r === "the web app's WideCrate is built on the shared UI package's Crate"), reasons.join(' | '))
     // The wrapper does not import the legacy Crate, so that pair is still a question.
     assert.ok(found.some((p) => p.verdict === 'decide' && [p.keep.file, p.drop.file].includes('packages/ui/src/legacy/Crate.tsx') && [p.keep.name, p.drop.name].includes('WideCrate')), 'the legacy Crate and the wrapper')
+  } finally {
+    second.cleanup()
+  }
+})
+
+test('two differently named components whose look cannot be compared are not asked about, but the same name still is', async () => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const second = makeDecisionsSample()
+  try {
+    const components = path.join(second.repo, 'apps/web/src/components')
+    const withClasses = (name) => `export function ${name}({ data, selected }: { data: string; selected?: boolean }) {\n  return <div className="rounded border" data-selected={selected}>{data}</div>\n}\n`
+    const withoutClasses = (name) => `export function ${name}({ data, selected }: { data: string; selected?: boolean }) {\n  return <section data-selected={selected}>{data}</section>\n}\n`
+    fs.writeFileSync(path.join(components, 'TaskTile.tsx'), withoutClasses('TaskTile'))
+    fs.writeFileSync(path.join(components, 'LinkTile.tsx'), withClasses('LinkTile'))
+    fs.mkdirSync(path.join(second.repo, 'apps/web/src/app/tiles'))
+    fs.writeFileSync(path.join(second.repo, 'apps/web/src/app/tiles/page.tsx'), "import { LinkTile } from '@/components/LinkTile'\nimport { TaskTile } from '@/components/TaskTile'\n\nexport default function TilesPage() {\n  return [LinkTile, TaskTile]\n}\n")
+    const found = planOf(second.repo).duplicates
+    const names = (p) => [p.keep.name, p.drop.name].sort().join('+')
+    assert.equal(found.some((p) => names(p) === 'LinkTile+TaskTile'), false)
+    assert.deepEqual(found.dismissed.filter((d) => names(d) === 'LinkTile+TaskTile').map((d) => d.reason), ['different names, and the look could not be compared'])
+    assert.deepEqual(found.filter((p) => p.verdict !== 'merge').map(names).sort(), ['Badge+Badge', 'Switch+Switch'], 'the same-name pairs are still asked about')
+    const asked = planOf(second.repo, { setAside: false }).duplicates
+    assert.equal(asked.find((p) => names(p) === 'LinkTile+TaskTile')?.verdict, 'decide-look-unknown', '--ask-all asks about everything')
+    assert.equal(found.dismissed.length, 1)
+    assert.match(duplicates.renderDuplicatesList(found), /different names, and the look could not be compared/)
   } finally {
     second.cleanup()
   }

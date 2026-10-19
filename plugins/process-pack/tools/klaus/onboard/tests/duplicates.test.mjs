@@ -81,7 +81,7 @@ test('nothing the run writes uses an em dash', () => {
 
 test('an empty result still reads as a result', () => {
   assert.match(renderDuplicatesList([]), /No likely duplicates were found/)
-  assert.match(renderDecisions([]), /No pairs need a decision/)
+  assert.match(renderDecisions([]), /There is nothing to decide\. No pairs need a decision\./)
 })
 
 test('the reason an entry is kept follows the order it was picked in', () => {
