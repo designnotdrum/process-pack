@@ -42,9 +42,6 @@ const finish = (sentence) => {
 
 const collapse = (text) => text.replace(/\s+/g, ' ').trim()
 
-/** Whether a comment already has a "Use when:" or a "Not for:" label anywhere in it. */
-export const hasPurposeLabel = (rawComment) => /\b(use when|not for)\s*:/i.test(collapse(commentBody(rawComment)))
-
 /**
  * The two sentences added to a comment that was there before, and what is left of the comment
  * without them. The sentences run from the "Use when:" label to the first tag after the "Not for:"

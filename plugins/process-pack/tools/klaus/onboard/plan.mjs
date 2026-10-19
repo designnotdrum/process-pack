@@ -14,7 +14,6 @@ import { buildInventory } from '../inventory/inventory.mjs'
 import { createTsconfigLoader } from '../inventory/tsconfig.mjs'
 import { readUsage } from '../inventory/usage.mjs'
 import { findDuplicates } from './duplicates.mjs'
-import { hasPurposeLabel } from './purpose-text.mjs'
 import { docCommentOf, findComponent, parseSource } from './source.mjs'
 import { planStories } from './stories.mjs'
 import { groupIntoCalls } from './writer.mjs'
@@ -40,7 +39,8 @@ export function planPurposes({ root, ts, inventory }) {
     }
     const doc = docCommentOf(ts, sourceFile, found.statement)
     // Half a purpose is a person's to finish: a second label would make the comment read as the first.
-    if (doc && hasPurposeLabel(doc.text)) {
+    // Only the text before the first tag counts, as that is all the inventory reads.
+    if (doc && PURPOSE_LABEL.test(ts.getTextOfJSDocComment(doc.node.comment) ?? '')) {
       skipped.push({ id, name: entry.name, file: entry.file, reason: 'its doc comment already has a Use when or a Not for line, but not both where the inventory reads them' })
       continue
     }
@@ -55,6 +55,8 @@ export function planPurposes({ root, ts, inventory }) {
   }
   return { components, skipped }
 }
+
+const PURPOSE_LABEL = /\b(use when|not for)\s*:/i
 
 /** Whether a doc comment's first tag starts after text on its line, as `@repo/ui` does in `Lives in @repo/ui`. */
 function tagAfterText(text, doc) {

@@ -137,6 +137,14 @@ test('a comment with half a purpose is left for a person, since a second label w
     const plan = buildPlan({ root: sample.repo, folders, onboarding })
     assert.equal(plan.purposes.components.some((c) => c.name === 'PrimaryButton'), false)
     assert.match(plan.purposes.skipped.find((s) => s.name === 'PrimaryButton').reason, /already has a Use when or a Not for line/)
+
+    // A label inside a tag is not read by the inventory, so it does not hold the component back.
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace('/** Use when: the screen has one main action. */', '/**\n * The main button.\n *\n * @example\n * Use when: is how the docs page shows it.\n */'))
+    const again = buildPlan({ root: sample.repo, folders, onboarding })
+    const component = again.purposes.components.find((c) => c.name === 'PrimaryButton')
+    assert.ok(component, 'PrimaryButton is planned')
+    const out = applyPurposes(ts, path.join(again.root, component.file), fs.readFileSync(file, 'utf8'), [{ name: 'PrimaryButton', useWhen: 'a screen has one main action.', notFor: 'a second action, use Button.' }])
+    assert.deepEqual([inventoryPurpose(out, 'PrimaryButton').useWhen, inventoryPurpose(out, 'PrimaryButton').notFor], ['a screen has one main action.', 'a second action, use Button.'])
   } finally {
     sample.cleanup()
   }
