@@ -9,11 +9,11 @@ The decisions behind it are on the Klaus map in Linear: [NJM-1767](https://linea
 | Part | Where | Issue |
 |---|---|---|
 | Component inventory, `inventory.json` and `INVENTORY.md` | `inventory/` | #22 |
-| Version picked from the diff | | #23 |
-| Reuse check, `klaus find` | | #24 |
+| Version picked from the diff | `version/` | #23 |
+| Reuse check, `klaus find` | `find/` | #24 |
 | The frame: adapter interface, settings file, spending cap, triggers, report | `frame/` | #25 |
 | Storybook adapter | `adapters/storybook/` | #26 |
-| Figma code generator and Figma relay | `adapters/figma/` | #27, #28 |
+| Figma code generator, relay, plugin and reconcile mode | `adapters/figma/` | #27, #28, #43, #44 |
 | Onboarding step and baseline run | design-onboard | #29, #30 |
 | Penpot and Pencil adapters | `adapters/penpot/`, `adapters/pencil/` | #31, #32 |
 
@@ -49,7 +49,7 @@ The file sits at the repo root and is checked against `klaus.config.schema.json`
     "screens": { "mode": "listed", "routes": ["/", "/settings"] },
     "newComponents": { "rule": "min-usage", "minUsage": 3 }
   },
-  "spendingCap": { "maxComponentWrites": 50, "maxRelayTokens": 100000 },
+  "spendingCap": { "maxComponentWrites": 50, "maxRelayTokens": 500000 },
   "trigger": { "mode": "release", "tagPattern": "v*" }
 }
 ```
@@ -60,7 +60,7 @@ Check a config with `node scripts/klaus/frame/cli.mjs validate`.
 
 ### Spending cap
 
-Defaults are 50 component writes and 100,000 relay tokens. They apply to each output in each run. Over the cap, the most-used components are written first, using the inventory's usage count (the length of an entry's `usedIn` list), and the rest are deferred. A deferred component is handed back to the plan on the next run. Going over the cap never fails a run.
+Defaults are 50 component writes and 500,000 relay tokens. They apply to each output in each run. A Figma relay call was measured at about 71,000 tokens plus 1.4 per character of code, so the default relays about four Button-sized component versions a run (see `adapters/figma/relay/README.md`). A repo's first, large Figma load goes through the Klaus Figma plugin instead, which uses no tokens. Over the cap, the most-used components are written first, using the inventory's usage count (the length of an entry's `usedIn` list), and the rest are deferred. A deferred component is handed back to the plan on the next run. Going over the cap never fails a run.
 
 - Screens do not count toward the component limit. Every item counts toward the token limit, and so does any `overhead` the estimate reports.
 - An item that alone needs more tokens than the whole limit is deferred with the reason `larger-than-token-cap` and does not block the items behind it.
