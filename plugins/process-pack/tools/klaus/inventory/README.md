@@ -43,6 +43,7 @@ Folders given as arguments are used instead. A folder under `packages/` is `shar
 - The purpose is a doc comment in two parts, "Use when: ..." and "Not for: ...". A comment on a prop is never read as a purpose. A comment without the two labels is kept in `text` and shown as not yet in that form.
 - "Where used" follows imports through barrel files, `tsconfig` path aliases, workspace packages (mapped back from `dist` to source), default imports and `import()`. For an app component it climbs through other components to the screens. Tests and stories do not count as use.
 - Route files, tests, stories and declaration files are not components.
+- A prop type that names a file prints the file's path from the repo root, or the package specifier for a dependency, such as `import("packages/ui/src/types").Row`. A type declared in a build folder (`dist`, `build`, `out`, `.next`, `coverage`, `storybook-static`) prints the folder that holds the build folder instead, such as `import("packages/ui").AlignFn` or `import("@xyflow/react").Node`. A bundler puts a hash in such a file name, so a rebuild would otherwise change `inventory.json` with no change in the source. The version picker prints the same text.
 
 ## DOM attributes
 
