@@ -123,41 +123,57 @@ function jsonIn(text) {
 const isUnitList = (value) =>
   Array.isArray(value) && value.every((unit) => unit && typeof unit.id === "string" && typeof unit.status === "string");
 
-function findUnits(value, depth) {
+function findObject(value, depth, accept) {
   if (depth > 5 || value === null || value === undefined) return null;
   if (typeof value === "string") {
     for (const parsed of jsonIn(value)) {
-      const found = findUnits(parsed, depth + 1);
+      const found = findObject(parsed, depth + 1, accept);
       if (found) return found;
     }
     return null;
   }
   if (typeof value !== "object") return null;
-  if (isUnitList(value.units)) return value;
+  if (accept(value)) return value;
   for (const child of Object.values(value)) {
-    const found = findUnits(child, depth + 1);
+    const found = findObject(child, depth + 1, accept);
     if (found) return found;
   }
   return null;
 }
 
 /**
- * What the generated code returned, out of a use_figma result: { units: [{ id, status, error? }] }.
- * The code returns that object. Figma's server wraps it in text, so this looks through the
- * structured content and every text block, and through JSON held in a string.
- * @returns {object | null}  null when the result does not hold a unit list.
+ * The first object that accept approves, out of a use_figma result. Figma's server wraps what the
+ * code returned in text, so this looks through the structured content and every text block, and
+ * through JSON held in a string. Only the tool's result is read, never the model's reply.
  */
-export function readCodeResult(result) {
+function searchResult(result, accept) {
   if (!result || typeof result !== "object") return null;
-  const found = findUnits(result.structured_content ?? null, 0);
+  const found = findObject(result.structured_content ?? null, 0, accept);
   if (found) return found;
   for (const block of Array.isArray(result.content) ? result.content : []) {
     if (block?.type === "text" && typeof block.text === "string") {
-      const inText = findUnits(block.text, 0);
+      const inText = findObject(block.text, 0, accept);
       if (inText) return inText;
     }
   }
   return null;
+}
+
+/**
+ * What the generated code returned, out of a use_figma result: { units: [{ id, status, error? }] }.
+ * @returns {object | null}  null when the result does not hold a unit list.
+ */
+export function readCodeResult(result) {
+  return searchResult(result, (value) => isUnitList(value.units));
+}
+
+/**
+ * What the reconcile code returned: an object with a names key. The value is not checked here,
+ * because a names key that does not hold a list of strings is a reply to refuse, not one to skip.
+ * @returns {object | null}  null when the result holds no object with a names key.
+ */
+export function readNamesResult(result) {
+  return searchResult(result, (value) => Object.hasOwn(value, "names"));
 }
 
 /** The text of a result, for an error message. */

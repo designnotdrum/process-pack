@@ -1,6 +1,6 @@
 /** Shared setup for the relay's tests: a repo with generated code, and the relay run against stubs. */
 import { execFile } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -70,7 +70,7 @@ export async function generatedRepo({ components = ["Button", "Card"], perFile =
  * Runs the relay as a command, with the stub codex and gh first on PATH.
  * @returns {Promise<{ code: number, stdout: string, stderr: string, calls: Array<{ args: string[], stdin: Buffer }>, report: object | null }>}
  */
-export function relay(root, args, { scenarios = "success", mcp, ghSource, ghRun, ghCompare, otherRunLedger } = {}) {
+export function relay(root, args, { scenarios = "success", mcp, ghSource, ghRun, ghCompare, otherRunLedger, names, resultText, message } = {}) {
   const log = mkdtempSync(path.join(tmpdir(), "klaus-relay-log-"));
   const ghLog = path.join(log, "gh.json");
   const env = {
@@ -85,6 +85,9 @@ export function relay(root, args, { scenarios = "success", mcp, ghSource, ghRun,
   if (ghRun) env.STUB_GH_RUN = JSON.stringify(ghRun);
   if (ghCompare) env.STUB_GH_COMPARE = ghCompare;
   if (otherRunLedger) env.STUB_CODEX_OTHER_RUN_LEDGER = otherRunLedger;
+  if (names !== undefined) env.STUB_CODEX_NAMES = JSON.stringify(names);
+  if (resultText !== undefined) env.STUB_CODEX_RESULT_TEXT = resultText;
+  if (message !== undefined) env.STUB_CODEX_MESSAGE = message;
   return new Promise((resolve) => {
     execFile(process.execPath, [RELAY, ...args, "--root", root, "--json"], { env, cwd: root, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => {
       // A stub that made no call leaves no log folder, and a run that stopped early prints no report.
@@ -112,3 +115,17 @@ export function relay(root, args, { scenarios = "success", mcp, ghSource, ghRun,
 
 export const ledgerOf = (root) => JSON.parse(readFileSync(path.join(root, ".klaus/figma/ledger.json"), "utf8"));
 export const outputOf = (report) => report.outputs[0];
+
+/**
+ * A repo for reconcile: a config for the made-up file, and a ledger the Klaus plugin left behind,
+ * which only the relay's reconcile mode reads. No generator ran, so there is no release folder.
+ * @param {object} components  The ledger's components, for example { Button: { "1.0.0": "generated" } }.
+ */
+export function reconcileRepo({ components, screens = {}, options, config = ROOMY } = {}) {
+  const root = mkdtempSync(path.join(tmpdir(), "klaus-reconcile-"));
+  const figma = { ...config.outputs.figma, ...(options ? { options } : {}) };
+  writeFileSync(path.join(root, "klaus.config.json"), JSON.stringify({ ...config, outputs: { figma } }));
+  mkdirSync(path.join(root, ".klaus/figma"), { recursive: true });
+  writeFileSync(path.join(root, ".klaus/figma/ledger.json"), JSON.stringify({ version: 2, components, screens }));
+  return root;
+}

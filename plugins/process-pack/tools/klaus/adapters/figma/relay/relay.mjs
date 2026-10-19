@@ -5,6 +5,7 @@
  *
  *   node relay.mjs <folder> [options]
  *   node relay.mjs --run <id> [--repo <owner/name>] [--artifact <name>] [--release <release>] [options]
+ *   node relay.mjs --reconcile [options]
  *
  * <folder> is a release folder the generator wrote, `.klaus/figma/<release>/`,
  * holding manifest.json and the data files figma-001.json, figma-002.json, ...
@@ -28,12 +29,24 @@
  * ledger only when the code's own result says it was written or was already
  * there. A unit that failed stays generated, so the next run retries it.
  *
+ * `--reconcile` writes nothing to Figma. The Klaus plugin does the first, large load and cannot
+ * write the ledger, so the ledger still lists those units as generated. One read-only use_figma
+ * call returns the names of the component sets and components on the pages Klaus writes (the
+ * pages of the generated units in the ledger, and Older versions). Each generated component
+ * version whose `<Name> <version>` is among them is recorded as sent. The rest stay generated
+ * and the report lists them, and a changed unit is never touched. The same rules hold: the Figma
+ * file is the settings' file, the code is written by the relay and checked after it reached
+ * Figma, and only the tool's result is read, never the model's reply. The call and its tokens are
+ * counted under figma-relay and the spending cap applies.
+ *
  * Before each call the relay checks the spending cap in klaus.config.json
  * (component writes and relay tokens) and, when given, --max-calls. A call
  * that would pass a limit is not made: that file and every file after it are
  * deferred. The run report goes to .klaus/reports/ in the frame's format.
  *
  * Options:
+ *   --reconcile            Mark the generated components the plugin wrote as sent, in one read-only call.
+ *                          Takes no release folder, --run, --repo, --artifact or --release.
  *   --root <dir>           The repo. klaus.config.json, the ledger and the reports are under it. Default: here.
  *   --config <file>        Default klaus.config.json. It must name the Figma file (outputs.figma.target).
  *   --ledger <file>        Default <outputDir>/ledger.json, as the generator keeps it.
@@ -69,9 +82,10 @@ import { buildReport, writeReport } from "../../../frame/report.mjs";
 import { codeFor, newKey } from "../codegen.mjs";
 import { checkTargets, DataError, readData } from "../data-file.mjs";
 import { fileKeyOf, MANIFEST_VERSION } from "../index.mjs";
-import { CHANGED, entrySent, entryStatus, readLedger, recordEntry, SENT } from "../ledger.mjs";
+import { CHANGED, entrySent, entryStatus, generatedComponents, generatedScreenCount, markGeneratedAsSent, readLedger, recordEntry, SENT } from "../ledger.mjs";
 import { MAX_CODE_CHARS, readOptions, relayCallTokens } from "../settings.mjs";
 import { FIGMA_SERVER, FIGMA_TOOL, parseEvents, readCodeResult, relayTokens, resultText, summarizeEvents } from "./events.mjs";
+import { lookupPlan, readNames, reconcileCode } from "./reconcile.mjs";
 
 /**
  * The relaying model. On 2026-10-18 gpt-6-luna at low effort changed a 20,582-character file on
@@ -368,13 +382,10 @@ const labelOf = (entry) => (entry.kind === "component" ? `${entry.name} ${entry.
 const lastLine = (text) => String(text).trim().split("\n").filter(Boolean).at(-1)?.slice(0, 300) ?? "";
 
 /**
- * Sends one code file and reads the outcome.
- * @returns {Promise<{ units: Map<string, object>, changed: Set<string>, error: string | null, usage: object | null, tokens: number | null, warnings: string[], durationMs: number }>}
- *   units holds what the code reported for each unit, from calls that carried the file's code unchanged.
- *   changed holds the units Figma wrote from code Codex had changed.
+ * Runs `codex exec` with the code on stdin and reads what it printed.
+ * @returns {Promise<{ run: object, summary: object, warnings: string[] }>}
  */
-async function sendFile({ codex, args, code, workdir, timeoutMs, fileKey, eventsFile }) {
-  const startedAt = Date.now();
+async function runCodex({ codex, args, code, workdir, timeoutMs, eventsFile }) {
   const run = await spawnCodex(codex, args, code, workdir, timeoutMs);
   if (eventsFile) {
     writeFileSync(eventsFile, run.stdout);
@@ -383,14 +394,48 @@ async function sendFile({ codex, args, code, workdir, timeoutMs, fileKey, events
   const { events, unreadable } = parseEvents(run.stdout);
   const summary = summarizeEvents(events);
   const warnings = [];
+  if (summary.calls.length > 1) warnings.push(`Codex called ${FIGMA_TOOL} ${summary.calls.length} times. The prompt asks for one call.`);
+  if (summary.otherTools.length > 0) warnings.push(`Codex also called ${[...new Set(summary.otherTools)].join(", ")}.`);
+  if (unreadable > 0) warnings.push(`${unreadable} lines of Codex's output were not JSON events.`);
+  return { run, summary, warnings };
+}
+
+/** Adds to errors why a run made no use_figma call, or to warnings what went wrong after one. */
+function judgeRun({ run, summary, timeoutMs, errors, warnings }) {
+  if (summary.calls.length === 0) {
+    if (summary.started > 0) errors.push(`${FIGMA_TOOL} started and did not finish, so whether it wrote is unknown.`);
+    if (summary.failure) errors.push(summary.failure);
+    else if (run.error) errors.push(`Codex could not be started: ${run.error.message}`);
+    else if (run.timedOut) errors.push(`Codex did not finish within ${Math.round(timeoutMs / 1000)} seconds.`);
+    else if (run.exitCode !== 0) errors.push(`Codex exited with ${run.exitCode ?? run.signal}: ${lastLine(run.stderr) || "no message"}`);
+    else {
+      const said = summary.message ? ` It replied: ${summary.message.replace(/\s+/g, " ").slice(0, 200)}` : "";
+      // A model with use_figma in front of it calls it. One that calls nothing most likely never had it.
+      const why = summary.otherTools.length === 0
+        ? ` The ${FIGMA_SERVER} server's tools most likely did not reach the model: its sign-in may need renewing (codex mcp login ${FIGMA_SERVER}), or it did not start within ${MCP_STARTUP_TIMEOUT_SECONDS} seconds.`
+        : "";
+      errors.push(`Codex did not call ${FIGMA_TOOL}.${said}${why}`);
+    }
+  } else if (run.error) {
+    warnings.push(`Codex reported an error after the call: ${run.error.message}`);
+  } else if (run.exitCode !== 0 && !run.timedOut) {
+    warnings.push(`Codex exited with ${run.exitCode ?? run.signal} after the call: ${lastLine(run.stderr) || "no message"}`);
+  }
+}
+
+/**
+ * Sends one code file and reads the outcome.
+ * @returns {Promise<{ units: Map<string, object>, changed: Set<string>, error: string | null, usage: object | null, tokens: number | null, warnings: string[], durationMs: number }>}
+ *   units holds what the code reported for each unit, from calls that carried the file's code unchanged.
+ *   changed holds the units Figma wrote from code Codex had changed.
+ */
+async function sendFile({ codex, args, code, workdir, timeoutMs, fileKey, eventsFile }) {
+  const startedAt = Date.now();
+  const { run, summary, warnings } = await runCodex({ codex, args, code, workdir, timeoutMs, eventsFile });
   const units = new Map();
   const changed = new Set();
   const errors = [];
   const text = code.toString("utf8").trim();
-
-  if (summary.calls.length > 1) warnings.push(`Codex called ${FIGMA_TOOL} ${summary.calls.length} times. The prompt asks for one call.`);
-  if (summary.otherTools.length > 0) warnings.push(`Codex also called ${[...new Set(summary.otherTools)].join(", ")}.`);
-  if (unreadable > 0) warnings.push(`${unreadable} lines of Codex's output were not JSON events.`);
 
   for (const call of summary.calls) {
     // What Codex's own events say it sent. The relay cannot see what Figma's server received,
@@ -424,25 +469,7 @@ async function sendFile({ codex, args, code, workdir, timeoutMs, fileKey, events
     for (const warning of Array.isArray(returned.warnings) ? returned.warnings : []) warnings.push(`Figma: ${String(warning).slice(0, 300)}`);
   }
 
-  if (summary.calls.length === 0) {
-    if (summary.started > 0) errors.push(`${FIGMA_TOOL} started and did not finish, so whether it wrote is unknown.`);
-    if (summary.failure) errors.push(summary.failure);
-    else if (run.error) errors.push(`Codex could not be started: ${run.error.message}`);
-    else if (run.timedOut) errors.push(`Codex did not finish within ${Math.round(timeoutMs / 1000)} seconds.`);
-    else if (run.exitCode !== 0) errors.push(`Codex exited with ${run.exitCode ?? run.signal}: ${lastLine(run.stderr) || "no message"}`);
-    else {
-      const said = summary.message ? ` It replied: ${summary.message.replace(/\s+/g, " ").slice(0, 200)}` : "";
-      // A model with use_figma in front of it calls it. One that calls nothing most likely never had it.
-      const why = summary.otherTools.length === 0
-        ? ` The ${FIGMA_SERVER} server's tools most likely did not reach the model: its sign-in may need renewing (codex mcp login ${FIGMA_SERVER}), or it did not start within ${MCP_STARTUP_TIMEOUT_SECONDS} seconds.`
-        : "";
-      errors.push(`Codex did not call ${FIGMA_TOOL}.${said}${why}`);
-    }
-  } else if (run.error) {
-    warnings.push(`Codex reported an error after the call: ${run.error.message}`);
-  } else if (run.exitCode !== 0 && !run.timedOut) {
-    warnings.push(`Codex exited with ${run.exitCode ?? run.signal} after the call: ${lastLine(run.stderr) || "no message"}`);
-  }
+  judgeRun({ run, summary, timeoutMs, errors, warnings });
 
   return {
     units,
@@ -479,6 +506,11 @@ export async function runRelay(options) {
 
   const settings = readSettings(root, options.config);
   const ledgerPath = options.ledger ? path.resolve(root, options.ledger) : path.join(root, settings.outputDir, "ledger.json");
+  if (options.reconcile) {
+    const stray = [options.folder && "a release folder", options.run && "--run", options.repo && "--repo", options.artifact && "--artifact", options.release && "--release"].filter(Boolean);
+    if (stray.length > 0) throw new UserError(`--reconcile reads the ledger and Figma, and takes no release folder or artifact. Remove ${stray.join(", ")}.`);
+    return reconcileLedger(options, { root, settings, ledgerPath });
+  }
   if (Boolean(options.folder) === Boolean(options.run)) throw new UserError("Give a release folder or --run <id>, not both and not neither.");
   if (!options.run) return relayRelease(options, { root, settings, ledgerPath, folder: path.resolve(root, options.folder), source: null });
   const downloaded = downloadArtifact({ gh: options.gh ?? "gh", run: options.run, repo: options.repo, artifact: options.artifact ?? DEFAULT_ARTIFACT, cwd: root });
@@ -705,6 +737,242 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
   return { report, reportFile, exitCode: failed.length > 0 ? 1 : 0 };
 }
 
+/**
+ * Sends the reconcile code and reads the names it returned. Nothing is trusted that did not come
+ * from the tool's own result: the code use_figma received must be the code the relay wrote, on
+ * the settings' file, and the result must hold a list of names. Any error means no names.
+ * @returns {Promise<{ names: Set<string> | null, ignored: number, error: string | null, usage: object | null, tokens: number | null, warnings: string[], durationMs: number }>}
+ */
+async function sendReconcile({ codex, args, code, workdir, timeoutMs, fileKey, eventsFile }) {
+  const startedAt = Date.now();
+  const { run, summary, warnings } = await runCodex({ codex, args, code, workdir, timeoutMs, eventsFile });
+  const errors = [];
+  const text = code.toString("utf8").trim();
+  const names = new Set();
+  let ignored = 0;
+  let read = 0;
+
+  for (const call of summary.calls) {
+    const sent = call.arguments?.code;
+    if (typeof sent !== "string" || sent.trim() !== text) {
+      // Changed code could write, so unlike a plain failure this one asks for a look at the file.
+      errors.push(`Codex changed the code before it reached ${FIGMA_TOOL}, so its result is not trusted and what it did in Figma is unknown. Look at the file before running again.`);
+      continue;
+    }
+    if (call.arguments?.fileKey !== fileKey) {
+      errors.push(`Codex sent the code to file ${JSON.stringify(call.arguments?.fileKey)}, not ${fileKey}.`);
+      continue;
+    }
+    if (call.status !== "completed") {
+      errors.push(`${FIGMA_TOOL} failed: ${call.error ?? (resultText(call.result) || "no reason given")}`);
+      continue;
+    }
+    const found = readNames(call.result);
+    if (found.error) {
+      errors.push(`${FIGMA_TOOL}'s result is refused, so nothing was marked: ${found.error}`);
+      continue;
+    }
+    read += 1;
+    ignored += found.ignored;
+    for (const name of found.names) names.add(name);
+  }
+
+  judgeRun({ run, summary, timeoutMs, errors, warnings });
+  const refused = errors.length > 0 || read === 0;
+  return {
+    names: refused ? null : names,
+    ignored,
+    error: errors.length > 0 ? [...new Set(errors)].join(" ") : null,
+    usage: summary.usage,
+    tokens: relayTokens(summary.usage),
+    warnings,
+    durationMs: Date.now() - startedAt,
+  };
+}
+
+/**
+ * Reconcile mode. One read-only call lists the component sets and components on the pages Klaus
+ * writes. Each generated component version whose `<Name> <version>` is in the list becomes sent.
+ * The rest stay generated, and a changed unit is never touched.
+ */
+async function reconcileLedger(options, { settings, ledgerPath, root }) {
+  const now = options.now ?? (() => new Date());
+  const log = options.log ?? (() => {});
+  const codex = options.codex ?? "codex";
+  const dryRun = Boolean(options.dryRun);
+  const model = options.model ?? DEFAULT_MODEL;
+  const effort = options.effort ?? DEFAULT_EFFORT;
+  const maxCalls = options.maxCalls ?? null;
+  const timeoutMs = (options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
+  const fileKey = settings.fileKey;
+  if (!FILE_KEY.test(fileKey)) throw new UserError(`outputs.figma.target is not a Figma file key the relay can use.`);
+
+  const startedAt = now();
+  const ledger = readLedger(ledgerPath);
+  const generated = generatedComponents(ledger);
+  const { pages, looked, skipped } = lookupPlan(generated, settings.options);
+  const label = labelOf;
+  const changedLabels = [];
+  for (const [name, versions] of Object.entries(ledger.components)) {
+    for (const [version, status] of Object.entries(versions)) if (status === CHANGED) changedLabels.push(label({ kind: "component", name, version }));
+  }
+  const screens = generatedScreenCount(ledger);
+
+  const warnings = [];
+  for (const { entry, reason } of skipped) warnings.push(`${label(entry)} was not looked for: ${reason}.`);
+  if (screens > 0) warnings.push(`${plural(screens, "generated screen")} stay generated: reconcile reads component sets and components only.`);
+
+  const failed = [];
+  const deferred = [];
+  const estimated = { calls: 0, tokens: 0, usd: 0 };
+  const uncapped = { calls: 0, tokens: 0, usd: 0 };
+  const unitRecords = [];
+  const reconciled = [];
+  const missing = [];
+  let fileRecord = null;
+  let tokensUsed = 0;
+  let otherNames = 0;
+  let stopped = null;
+
+  if (looked.length > 0) {
+    const code = reconcileCode(pages);
+    if (code.length > MAX_CODE_CHARS) {
+      throw new UserError(`The reconcile call would name ${plural(pages.length, "page")} and come to ${code.length} characters, more than the ${MAX_CODE_CHARS} one call takes. Set outputs.figma.options.page to one page for the components.`);
+    }
+    const predicted = predictTokens(code.length);
+    uncapped.calls = 1;
+    uncapped.tokens = predicted;
+    stopped = capReason({ totals: { calls: 0, tokens: 0, componentWrites: 0 }, predicted, components: 0, cap: settings.cap, maxCalls });
+    const record = { name: "reconcile", chars: code.length, units: looked.map(label), pages };
+
+    if (stopped) {
+      fileRecord = { ...record, status: "deferred", reason: stopped, predictedTokens: predicted, calls: 0, tokens: 0 };
+      for (const entry of looked) {
+        deferred.push({ id: label(entry), kind: "component", reason: stopped });
+        unitRecords.push({ id: label(entry), kind: "component", status: "deferred", reason: stopped });
+      }
+    } else if (dryRun) {
+      estimated.calls = 1;
+      estimated.tokens = predicted;
+      fileRecord = { ...record, status: "would send", predictedTokens: predicted, calls: 1, tokens: null };
+      for (const entry of looked) unitRecords.push({ id: label(entry), kind: "component", status: "would look" });
+    } else {
+      estimated.calls = 1;
+      estimated.tokens = predicted;
+      const figmaUrl = checkCodex(codex).url;
+      const keepEvents = options.eventsDir ? path.resolve(root, options.eventsDir) : null;
+      if (keepEvents) mkdirSync(keepEvents, { recursive: true });
+      const workdir = mkdtempSync(path.join(tmpdir(), "klaus-relay-"));
+      let outcome;
+      try {
+        log(`reconcile: looking for ${plural(looked.length, "component version")} on ${plural(pages.length, "page")}, about ${predicted} relay tokens`);
+        const args = codexArgs({ model, effort, workdir, figmaUrl, keepCodexConfig: Boolean(options.keepCodexConfig), prompt: relayPrompt({ fileKey, fileName: "reconcile" }) });
+        outcome = await sendReconcile({ codex, args, code: Buffer.from(code, "utf8"), workdir, timeoutMs, fileKey, eventsFile: keepEvents ? path.join(keepEvents, "reconcile.jsonl") : null });
+      } finally {
+        rmSync(workdir, { recursive: true, force: true });
+      }
+      tokensUsed = outcome.tokens ?? 0;
+      otherNames = outcome.ignored;
+      if (outcome.tokens === null) warnings.push("The call ended without a token count, so actual tokens leave it out. The cap counted its predicted tokens.");
+
+      if (outcome.names === null) {
+        failed.push({ id: "reconcile", error: outcome.error ?? "The call returned no list of names." });
+        for (const entry of looked) unitRecords.push({ id: label(entry), kind: "component", status: "not checked" });
+      } else {
+        for (const entry of looked) {
+          if (outcome.names.has(label(entry))) reconciled.push(entry);
+          else missing.push(entry);
+        }
+        if (reconciled.length > 0) {
+          // Apply the marks to the ledger as it is now, so a mark another run wrote since this run read it is kept.
+          const fresh = readLedger(ledgerPath);
+          let wrote = false;
+          for (const entry of reconciled) if (markGeneratedAsSent(fresh, entry)) wrote = true;
+          if (wrote) writeJsonFile(ledgerPath, fresh);
+        }
+        for (const entry of reconciled) unitRecords.push({ id: label(entry), kind: "component", status: "reconciled" });
+        for (const entry of missing) unitRecords.push({ id: label(entry), kind: "component", status: "missing" });
+      }
+      fileRecord = {
+        ...record,
+        status: outcome.names === null ? "failed" : "read",
+        error: outcome.error ?? undefined,
+        calls: 1,
+        tokens: outcome.tokens,
+        usage: outcome.usage,
+        predictedTokens: predicted,
+        durationMs: outcome.durationMs,
+        warnings: outcome.warnings.length > 0 ? outcome.warnings : undefined,
+      };
+      for (const warning of outcome.warnings) warnings.push(`reconcile: ${warning}`);
+      log(`reconcile: ${fileRecord.status}, ${outcome.tokens ?? "unknown"} relay tokens${outcome.error ? `. ${outcome.error}` : ""}`);
+    }
+  }
+  if (stopped === "larger-than-token-cap") {
+    warnings.push("The reconcile call alone needs more relay tokens than spendingCap.maxRelayTokens allows, so it will never be made at this cap. Raise the cap.");
+  } else if (stopped) warnings.push(`The relay stopped before the call, which would pass the ${stopped}.`);
+  for (const labelText of changedLabels) unitRecords.push({ id: labelText, kind: "component", status: "changed", note: "Not touched. Delete the set in Figma, then run the relay." });
+
+  const actual = { calls: fileRecord && fileRecord.calls === 1 && !dryRun ? 1 : 0, tokens: tokensUsed, usd: 0 };
+  const total = looked.length;
+  const summary = looked.length === 0
+    ? `Figma reconcile: no generated component version to look for${changedLabels.length > 0 ? `; ${plural(changedLabels.length, "changed version")} left alone` : ""}.`
+    : dryRun
+      ? `Figma reconcile, dry run: would look for ${plural(total, "component version")} on ${plural(pages.length, "page")} in 1 call, about ${estimated.tokens} relay tokens.`
+      : stopped
+        ? `Figma reconcile: the call was deferred (${stopped}); ${plural(total, "component version")} stay generated.`
+        : failed.length > 0
+          ? `Figma reconcile: failed, so nothing was marked; ${plural(total, "component version")} stay generated. 1 call, ${tokensUsed} relay tokens.`
+          : `Figma reconcile: ${reconciled.length} of ${plural(total, "generated component version")} found in Figma and marked sent; ${missing.length} missing; 1 call, ${tokensUsed} relay tokens.`;
+  const outputRecord = {
+    output: REPORT_OUTPUT,
+    status: dryRun ? "dry-run" : "ok",
+    reason: null,
+    releases: [],
+    planned: total,
+    written: [],
+    deferred,
+    failed,
+    estimated,
+    estimatedUncapped: uncapped,
+    actual,
+    adapter: {
+      summary,
+      links: [{ label: "Figma file", url: `https://www.figma.com/design/${fileKey}` }],
+      details: {
+        mode: "reconcile",
+        folder: null,
+        ledger: ledgerPath,
+        model,
+        effort,
+        codexConfig: options.keepCodexConfig ? "user" : "clean",
+        maxCalls,
+        pages,
+        // The units the call found and marked sent, which no relayed send is.
+        reconciled: reconciled.map(label),
+        missing: missing.map(label),
+        changed: changedLabels,
+        otherNames,
+        files: fileRecord ? [fileRecord] : [],
+        units: unitRecords,
+      },
+    },
+    warnings,
+  };
+  const report = buildReport({
+    status: failed.length > 0 ? "failed" : "ok",
+    startedAt,
+    finishedAt: now(),
+    trigger: "manual",
+    release: null,
+    dryRun,
+    cap: settings.cap,
+    outputs: [outputRecord],
+  });
+  const reportFile = dryRun ? null : writeReport(path.resolve(root, options.reportDir ?? ".klaus/reports"), report);
+  return { report, reportFile, exitCode: failed.length > 0 ? 1 : 0 };
+}
+
 /** The lines printed after a run. */
 export function describeRun(report, reportFile) {
   const output = report.outputs[0];
@@ -714,6 +982,12 @@ export function describeRun(report, reportFile) {
     const why = file.reason ? ` (${file.reason})` : file.error ? `: ${file.error}` : "";
     lines.push(`  ${file.name}: ${file.status}${why}${cost ? `, ${cost}` : ""}`);
   }
+  const details = output.adapter.details;
+  if (details.mode === "reconcile") {
+    if (details.reconciled.length > 0) lines.push(`  reconciled, now sent: ${details.reconciled.join(", ")}`);
+    if (details.missing.length > 0) lines.push(`  missing, still generated: ${details.missing.join(", ")}`);
+    if (details.changed.length > 0) lines.push(`  changed, left alone: ${details.changed.join(", ")}`);
+  }
   for (const failure of output.failed) lines.push(`  failed ${failure.id}: ${failure.error}`);
   for (const warning of output.warnings) lines.push(`  note: ${warning}`);
   if (reportFile) lines.push(`Report: ${reportFile}`);
@@ -721,6 +995,7 @@ export function describeRun(report, reportFile) {
 }
 
 const OPTIONS = {
+  reconcile: { type: "boolean" },
   run: { type: "string" },
   repo: { type: "string" },
   artifact: { type: "string" },
@@ -753,6 +1028,7 @@ export async function main(argv) {
     if (positionals.length > 1) throw new UserError(`Unexpected argument ${JSON.stringify(positionals[1])}.`);
     const { report, reportFile, exitCode } = await runRelay({
       folder: positionals[0],
+      reconcile: values.reconcile,
       run: values.run,
       repo: values.repo,
       artifact: values.artifact,

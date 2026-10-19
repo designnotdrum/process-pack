@@ -18,6 +18,10 @@
  *   no-call       Codex replied without calling use_figma
  *   crash         Codex died before the call, with exit code 1
  *
+ * For the reconcile code (a "const PAGES = " line) the result is { names }, read from
+ * STUB_CODEX_NAMES (a JSON list). STUB_CODEX_RESULT_TEXT replaces the whole result text, for a
+ * reply that is not what the code returns. STUB_CODEX_MESSAGE replaces the model's closing message.
+ *
  * success.jsonl is the event stream of a real relay call (2026-10-18, gpt-6-luna), with
  * three placeholders: "__CODE__" (the code use_figma received), "__FILE_KEY__" and
  * "__RESULT_TEXT__" (what the code returned, as Figma's server wraps it). tool-error.jsonl
@@ -96,12 +100,18 @@ const results = units.map((unit) => ({ id: unit.id, status, name: `${unit.name} 
 if (scenario === "unit-failed" && results.length > 0) {
   results[results.length - 1] = { id: results.at(-1).id, status: "failed", error: "The font DM Sans Medium could not be loaded." };
 }
-const returned = { tokens: { made: [], updated: [] }, units: results, warnings: [] };
+// The reconcile code is read-only and returns the names it found.
+const reconcile = lines.some((l) => l.startsWith("const PAGES = "));
+const returned = reconcile
+  ? { names: JSON.parse(process.env.STUB_CODEX_NAMES ?? "[]") }
+  : { tokens: { made: [], updated: [] }, units: results, warnings: [] };
+const resultText = process.env.STUB_CODEX_RESULT_TEXT ?? JSON.stringify(returned);
 
 const fixture = { success: "success", exists: "success", "unit-failed": "success", "changed-code": "success", "changed-code-failed": "tool-error", "wrong-file-key": "success", "tool-error": "tool-error", "no-call": "no-call", crash: "crash" }[scenario];
 if (!fixture) fail(`unknown scenario ${scenario}`);
-const sent = scenario.startsWith("changed-code") ? code.replace("const CONFIG", "const  CONFIG") : code;
-if (scenario.startsWith("changed-code") && sent === code) fail("the changed-code scenario found no \"const CONFIG\" to change in the code");
+const anchor = reconcile ? "const PAGES" : "const CONFIG";
+const sent = scenario.startsWith("changed-code") ? code.replace(anchor, `${anchor.slice(0, 5)} ${anchor.slice(5)}`) : code;
+if (scenario.startsWith("changed-code") && sent === code) fail(`the changed-code scenario found no "${anchor}" to change in the code`);
 const sentKey = scenario === "wrong-file-key" ? "SomeOtherFigmaFileKey000" : fileKey;
 let template = "";
 try {
@@ -109,11 +119,24 @@ try {
 } catch (error) {
   fail(`cannot read the ${fixture} fixture: ${error.message}`);
 }
+// The model's own closing message, when a test wants it to differ from the tool's result.
+const withMessage = (text) => {
+  if (process.env.STUB_CODEX_MESSAGE === undefined) return text;
+  return text
+    .split("\n")
+    .map((line) => {
+      if (!line.includes('"agent_message"')) return line;
+      const event = JSON.parse(line);
+      event.item.text = process.env.STUB_CODEX_MESSAGE;
+      return JSON.stringify(event);
+    })
+    .join("\n");
+};
 process.stdout.write(
-  template
+  withMessage(template
     .replaceAll('"__CODE__"', () => JSON.stringify(sent))
     .replaceAll('"__FILE_KEY__"', () => JSON.stringify(sentKey))
-    .replaceAll('"__RESULT_TEXT__"', () => JSON.stringify(JSON.stringify(returned))),
+    .replaceAll('"__RESULT_TEXT__"', () => JSON.stringify(resultText))),
 );
 if (scenario === "crash") {
   process.stderr.write("Error: stream disconnected before completion: error sending request\n");
