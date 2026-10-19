@@ -30,7 +30,7 @@ const TYPE_LIMIT = 200
  * Reads the components a file exports. `checker` must belong to a program that contains the file.
  * Components are returned in source order.
  */
-export function readComponents(ts, checker, sourceFile, root) {
+export function readComponents(ts, checker, sourceFile, root, domAttributes = () => undefined) {
   const moduleSymbol = checker.getSymbolAtLocation(sourceFile)
   if (!moduleSymbol) return []
   const byDeclaration = new Map()
@@ -54,13 +54,14 @@ export function readComponents(ts, checker, sourceFile, root) {
       continue
     }
 
-    const { props, variants } = readProps(ts, checker, symbol, declaration, root)
+    const { props, variants, omittedDomProps } = readProps(ts, checker, symbol, declaration, root, domAttributes)
     byDeclaration.set(declaration, {
       name,
       isDefault,
       position: declaration.getStart(sourceFile),
       props,
       variants,
+      omittedDomProps,
       purpose: parsePurpose(docCommentAbove(ts, declaration)),
     })
   }
@@ -135,7 +136,11 @@ export function parsePurpose(raw) {
   return purpose
 }
 
-/** Props the repo declares itself. Everything inherited from React, the DOM or a library is left out. */
+/**
+ * Props the repo declares itself. A prop declared in React, the DOM or a library is left out.
+ * A prop with no declaration at all, which is what a mapped type produces, passes here: the
+ * compiler cannot say where it came from. `isUndeclaredDomAttribute` filters those further.
+ */
 export function ownProp(prop, root) {
   const declarations = prop.declarations ?? []
   if (!declarations.length) return true
@@ -154,9 +159,99 @@ function propsTypeOf(ts, checker, symbol, declaration) {
   return propsSymbol ? checker.getTypeOfSymbolAtLocation(propsSymbol, declaration) : undefined
 }
 
-function readProps(ts, checker, symbol, declaration, root) {
+/**
+ * The interfaces that declare DOM attributes, matched by name: `AllHTMLAttributes` and an
+ * element's own, `InputHTMLAttributes` for one, end in the same word. A library that declares an
+ * interface with one of these names has its properties counted as attributes too.
+ */
+const DOM_ATTRIBUTE_INTERFACE = /(?:HTMLAttributes|SVGAttributes|AriaAttributes|DOMAttributes)$/
+const DOM_ATTRIBUTE_FILE = /\binterface\s+(?:AriaAttributes|DOMAttributes)\b/
+
+/**
+ * The DOM attributes React declares, as a function from an attribute name to the shapes of the
+ * types it is declared with, or undefined for a name that is not an attribute. The interfaces
+ * are `AriaAttributes`, `DOMAttributes`, `HTMLAttributes`, `AllHTMLAttributes`, an element's own
+ * such as `ButtonHTMLAttributes`, and `SVGAttributes`. They are read from wherever the program
+ * loaded React's types, so nothing here names a path. A declaration file is read when it declares
+ * `AriaAttributes` or `DOMAttributes`, which `@types/react` does in the file that holds the rest.
+ * When React's types are not in the program no name is an attribute. A shape is formatted the first time its name is asked for, because a
+ * program carries thousands of attribute properties and a few props need the answer.
+ */
+function readDomAttributes(ts, checker, program) {
+  const declared = new Map()
+  const seen = new Set()
+  const read = (node) => {
+    const symbol = checker.getSymbolAtLocation(node.name)
+    if (!symbol || seen.has(symbol)) return
+    seen.add(symbol)
+    for (const prop of checker.getPropertiesOfType(checker.getDeclaredTypeOfSymbol(symbol))) {
+      declared.set(prop.getName(), [...(declared.get(prop.getName()) ?? []), { prop, node }])
+    }
+  }
+  const visit = (node) => {
+    if (ts.isInterfaceDeclaration(node)) {
+      if (DOM_ATTRIBUTE_INTERFACE.test(node.name.text)) read(node)
+    } else if (ts.isSourceFile(node) || ts.isModuleDeclaration(node) || ts.isModuleBlock(node)) ts.forEachChild(node, visit)
+  }
+  for (const file of program.getSourceFiles()) {
+    if (file.isDeclarationFile && DOM_ATTRIBUTE_FILE.test(file.text)) visit(file)
+  }
+
+  const shapes = new Map()
+  return (name) => {
+    if (!declared.has(name)) return undefined
+    if (!shapes.has(name)) shapes.set(name, new Set(declared.get(name).map(({ prop, node }) => shapeOf(ts, checker, checker.getTypeOfSymbolAtLocation(prop, node)))))
+    return shapes.get(name)
+  }
+}
+
+const QUOTED = String.raw`"(?:[^"\\]|\\.)*"`
+const TYPE_ARGUMENTS = new RegExp(`${QUOTED}|<(?:${QUOTED}|[^<>"])*>`, 'g')
+
+/**
+ * A type as text, so two types that differ only in the element they are typed for read the same:
+ * type arguments are erased, `MouseEventHandler<HTMLDivElement>` on a div and
+ * `MouseEventHandler<T>` as React declares it both read `MouseEventHandler<>`. Union members are
+ * sorted and `undefined` is dropped, so the order and optionality do not matter.
+ *
+ * This is text and not a structural comparison, so it can miss. A prop that does not read the
+ * same as React's after this is listed, as it was before.
+ */
+function shapeOf(ts, checker, type) {
+  const print = (member) => {
+    let text = checker.typeToString(member, undefined, ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope)
+    // The innermost type arguments go first, so a nested list is gone after a few passes. A string
+    // literal type is kept whole: `"<b>"` is not a type argument.
+    for (let previous = ''; previous !== text; ) {
+      previous = text
+      text = text.replace(TYPE_ARGUMENTS, (part) => (part.startsWith('"') ? part : '\u0001'))
+    }
+    return text.replace(/\u0001+/g, '<>')
+  }
+  return (type.isUnion() ? type.types : [type])
+    .filter((member) => !(member.flags & ts.TypeFlags.Undefined))
+    .map(print)
+    .sort()
+    .join(' | ')
+}
+
+/**
+ * Whether a prop is a DOM attribute that came in without a declaration. A mapped type such as
+ * framer-motion's `HTMLMotionProps<"div">` rebuilds React's attributes as new properties, and a
+ * property made that way points at no declaration, so the file it was declared in cannot say
+ * where it came from. It counts as a DOM attribute when React declares an attribute of the same
+ * name and the type reads the same. A prop the repo declares is never one, whatever its name.
+ * A mapped type the repo writes itself, with a key and a type that both match an attribute, is
+ * read as that attribute: `Record<"id", string>`.
+ */
+function isUndeclaredDomAttribute(ts, checker, prop, type, domAttributes) {
+  if (prop.declarations?.length) return false
+  return Boolean(domAttributes(prop.getName())?.has(shapeOf(ts, checker, type)))
+}
+
+function readProps(ts, checker, symbol, declaration, root, domAttributes) {
   const propsType = propsTypeOf(ts, checker, symbol, declaration)
-  if (!propsType || propsType.flags & ts.TypeFlags.Any) return { props: [], variants: {} }
+  if (!propsType || propsType.flags & ts.TypeFlags.Any) return { props: [], variants: {}, omittedDomProps: 0 }
 
   // A props type that is a union of object types lists the props every member shares, which would
   // hide most of them. Merge the members instead. A prop is required only if every member has it and requires it.
@@ -174,15 +269,20 @@ function readProps(ts, checker, symbol, declaration, root) {
 
   const props = []
   const variants = {}
+  let omittedDomProps = 0
   for (const [name, { prop, count, required }] of [...merged].sort(([a], [b]) => (a < b ? -1 : 1))) {
     if (!ownProp(prop, root)) continue
     const type = checker.getTypeOfSymbolAtLocation(prop, declaration)
+    if (isUndeclaredDomAttribute(ts, checker, prop, type, domAttributes)) {
+      omittedDomProps += 1
+      continue
+    }
     const isRequired = required && count === members.length
     props.push({ name, type: typeText(ts, checker, type, declaration, isRequired), required: isRequired })
     const options = literalOptions(ts, type)
     if (options) variants[name] = options
   }
-  return { props, variants }
+  return { props, variants, omittedDomProps }
 }
 
 function typeText(ts, checker, type, location, required) {
@@ -252,9 +352,12 @@ export function readAllComponents(ts, root, tsconfigs, files) {
     const rootNames = [...group, ...tsconfigs.ambientFilesFor(configPath || null)]
     const program = ts.createProgram({ rootNames, options: tsconfigs.optionsFor(group[0]) })
     const checker = program.getTypeChecker()
+    // Read on first use, because only a prop with no declaration needs it.
+    let domAttributes
+    const domAttributesOf = (name) => (domAttributes ??= readDomAttributes(ts, checker, program))(name)
     for (const file of group) {
       const sourceFile = program.getSourceFile(file)
-      components.set(file, sourceFile ? readComponents(ts, checker, sourceFile, root) : [])
+      components.set(file, sourceFile ? readComponents(ts, checker, sourceFile, root, domAttributesOf) : [])
     }
   }
   return components

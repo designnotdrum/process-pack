@@ -12,7 +12,7 @@ import { readUsage } from './usage.mjs'
 
 /**
  * @typedef {{ name: string, type: string, required: boolean }} Prop
- * @typedef {{ name: string, props: Prop[], variants: Record<string, (string|number)[]> }} Part
+ * @typedef {{ name: string, props: Prop[], variants: Record<string, (string|number)[]>, omittedDomProps?: number }} Part
  * @typedef {{ useWhen: string|null, notFor: string|null, text: string }} Purpose
  * @typedef {object} Entry
  * @property {string} name The family name, or "Icon set".
@@ -23,6 +23,7 @@ import { readUsage } from './usage.mjs'
  * @property {Purpose|null} purpose
  * @property {Prop[]} props Props of the family's main component.
  * @property {Record<string, (string|number)[]>} variants Props of the main component that take a closed set of values.
+ * @property {number} [omittedDomProps] How many DOM attributes the main component takes that are not in `props`. Absent when none.
  * @property {Part[]} parts The other components in the family, such as DialogContent.
  * @property {string[]} [icons] The icons inside an icon set.
  * @property {string} version Filled in by the versioning step; empty here.
@@ -45,7 +46,8 @@ function componentEntry({ root, folder, file, family, usage }) {
     purpose: family.purpose,
     props: family.props,
     variants: family.variants,
-    parts: family.parts.map(({ name, props, variants }) => ({ name, props, variants })),
+    ...(family.omittedDomProps > 0 && { omittedDomProps: family.omittedDomProps }),
+    parts: family.parts.map(({ name, props, variants, omittedDomProps }) => ({ name, props, variants, ...(omittedDomProps > 0 && { omittedDomProps }) })),
     version: '',
     screenshot: '',
     usedIn: kind === 'shared' ? users.map((u) => toPosix(path.relative(root, u))).sort() : usage.screensFrom(users),
