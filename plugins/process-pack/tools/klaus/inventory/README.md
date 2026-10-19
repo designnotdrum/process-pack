@@ -29,7 +29,8 @@ Folders given as arguments are used instead. A folder under `packages/` is `shar
 | `purpose` | `{ useWhen, notFor, text }` from the doc comment directly above the component, or `null`. |
 | `props` | Props the repo declares itself, with type and `required`. Props inherited from React, the DOM or a library are left out. |
 | `variants` | The props of the main component that take a closed set of strings or numbers. This is how `class-variance-authority` variants appear: `variant?: "default" | "outline" | null`. |
-| `parts` | The other components in the family, each with its own `props` and `variants`. |
+| `omittedDomProps` | Only when there are any: how many DOM attributes (`aria-*`, `onClick`, `className` and the rest) the main component takes that are not in `props`. See "DOM attributes" below. |
+| `parts` | The other components in the family, each with its own `props` and `variants`, and `omittedDomProps` when it has any. |
 | `icons` | Only on `icon-set`: the icons inside it. |
 | `version`, `screenshot` | Present and empty. Later steps fill them. |
 | `usedIn` | Importing files for `shared` entries, screens for the rest. |
@@ -43,6 +44,16 @@ Folders given as arguments are used instead. A folder under `packages/` is `shar
 - "Where used" follows imports through barrel files, `tsconfig` path aliases, workspace packages (mapped back from `dist` to source), default imports and `import()`. For an app component it climbs through other components to the screens. Tests and stories do not count as use.
 - Route files, tests, stories and declaration files are not components.
 
+## DOM attributes
+
+A component that passes a whole element's attributes through would otherwise list hundreds of props that say nothing about what it does. Props declared in React's types, or in any other dependency, are left out. That covers `React.ComponentProps<"button">`, and it is left out without a count.
+
+A mapped type can rebuild those attributes as new properties that the compiler traces to no declaration. framer-motion's `ComponentProps<typeof motion.div>` does this, and it put 272 attributes on `TreeExpander` in Meridian. A prop with no declaration is a DOM attribute when React's `AriaAttributes`, `DOMAttributes`, `HTMLAttributes`, `AllHTMLAttributes`, an element's own `*HTMLAttributes` or `SVGAttributes` declare one with the same name and the same type, ignoring the element it is typed for. It is left out of `props` and `variants`, and counted in `omittedDomProps`, so the count says how many were left out.
+
+A prop the repo declares is always listed, whatever its name. A repo's own mapped type is listed unless a key and its type both match an attribute exactly, as in `Record<"id", string>`. React's types are read from wherever the compiler loaded them. A repo whose compiler does not load them counts nothing.
+
+The version picker does not read `props` from the inventory. It compares props with the compiler, and it counts inherited ones on purpose, so this does not change what it reports.
+
 ## Tests
 
 ```sh
@@ -50,4 +61,4 @@ pnpm install
 pnpm test
 ```
 
-The tests run on a small fixture repo in `test/fixtures/repo`, with a stub for React's types and for `class-variance-authority`, so nothing but `typescript` is installed.
+The tests run on a small fixture repo in `test/fixtures/repo`, with a stub for `class-variance-authority`. Stubs for React's and motion's types are in `test/fixtures/dependencies`, and each run copies them into the fixture's `node_modules`, where a real repo has them. Nothing but `typescript` is installed.
