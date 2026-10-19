@@ -1,0 +1,9 @@
+{
+  "outputs": {
+    "storybook": { "enabled": false },
+    "figma": { "enabled": false }
+  },
+  "inventory": {
+    "folders": ["packages/ui/src", "apps/web/src"]
+  }
+}
