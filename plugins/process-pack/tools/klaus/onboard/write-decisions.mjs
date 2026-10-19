@@ -78,7 +78,7 @@ export async function writeDecisions({ repo: given, storybook, out, askAll = fal
   }
   const counts = countDuplicates(duplicates)
   const drawn = [...pictures.values()].filter((p) => p.file)
-  log(`${counts.pairs} pairs: ${counts.removals} removal tickets, ${counts.merges} merge tickets, ${counts.decisions} questions (${drawn.filter((p) => p.drawn[0] && p.drawn[1]).length} with both sides drawn, ${drawn.filter((p) => p.drawn[0] !== p.drawn[1]).length} with one side drawn, ${counts.decisions - drawn.length} with no picture). ${duplicates.dismissed.length} set aside as different components. Wrote ${written.length} files under ${base}${stale.length > 0 ? ` and removed ${stale.length} from an earlier run that no pair needs now` : ''}.`)
+  log(`${counts.pairs} pairs: ${counts.removals} removal tickets, ${counts.merges} merge tickets, ${counts.decisions} ${counts.decisions === 1 ? 'question' : 'questions'} (${drawn.filter((p) => p.drawn[0] && p.drawn[1]).length} with both sides drawn, ${drawn.filter((p) => p.drawn[0] !== p.drawn[1]).length} with one side drawn, ${counts.decisions - drawn.length} with no picture). ${duplicates.dismissed.length} set aside as different components. Wrote ${written.length} files under ${base}${stale.length > 0 ? ` and removed ${stale.length} from an earlier run that no pair needs now` : ''}.`)
   return { duplicates, pictures, written, removed: stale, counts }
 }
 
