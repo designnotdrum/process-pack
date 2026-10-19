@@ -33,11 +33,38 @@ export const ADMIN_ROLE_ID = 5;
 /** The rules a ruleset must have, besides whatever else it has. */
 export const REQUIRED_RULES = Object.freeze(["creation", "update", "deletion"]);
 
-/** The ref conditions that take in every tag. A ruleset may include these instead of the release pattern. */
-const ALL_TAGS = new Set(["~ALL", "refs/tags/*"]);
+/**
+ * The one include, besides the release pattern, that takes in every release tag. `refs/tags/*` does not:
+ * in a ruleset `*` does not match `/`, while in a workflow's tag filter `**` does.
+ */
+const ALL_TAGS = "~ALL";
+
+export const PATTERN_DOCS = Object.freeze({
+  workflow: "https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#filter-pattern-cheat-sheet",
+  ruleset: "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository#using-fnmatch-syntax",
+});
+
+/**
+ * Throws unless the release pattern means the same thing in the workflow's tag filter and in a ruleset.
+ * The two syntaxes differ. In a workflow filter `**` matches `/`, `?` and `+` repeat the character before,
+ * `[ ]` takes only letters and digits, and `!` negates. In a ruleset (Ruby fnmatch) `*` stops at `/`, `**`
+ * only works as a whole path part, `?` is any one character, `[ ]` takes any set, and `\` escapes. A tag
+ * such as `release/evil` can match the workflow's `release/**` and not the ruleset's. So Klaus renders
+ * only a pattern of letters, digits, `.`, `_`, `-` and `*`, with no `/` and no `**`. Those mean the same in both.
+ */
+export function assertReleasePattern(tagPattern) {
+  if (typeof tagPattern === "string" && /^[A-Za-z0-9._*-]+$/.test(tagPattern) && !tagPattern.includes("**")) return;
+  throw new UserError([
+    `The release pattern ${JSON.stringify(tagPattern)} cannot be protected by a tag ruleset, so release mode will not use it.`,
+    "A workflow's tag filter and a ruleset read the same pattern differently: in a workflow `**` matches `/`, while in a ruleset `*` stops at `/`, and `?`, `+`, `[ ]`, `!` and `\\` mean different things in the two. A tag such as release/evil could then match the workflow and slip past the ruleset.",
+    "Use a pattern made only of letters, digits, `.`, `_`, `-` and `*`, with no `/` and no `**`, for example v*. Or use the schedule trigger, which does not need a ruleset.",
+    `Workflow syntax: ${PATTERN_DOCS.workflow}`,
+    `Ruleset syntax: ${PATTERN_DOCS.ruleset}`,
+  ].join("\n"));
+}
 
 /** Why only one shape of ruleset counts, for the person to read. */
-export const SHAPE_NOTE = "Only a ruleset of exactly this shape counts: it is about tags, active, includes exactly the release pattern or all tags, excludes nothing, limits creating, updating and deleting, and only repository admins and actors approved by name can bypass it. Any exclusion leaves the tags it names open to everyone, and a different include may not reach the release tags, so Klaus does not try to judge other rulesets. They neither count nor block, and GitHub applies the rules of every ruleset together, so this one still binds.";
+export const SHAPE_NOTE = "Only a ruleset of exactly this shape counts: it is about tags, active, includes exactly the release pattern or ~ALL, excludes nothing, limits creating, updating and deleting, and only repository admins and actors approved by name can bypass it. Any exclusion leaves the tags it names open to everyone, and a different include may not reach the release tags, so Klaus does not try to judge other rulesets. They neither count nor block, and GitHub applies the rules of every ruleset together, so this one still binds.";
 
 /** The actor types the rulesets API knows. */
 export const ACTOR_TYPES = Object.freeze(["Integration", "OrganizationAdmin", "RepositoryRole", "Team", "DeployKey", "User"]);
@@ -72,7 +99,7 @@ export function parseActor(text, type) {
 
 /** The ruleset to create. Admins always bypass it. Approved apps and teams ({ id, name }) are added by id. */
 export function rulesetBody({ tagPattern, apps = [], teams = [] }) {
-  if (typeof tagPattern !== "string" || tagPattern === "") throw new UserError("The ruleset needs the release tag pattern, for example v*.");
+  assertReleasePattern(tagPattern);
   const actor = (actor_type, id) => ({ actor_id: Number(id), actor_type, bypass_mode: "always" });
   const named = [...apps.map((a) => ({ ...a, type: "Integration" })), ...teams.map((t) => ({ ...t, type: "Team" }))];
   for (const entry of named) {
@@ -105,7 +132,7 @@ export function explainRuleset(body, names = new Map()) {
 
 /**
  * Whether a ruleset has the one shape Klaus accepts, leaving the bypass list aside:
- * about tags, active, including exactly the release pattern or all tags, excluding nothing,
+ * about tags, active, including exactly the release pattern or ~ALL, excluding nothing,
  * and with the creation, update and deletion rules. Other rules may be there too.
  */
 export function hasExactShape(ruleset, tagPattern) {
@@ -114,7 +141,7 @@ export function hasExactShape(ruleset, tagPattern) {
   if (!Array.isArray(include) || include.length === 0) return false;
   if (exclude !== undefined && exclude !== null && !(Array.isArray(exclude) && exclude.length === 0)) return false;
   const wanted = `refs/tags/${tagPattern}`;
-  if (!include.every((entry) => entry === wanted || ALL_TAGS.has(entry))) return false;
+  if (!include.every((entry) => entry === wanted || entry === ALL_TAGS)) return false;
   const types = new Set((ruleset.rules ?? []).map((rule) => rule.type));
   return REQUIRED_RULES.every((type) => types.has(type));
 }
@@ -137,6 +164,7 @@ export function hasExactShape(ruleset, tagPattern) {
  *   unknown: no ruleset qualifies and the bypass list of one of the exact shape was not returned.
  */
 export function assess({ rulesets, tagPattern, approved = [] }) {
+  assertReleasePattern(tagPattern);
   const exact = rulesets.filter((ruleset) => hasExactShape(ruleset, tagPattern));
   if (exact.length === 0) return { status: "missing" };
   const allowed = new Set(approved.map((entry) => keyOf(entry.type, entry.id)));
@@ -200,6 +228,7 @@ export function gh(repo, args, { input, run = spawnSync } = {}) {
  * unknown also covers rulesets that could not be read at all, for example without admin rights or on a plan without rulesets.
  */
 export function checkRuleset({ repo, tagPattern, approved = [], run }) {
+  assertReleasePattern(tagPattern);
   let summaries;
   try {
     summaries = gh(repo, ["repos/{owner}/{repo}/rulesets"], { run });

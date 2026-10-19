@@ -27,7 +27,7 @@
  *       Release mode runs on a pushed tag, and only a tag ruleset protects the repo's secrets from a
  *       hostile tag. Without --create this only reads: it reads every active tag ruleset in full and looks
  *       only at rulesets of one exact shape (about tags; active; includes exactly the release pattern or
- *       all tags; excludes nothing; has the creation, update and deletion rules). Other rulesets neither
+ *       ~ALL; excludes nothing; has the creation, update and deletion rules). Other rulesets neither
  *       count nor block. It says whether one of that shape lets only repository admins and approved
  *       actors bypass it. If it lets anyone else bypass it, it lists them and stops. If no ruleset has
  *       the shape it shows the one it would create and why. With --create it creates it. Admins always
@@ -48,7 +48,7 @@ import { UserError } from "../frame/errors.mjs";
 import { readJsonFile } from "../frame/json-file.mjs";
 import { copyKlaus } from "./copy.mjs";
 import { estimateOutputs, formatCosts, OUTPUTS } from "./costs.mjs";
-import { approvalsInUse, checkRuleset, createRuleset, explainRuleset, parseActor, rulesetBody, SHAPE_NOTE, unapprovedMessage } from "./ruleset.mjs";
+import { approvalsInUse, assertReleasePattern, checkRuleset, createRuleset, explainRuleset, parseActor, rulesetBody, SHAPE_NOTE, unapprovedMessage } from "./ruleset.mjs";
 import { writeWorkflow } from "./workflow.mjs";
 
 const OPTIONS = {
@@ -117,6 +117,7 @@ function rulesetCommand(values) {
   const repo = repoOf(values);
   const tagPattern = values["tag-pattern"];
   if (!tagPattern) throw new UserError("--tag-pattern <pattern> is needed: the release tag pattern, for example v*.");
+  assertReleasePattern(tagPattern);
   const apps = (values["bypass-app"] ?? []).map((text) => parseActor(text, "Integration"));
   const teams = (values["bypass-team"] ?? []).map((text) => parseActor(text, "Team"));
   const fromFlags = (values.approve ?? []).map((text) => parseActor(text));

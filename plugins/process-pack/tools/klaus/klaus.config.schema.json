@@ -73,7 +73,7 @@
       "properties": {
         "mode": { "enum": ["release", "schedule"], "default": "release" },
         "tagPattern": {
-          "description": "Git tag glob that marks a release.",
+          "description": "Git tag glob that marks a release. In release mode (a pushed tag) it may hold only letters, digits, . _ - and *, with no / and no **, so that the workflow's tag filter and the tag ruleset mean the same thing.",
           "title": "a git tag glob that does not start with a dash",
           "type": "string",
           "pattern": "^[A-Za-z0-9._*?/][A-Za-z0-9._*?/-]{0,63}$",

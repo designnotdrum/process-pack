@@ -17,7 +17,7 @@ import { UserError } from "../frame/errors.mjs";
 import { resolveConfig } from "../frame/config.mjs";
 import { readJsonFile } from "../frame/json-file.mjs";
 import { SOURCE_ROOT } from "./copy.mjs";
-import { checkRuleset, unapprovedMessage } from "./ruleset.mjs";
+import { assertReleasePattern, checkRuleset, unapprovedMessage } from "./ruleset.mjs";
 import { writePlainFile } from "./safe-write.mjs";
 
 const BEGIN = /^(\s*)# klaus:begin (\S+)\s*$/;
@@ -64,6 +64,7 @@ export function renderWorkflow({ template, config, install, installSteps, corepa
   if (figma && !storybookBuild) {
     throw new UserError("The Figma output reads a static Storybook build. Give the command that writes one with --storybook-build (it must write to outputs.figma.options.storybookDir, storybook-static by default).");
   }
+  if (config.trigger.mode === "release") assertReleasePattern(config.trigger.tagPattern);
   const folders = config.inventory.folders ?? [];
   if (folders.length === 0) throw new UserError("klaus.config.json has no inventory.folders, so the workflow has nothing to build the inventory from.");
 
@@ -162,10 +163,11 @@ export function lintWorkflow(file) {
 export function requireTagRuleset({ repo, config, checkTags = checkRuleset }) {
   if (config.trigger.mode !== "release") return null;
   const tagPattern = config.trigger.tagPattern;
+  assertReleasePattern(tagPattern);
   const found = checkTags({ repo, tagPattern, approved: config.trigger.approvedTagBypass ?? [] });
   if (found.status === "protected") return found.rulesets;
   if (found.status === "unapproved") throw new UserError(unapprovedMessage(found, tagPattern));
-  const why = found.status === "unknown" ? `The repo's rulesets could not be read (${found.reason}).` : `No ruleset of the shape Klaus needs (about tags, active, including the release pattern or all tags, excluding nothing, limiting create, update and delete) protects tags matching ${tagPattern}.`;
+  const why = found.status === "unknown" ? `The repo's rulesets could not be read (${found.reason}).` : `No ruleset of the shape Klaus needs (about tags, active, including the release pattern or ~ALL, excluding nothing, limiting create, update and delete) protects tags matching ${tagPattern}.`;
   throw new UserError(`${why} Release mode runs on a pushed tag, and a pushed tag runs the workflow file from the tagged commit, so only a tag ruleset protects the repo's secrets from a hostile tag. Create one with \`install.mjs ruleset --repo <repo> --tag-pattern ${tagPattern} --create\` after the person agrees, or set trigger.mode to "schedule" in klaus.config.json.`);
 }
 
