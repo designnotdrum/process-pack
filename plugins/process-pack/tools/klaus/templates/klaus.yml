@@ -1,27 +1,55 @@
-# Klaus writes this repo's components into its design outputs after each release.
-# design-onboard copies this file to .github/workflows/klaus.yml.
+# Klaus keeps this repo's design outputs in step with its releases.
+# design-onboard renders this file into .github/workflows/klaus.yml with
+# `node install/install.mjs workflow` (in process-pack's tools/klaus). To change
+# a setting, run the Klaus step of design-onboard again instead of editing by hand.
 #
-# Which trigger runs follows klaus.config.json (trigger.mode). Keep the block
-# for that mode and delete the other one. The manual trigger always stays.
-# A run that does not match trigger.mode exits without doing anything, so a
-# block left in by mistake is harmless.
+# Everything here is model-free: the inventory, the version picker, Storybook on
+# Vercel, and the Figma generator, which writes data files and calls no tool.
+# The Figma relay needs a signed-in Codex CLI and never runs in CI. Run it on the
+# machine that holds that sign-in, from the klaus-figma artifact of a run:
+#   node scripts/klaus/adapters/figma/relay/relay.mjs --run <run id> --repo <owner/name>
 #
-# This workflow runs the model-free steps only. An output that needs a model or
-# a signed-in tool (the Figma relay) is skipped here. Run it from a laptop:
-#   node scripts/klaus/frame/cli.mjs run --trigger manual
+# Code that is not on the default branch must not get the deploy token. Three things
+# keep it away, and they are in this file in this order:
+#   1. The first step refuses a commit that is not an ancestor of the default branch.
+#   2. The version picker ignores release tags whose commit is not on the default branch,
+#      and removes them from this runner's clone, so nothing after it can pick one.
+#   3. Only the Run Klaus step has the Vercel token (and any other secret). Install and
+#      build steps do not, and the Storybook build inside Run Klaus is started without it.
+# A scheduled run uses this file from the default branch, so 1 and 2 hold there. A pushed
+# tag runs the file from the tagged commit, so a hostile tag can leave the check out. What
+# protects release mode is a tag ruleset (see the push trigger below).
+#
+# Which trigger starts a run follows klaus.config.json (trigger.mode). The
+# renderer keeps one of the two trigger blocks. The manual trigger always stays.
+# A run that does not match trigger.mode exits without doing anything, so a block
+# left in by mistake is harmless.
 #
 # Two releases tagged close together queue as one run, because GitHub keeps one
-# pending run per concurrency group. That is safe: every run covers each release
-# since the last recorded run, so the later run covers the earlier release too.
+# pending run per concurrency group. That is safe: the version picker below runs
+# once for every release since the last one it handled, oldest first.
 
 name: Klaus
 
 on:
+  # klaus:begin release
+  # A pushed tag runs THIS file as it is in the tagged commit, so nothing written here can
+  # stop a hostile tag: whoever can push a tag matching the pattern below can run their own
+  # copy of this workflow with the secrets. What protects release mode is a repository
+  # ruleset that lets only maintainers create, update or delete tags matching the pattern: every
+  # bypass actor of the ruleset is a repository admin, or was approved by name and is
+  # listed in klaus.config.json under trigger.approvedTagBypass.
+  # design-onboard checks for one with `gh api repos/{owner}/{repo}/rulesets` and creates
+  # it, after a yes, before it renders this trigger, and checks the same list on every
+  # later render. Without that ruleset, use the schedule.
   push:
     tags:
-      - "v*" # trigger.mode release: match trigger.tagPattern
+      - "v*" # klaus:value tag-pattern
+  # klaus:end release
+  # klaus:begin schedule
   schedule:
-    - cron: "0 6 * * 1" # trigger.mode schedule: match trigger.cron, in UTC
+    - cron: "0 6 * * 1" # klaus:value cron
+  # klaus:end schedule
   workflow_dispatch:
     inputs:
       dry_run:
@@ -31,6 +59,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # to find and download the state artifact of the last run
 
 concurrency:
   group: klaus
@@ -47,48 +76,262 @@ jobs:
           fetch-tags: true
           persist-credentials: false
 
+      # The first step, before anything from the repo runs. The commit checked out must be
+      # on the default branch (fetch-depth 0 above fetched its history).
+      - name: Refuse a commit that is not on the default branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          default="$DEFAULT_BRANCH"
+          if [ -z "$default" ]; then default=$(gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch); fi
+          if ! git rev-parse --verify --quiet "refs/remotes/origin/$default^{commit}" > /dev/null; then
+            echo "::error::origin/$default was not fetched, so this run cannot tell whether the commit is on it."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor HEAD "refs/remotes/origin/$default"; then
+            echo "::error::$(git rev-parse --short HEAD) is not on $default, so Klaus will not build it. Merge it first."
+            exit 1
+          fi
+          echo "KLAUS_DEFAULT_BRANCH=$default" >> "$GITHUB_ENV"
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 22
+          node-version: "22" # klaus:value node-version
 
-      # The state file records the last release each output covered. The cache
-      # keeps it between runs. If GitHub drops it, the next run covers only the
-      # newest release.
+      # The repo's own install. Storybook, TypeScript and Playwright come from
+      # here, and Klaus installs nothing itself. Without this step the Storybook
+      # output stops with "storybook is not installed".
+      # klaus:begin install
+      - name: Install the repo's dependencies
+        run: pnpm install --frozen-lockfile
+      # klaus:end install
+
+      # Klaus runs from a copy outside the working tree, because the version-picker
+      # step checks out older release tags, and a tag from before Klaus was installed
+      # has no scripts/klaus.
+      - name: Copy Klaus out of the working tree
+        run: |
+          mkdir -p "$RUNNER_TEMP/klaus"
+          cp -R scripts/klaus/. "$RUNNER_TEMP/klaus/"
+          cp klaus.config.json "$RUNNER_TEMP/klaus.config.json"
+          echo "KLAUS=$RUNNER_TEMP/klaus" >> "$GITHUB_ENV"
+          echo "KLAUS_CONFIG=$RUNNER_TEMP/klaus.config.json" >> "$GITHUB_ENV"
+
+      # Four things survive between runs, kept in the klaus-state artifact:
+      #   .klaus/state.json                 the last release each output covered
+      #   .klaus/inventory.versioned.json   the inventory the version picker last wrote
+      #   .klaus/screenshots                the screenshot stored with each version
+      #   .klaus/figma/ledger.json          which Figma versions the generator has planned
+      # The inventory step rebuilds inventory.json with empty versions, so the
+      # picker reads the last versions from the kept copy.
+      # An artifact, not the Actions cache: a run started by a tag cannot restore a
+      # cache made for a different tag, so a cache would never reach the next release.
+      # Any workflow in the repo can upload an artifact with this name, and Klaus reads
+      # these files as its own. So the newest artifact is not taken on trust. It is used
+      # only when it came from a successful run of this workflow file, on the default
+      # branch or at a commit that is on it, and only when check-state.mjs finds exactly
+      # the files and shapes Klaus writes. Otherwise the next one is tried.
+      # If none qualifies, the committed inventory.json is the fallback when it holds
+      # versions, and the next run covers only the newest release.
       - name: Restore Klaus state
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .klaus/state.json
-          key: klaus-state-${{ github.run_id }}
-          restore-keys: klaus-state-
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          mkdir -p .klaus
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=klaus-state&per_page=30" > "$RUNNER_TEMP/artifacts.json"
+          candidates=$(jq -r '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | reverse | .[].workflow_run.id' "$RUNNER_TEMP/artifacts.json")
+          restored=""
+          for run_id in $candidates; do
+            gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id" > "$RUNNER_TEMP/run.json"
+            path=$(jq -r '.path // ""' "$RUNNER_TEMP/run.json")
+            conclusion=$(jq -r '.conclusion // ""' "$RUNNER_TEMP/run.json")
+            event=$(jq -r '.event // ""' "$RUNNER_TEMP/run.json")
+            branch=$(jq -r '.head_branch // ""' "$RUNNER_TEMP/run.json")
+            sha=$(jq -r '.head_sha // ""' "$RUNNER_TEMP/run.json")
+            [ "${path%%@*}" = ".github/workflows/klaus.yml" ] || continue
+            [ "$conclusion" = success ] || continue
+            case "$event" in
+              push) ;;
+              schedule | workflow_dispatch) [ "$branch" = "$KLAUS_DEFAULT_BRANCH" ] || continue ;;
+              *) continue ;;
+            esac
+            git merge-base --is-ancestor "$sha" "refs/remotes/origin/$KLAUS_DEFAULT_BRANCH" 2> /dev/null || continue
+            dir="$RUNNER_TEMP/klaus-state-$run_id"
+            rm -rf "$dir"
+            gh run download "$run_id" --name klaus-state --dir "$dir" || continue
+            if node "$KLAUS/ci/check-state.mjs" "$dir"; then
+              cp -R "$dir/." .klaus/
+              restored="$run_id"
+              break
+            fi
+            echo "::warning::The klaus-state artifact of run $run_id does not have the shape Klaus writes, so it was not used."
+          done
+          if [ -z "$restored" ]; then
+            echo "No earlier Klaus state that can be trusted. This run starts from the newest release."
+          fi
 
-      # Writes inventory.json for this commit. CI does not commit it.
-      - name: Refresh the inventory
-        run: node scripts/klaus/inventory.mjs
+      # For each release since the last one handled, oldest first: check it out,
+      # build the inventory, pick versions from the diff. The run ends on the
+      # newest of them, which is the release Klaus writes. A release that is
+      # already versioned is not picked twice.
+      # Only a tag whose commit is on the default branch is a release. Others are
+      # ignored and removed from this runner's clone, so the newest tag that passes
+      # is the one built, and the Klaus run below never sees the rest.
+      - name: Build the inventory and pick versions, one release at a time
+        id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          TAG: ${{ github.ref_name }}
+          TAG_PATTERN: "v*" # klaus:value tag-pattern
+          INVENTORY_FOLDERS: "packages/ui/src" # klaus:value inventory-folders
+          CAPTURES: "" # klaus:value captures
+        run: |
+          set -euo pipefail
+          mkdir -p .klaus
+          prev=.klaus/inventory.versioned.json
+          read -r -a folders <<< "$INVENTORY_FOLDERS"
 
+          # No kept copy: start from the committed inventory.json if it holds versions.
+          if [ ! -f "$prev" ] && [ -f inventory.json ] \
+            && node -e 'process.exit(JSON.parse(require("fs").readFileSync("inventory.json", "utf8")).versioned?.release ? 0 : 1)'; then
+            cp inventory.json "$prev"
+          fi
+
+          # Releases in the order Klaus counts them: creation date, then version for tags made
+          # together. Git makes the last --sort the main key.
+          # Keep this in step with listReleases in install/costs.mjs and frame/cli.mjs.
+          all=$(git tag --list "$TAG_PATTERN" --sort=version:refname --sort=creatordate)
+          releases=""
+          refused=""
+          for tag in $all; do
+            if git merge-base --is-ancestor "refs/tags/$tag^{commit}" "refs/remotes/origin/$KLAUS_DEFAULT_BRANCH"; then
+              releases+="$tag"$'\n'
+            else
+              refused+="$tag "
+              git tag -d "$tag" > /dev/null
+            fi
+          done
+          releases=${releases%$'\n'}
+          if [ -n "$refused" ]; then
+            echo "::warning::Ignoring tags whose commit is not on $KLAUS_DEFAULT_BRANCH: $refused"
+          fi
+          if [ "$EVENT" = push ]; then
+            if ! printf '%s\n' "$releases" | grep -Fxq "$TAG"; then
+              echo "::error::Refusing $TAG: its commit is not on $KLAUS_DEFAULT_BRANCH, or the tag does not match $TAG_PATTERN."
+              exit 1
+            fi
+            target="$TAG"
+          else
+            target=$(printf '%s\n' "$releases" | tail -n 1)
+          fi
+          if [ -z "$target" ]; then
+            if [ -z "$all" ]; then
+              echo "::notice::No tag matches $TAG_PATTERN yet, so there is no release to write."
+            else
+              echo "::notice::No tag matching $TAG_PATTERN is on $KLAUS_DEFAULT_BRANCH, so there is no release to write. Ignored: $refused"
+            fi
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          last=""
+          if [ -f "$prev" ]; then
+            last=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).versioned?.release ?? "")' "$prev")
+          fi
+          if [ -n "$last" ] && ! printf '%s\n' "$releases" | grep -Fxq "$last"; then
+            echo "::warning::The last versioned release $last is not a tag now, so only $target is picked."
+          fi
+          covered=$(RELEASES="$releases" LAST="$last" TARGET="$target" node -e '
+            const all = process.env.RELEASES.split("\n").filter(Boolean);
+            const start = all.indexOf(process.env.LAST);
+            const end = all.indexOf(process.env.TARGET);
+            console.log((start < 0 ? [process.env.TARGET] : all.slice(start + 1, end + 1)).join("\n"));
+          ')
+
+          git checkout --force --detach "refs/tags/$target"
+          for rel in $covered; do
+            git checkout --force --detach "refs/tags/$rel"
+            node "$KLAUS/inventory/inventory.mjs" "${folders[@]}"
+            captures=()
+            if [ "$rel" = "$target" ] && [ -n "$CAPTURES" ]; then captures=(--captures "$CAPTURES"); fi
+            if [ -f "$prev" ]; then
+              node "$KLAUS/version/version.mjs" --release "$rel" --previous "$prev" ${captures[@]+"${captures[@]}"}
+            else
+              node "$KLAUS/version/version.mjs" --baseline --release "$rel" ${captures[@]+"${captures[@]}"}
+            fi
+            cp inventory.json "$prev"
+          done
+          # Nothing to pick: this release was versioned by an earlier run, so use that inventory.
+          if [ -z "$covered" ] && [ -f "$prev" ]; then cp "$prev" inventory.json; fi
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
+      # klaus:begin captures
+      # The version picker compares this release's captures with the stored screenshots.
+      # Put the step that writes the captures file before the step above.
+      # klaus:end captures
+
+      # klaus:begin figma-build
+      # The Figma output reads computed styles from a static Storybook build in a browser.
+      - name: Build Storybook for the Figma output
+        if: steps.pick.outputs.proceed == 'true'
+        run: "pnpm --filter @repo/ui build-storybook -o storybook-static" # klaus:value storybook-build
+
+      - name: Install the browser the Figma output reads Storybook with
+        if: steps.pick.outputs.proceed == 'true'
+        run: "pnpm exec playwright install --with-deps chromium" # klaus:value playwright
+      # klaus:end figma-build
+
+      # The only step with secrets. It builds Storybook, deploys it, and writes the Figma data.
+      # The Storybook adapter starts its build without the secrets, and gives the token to
+      # the Vercel calls alone.
       - name: Run Klaus
+        if: steps.pick.outputs.proceed == 'true'
         env:
           EVENT: ${{ github.event_name }}
           TAG: ${{ github.ref_name }}
           DRY_RUN: ${{ inputs.dry_run }}
-          # design-onboard adds one line for each name under "secrets" in
-          # klaus.config.json, in this form:
-          # VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          # klaus:secrets
         run: |
-          args=(run --model-free)
+          args=(run --model-free --config "$KLAUS_CONFIG")
           case "$EVENT" in
             push) args+=(--trigger release --release "$TAG") ;;
             schedule) args+=(--trigger schedule) ;;
             *) args+=(--trigger manual) ;;
           esac
           if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
-          node scripts/klaus/frame/cli.mjs "${args[@]}"
+          node "$KLAUS/frame/cli.mjs" "${args[@]}"
 
-      - name: Save Klaus state
-        if: always() && hashFiles('.klaus/state.json') != ''
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Keep Klaus state for the next run
+        if: success() && hashFiles('.klaus/state.json', '.klaus/inventory.versioned.json') != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          path: .klaus/state.json
-          key: klaus-state-${{ github.run_id }}
+          name: klaus-state
+          # Everything under .klaus is hidden to this action unless told otherwise.
+          include-hidden-files: true
+          path: |
+            .klaus/state.json
+            .klaus/inventory.versioned.json
+            .klaus/screenshots
+            .klaus/figma/ledger.json
+          if-no-files-found: ignore
+          retention-days: 90
+
+      # klaus:begin figma-artifact
+      # The relay downloads this by name: relay.mjs --run <id> --artifact klaus-figma.
+      - name: Keep the Figma data for the relay
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: klaus-figma
+          include-hidden-files: true
+          path: .klaus/figma/
+          if-no-files-found: ignore
+          retention-days: 30
+      # klaus:end figma-artifact
 
       # One JSON report per run, for the weekly scorecard.
       - name: Keep the run report
@@ -96,6 +339,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: klaus-report
+          include-hidden-files: true
           path: .klaus/reports/
           if-no-files-found: ignore
           retention-days: 90

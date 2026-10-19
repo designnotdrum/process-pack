@@ -42,6 +42,17 @@ const CALLS_PER_RUN = 3;
 
 const storageUsdPerMonth = (bytes) => (bytes / 1e9) * STORAGE_USD_PER_GB_MONTH;
 
+/**
+ * This process's environment without the named secrets. The Storybook build runs the repo's own
+ * configuration, which a tag or a branch can change, so it must not see the Vercel token. Only the
+ * Vercel calls get it.
+ */
+function withoutSecrets(env, names) {
+  const kept = { ...env };
+  for (const name of names) delete kept[name];
+  return kept;
+}
+
 function money(usd) {
   return `$${usd < 0.01 ? usd.toFixed(4) : usd.toFixed(2)}`;
 }
@@ -118,6 +129,7 @@ export function createStorybookAdapter({ exec = defaultExec, cwd = () => process
       const token = secret(ctx, "VERCEL_TOKEN");
       const scope = ctx.settings.secrets.includes("VERCEL_ORG_ID") ? secret(ctx, "VERCEL_ORG_ID") : undefined;
       const vercel = createVercel({ exec, token, project, scope });
+      const buildEnv = withoutSecrets(process.env, ctx.settings.secrets);
 
       let commit;
       try {
@@ -136,7 +148,7 @@ export function createStorybookAdapter({ exec = defaultExec, cwd = () => process
         outcomes.get(ctx).set(item.id, outcome);
         try {
           const buildDir = path.join(work, "build");
-          await buildStorybook({ exec, root, storybookDir: item.storybookDir, outDir: buildDir });
+          await buildStorybook({ exec, root, storybookDir: item.storybookDir, outDir: buildDir, env: buildEnv });
           outcome.buildBytes = directorySize(buildDir);
 
           // Vercel makes the first deployment of a project its open production deployment, so an empty

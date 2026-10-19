@@ -96,6 +96,31 @@ async function run({ world, root, config = configWith(), releases = ["v1.0.0"], 
   });
 }
 
+test("the Storybook build runs without the output's secrets, and only the Vercel calls get the token", async () => {
+  const before = { token: process.env.VERCEL_TOKEN, org: process.env.VERCEL_ORG_ID, other: process.env.KLAUS_TEST_KEEP };
+  process.env.VERCEL_TOKEN = TOKEN;
+  process.env.VERCEL_ORG_ID = "team_abcdef123456";
+  process.env.KLAUS_TEST_KEEP = "kept";
+  try {
+    const world = fakeWorld();
+    await run({ world, root: repo(), config: configWith({ secrets: ["VERCEL_TOKEN", "VERCEL_ORG_ID"] }), env: { VERCEL_TOKEN: TOKEN, VERCEL_ORG_ID: "team_abcdef123456" } });
+    const build = world.calls.find((c) => c.args[0] === "build");
+    assert.ok(build.options.env, "the build is given its own environment");
+    assert.equal(build.options.env.VERCEL_TOKEN, undefined);
+    assert.equal(build.options.env.VERCEL_ORG_ID, undefined);
+    assert.equal(build.options.env.KLAUS_TEST_KEEP, "kept", "the rest of the environment is kept");
+    assert.ok(JSON.stringify(build.options).includes(TOKEN) === false);
+    const deploys = world.calls.filter((c) => c.file === "npx");
+    assert.ok(deploys.length > 0);
+    for (const call of deploys) assert.equal(call.options.env.VERCEL_TOKEN, TOKEN);
+  } finally {
+    for (const [name, value] of [["VERCEL_TOKEN", before.token], ["VERCEL_ORG_ID", before.org], ["KLAUS_TEST_KEEP", before.other]]) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+
 test("a dry run makes no Vercel call and reports the storage cost", async () => {
   const world = fakeWorld();
   const { report } = await run({ world, root: repo(), dryRun: true, env: {} });

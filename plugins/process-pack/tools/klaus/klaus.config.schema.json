@@ -73,7 +73,7 @@
       "properties": {
         "mode": { "enum": ["release", "schedule"], "default": "release" },
         "tagPattern": {
-          "description": "Git tag glob that marks a release.",
+          "description": "Git tag glob that marks a release. In release mode (a pushed tag) it may hold only letters, digits, . _ - and *, with no / and no **, so that the workflow's tag filter and the tag ruleset mean the same thing.",
           "title": "a git tag glob that does not start with a dash",
           "type": "string",
           "pattern": "^[A-Za-z0-9._*?/][A-Za-z0-9._*?/-]{0,63}$",
@@ -83,6 +83,28 @@
           "description": "Five-field cron expression, required when mode is schedule.",
           "type": "string",
           "pattern": "^([0-9*/,A-Za-z?-]+ ){4}[0-9*/,A-Za-z?-]+$"
+        },
+        "approvedTagBypass": {
+          "description": "Release mode only. Who besides repository admins may bypass the tag ruleset that protects the release tags. Each entry was approved by name when Klaus was installed. A later render of the workflow refuses if the ruleset has gained anyone who is not listed here.",
+          "type": "array",
+          "uniqueItems": true,
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "id", "name"],
+            "properties": {
+              "type": { "enum": ["Integration", "OrganizationAdmin", "RepositoryRole", "Team", "DeployKey", "User"] },
+              "id": { "type": "integer", "minimum": 1 },
+              "name": {
+                "description": "What the person approving it called it, for example the app's name.",
+                "allOf": [
+                  { "type": "string", "minLength": 1, "maxLength": 100 },
+                  { "$ref": "#/$defs/noSecret" }
+                ]
+              }
+            }
+          }
         }
       }
     }

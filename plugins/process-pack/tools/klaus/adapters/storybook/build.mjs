@@ -73,8 +73,10 @@ export function findStorybookBin({ root: given, dir: start }) {
  * @param {string} args.root        The repo root.
  * @param {string} args.storybookDir  From findStorybookDir, relative to the root.
  * @param {string} args.outDir
+ * @param {Record<string, string | undefined>} [args.env]  The whole environment of the build. Storybook runs the
+ *   repo's own configuration, so a caller that holds secrets passes an environment without them.
  */
-export async function buildStorybook({ exec, root, storybookDir, outDir }) {
+export async function buildStorybook({ exec, root, storybookDir, outDir, env }) {
   const dir = path.resolve(root, storybookDir);
   const bin = findStorybookBin({ root, dir });
   if (!bin) {
@@ -83,7 +85,7 @@ export async function buildStorybook({ exec, root, storybookDir, outDir }) {
     );
   }
   try {
-    await exec(bin, ["build", "--output-dir", outDir, "--quiet", "--disable-telemetry"], { cwd: dir });
+    await exec(bin, ["build", "--output-dir", outDir, "--quiet", "--disable-telemetry"], { cwd: dir, ...(env ? { env } : {}) });
   } catch (error) {
     throw new Error(`storybook build failed: ${error.message}`);
   }
