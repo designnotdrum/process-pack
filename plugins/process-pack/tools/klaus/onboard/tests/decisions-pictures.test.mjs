@@ -161,6 +161,26 @@ test('the static build is the configured one, else the one next to a Storybook c
   assert.equal(pictures.findStorybookBuild({ root: sample.repo }), null)
 })
 
+test('a story finds its component through a barrel file, by a named import or by a default one', async () => {
+  const second = makeDecisionsSample()
+  try {
+    const src = path.join(second.repo, 'packages/ui/src')
+    fs.writeFileSync(path.join(src, 'Pill.tsx'), 'export default function Pill() {\n  return <span>pill</span>\n}\n')
+    fs.writeFileSync(path.join(src, 'Chip.tsx'), 'export function Chip() {\n  return <span>chip</span>\n}\n')
+    fs.writeFileSync(path.join(src, 'barrel.ts'), "export { default } from './Pill'\nexport { default as PillAgain } from './Pill'\nexport * from './Chip'\n")
+    fs.writeFileSync(path.join(src, 'Pill.stories.tsx'), "import Pill from './barrel'\nexport default { component: Pill }\n")
+    fs.writeFileSync(path.join(src, 'PillAgain.stories.tsx'), "import { PillAgain } from './barrel'\nexport default { component: PillAgain }\n")
+    fs.writeFileSync(path.join(src, 'Chip.stories.tsx'), "import { Chip } from './barrel'\nexport default { component: Chip }\n")
+    const found = planOf(second.repo)
+    const imports = pictures.storyImports({ ts: found.ts, root: found.root, tsconfigs: found.tsconfigs })
+    const storiesOf = (file) => (imports.get(path.join(found.root, file)) ?? []).map((f) => path.basename(f)).sort()
+    assert.deepEqual(storiesOf('packages/ui/src/Pill.tsx'), ['Pill.stories.tsx', 'PillAgain.stories.tsx'])
+    assert.deepEqual(storiesOf('packages/ui/src/Chip.tsx'), ['Chip.stories.tsx'])
+  } finally {
+    second.cleanup()
+  }
+})
+
 test('one story that draws both sides cannot tell them apart, so neither is drawn alone', async () => {
   const second = makeDecisionsSample()
   try {

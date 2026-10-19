@@ -116,7 +116,7 @@ function declaringFile({ ts, tsconfigs, file, name, seen = new Set() }) {
 }
 
 /** The story files that import each component file, directly or through a barrel file, resolved with the repo's own TypeScript. */
-function storyImports({ ts, root, tsconfigs }) {
+export function storyImports({ ts, root, tsconfigs }) {
   const byComponent = new Map()
   const record = (file, story) => byComponent.set(file, [...new Set([...(byComponent.get(file) ?? []), story])])
   for (const story of findStoryFiles(root)) {
@@ -131,7 +131,8 @@ function storyImports({ ts, root, tsconfigs }) {
       if (!resolved || resolved.endsWith('.d.ts')) continue
       const module = toPosix(resolved)
       record(module, story)
-      for (const { imported } of item.names) {
+      // A default import is the barrel's `default` export, which may be re-exported from the component's file.
+      for (const imported of [...item.names.map((n) => n.imported), ...(item.defaultName ? ['default'] : [])]) {
         const declared = declaringFile({ ts, tsconfigs, file: module, name: imported })
         if (declared && declared !== module) record(declared, story)
       }
