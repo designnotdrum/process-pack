@@ -137,7 +137,7 @@ Lean in writes one line in that file saying why the current system stays.
 
 Klaus keeps a list of every component the repo ships. After each release it writes the components into the design outputs the team chose: Storybook and Figma now, Penpot and Pencil later. Its scripts and its README are in `<plugin-root>/tools/klaus/`. Below, `<klaus-src>` means that folder, and `install.mjs` means `<klaus-src>/install/install.mjs`.
 
-Run this step after DESIGN.md exists. Ask once whether to set Klaus up now. If not, skip to the report and say Klaus was skipped.
+Run this step after DESIGN.md exists, and run its commands from the repo root. Ask once whether to set Klaus up now. If not, skip to the report and say Klaus was skipped.
 
 ### Rules for this step
 
@@ -168,7 +168,7 @@ node <klaus-src>/inventory/inventory.mjs --root <repo> --out <scratch> <folder> 
 
 It prints one line for each folder. A folder under `packages/` is `shared`, any other is `app`. Show those lines.
 
-Write `<scratch>/klaus.config.json` as a draft with both outputs off, `inventory.folders`, and `selection` set to the defaults in 8.4 (`screens.mode` `none` until 8.4 asks about screens). The cost command reads it.
+Write `<scratch>/klaus.config.json` as a draft with Storybook and Figma off, `inventory.folders`, and `selection` set to the defaults in 8.4 (`screens.mode` `none` until 8.4 asks about screens). The cost command reads it.
 
 ### 8.3 The outputs, one per screen
 
@@ -180,7 +180,7 @@ node <klaus-src>/install/install.mjs costs --repo <repo> --config <scratch>/klau
 
 Then show one output at a time: its block from that text, then its limits and credential from `klaus-outputs.md`, then the default and the question. Re-run the command with `--outputs <name>` when an answer changes a cost.
 
-1. **Storybook.** Default on when the repo has Storybook, otherwise off. Ask for the Vercel project name (suggest the `name` in package.json without its scope, plus `-storybook`) and whether a Vercel team owns it. Secrets: `VERCEL_TOKEN`, and `VERCEL_ORG_ID` for a team. Storybook ignores the component selection and shows every component with a story.
+1. **Storybook.** Default on when the repo has Storybook, otherwise off. Ask for the Vercel project name (suggest the `name` in the root package.json without its scope, plus `-storybook`) and whether a Vercel team owns it. Secrets: `VERCEL_TOKEN`, and `VERCEL_ORG_ID` for a team. Storybook ignores the component selection and shows every component with a story.
 2. **Figma.** Ask whether the team uses Figma. On only if they say yes and the repo has Storybook and `@playwright/test`. Say plainly that there are two parts: the plugin does the first load at no token cost, and the relay does the updates after each release at the cost printed. Then ask the two Figma settings:
    - the Figma file to write to (a file URL or key, in a file the person can edit), and
    - the relay's cost cap for one run, `spendingCap.maxRelayTokens`, with the default and the component limit `maxComponentWrites` shown. After the answer, re-run the cost command so the cap line says how many of the selected versions a run sends under that cap.
@@ -199,10 +199,10 @@ If a changed selection moves a cost, re-run the cost command and show the new li
 
 ### 8.5 Create the Vercel project
 
-Skip this when Storybook is off. The Storybook adapter needs the project to exist before its first run, and onboarding creates it. It is the one platform call in this step, it creates an empty project, and it needs `VERCEL_TOKEN`. Ask first, once. On yes, run the command with the token in the environment of that one command, from the person's secret store, never printed. The adapter passes its token the same way, and pins the same CLI version (`VERCEL_CLI_VERSION` in `adapters/storybook/vercel.mjs`). The command name comes from the adapter's README and has not been run:
+Skip this when Storybook is off. The Storybook adapter needs the project to exist before its first run, and onboarding creates it. It is the one platform call in this step, it creates an empty project, and it needs `VERCEL_TOKEN`. Ask first, once. On yes, run the command with the token in the environment of that one command, from the person's secret store, never printed. The adapter passes its token the same way, and pins the same CLI version (`VERCEL_CLI_VERSION` in `adapters/storybook/vercel.mjs`). `vercel project create <name>` and the `VERCEL_TOKEN` variable are in Vercel's CLI docs (read 2026-10-19). The command has not been run against the pinned version:
 
 ```bash
-VERCEL_TOKEN=<from the secret store> npx --yes vercel@<pinned version> project create <project> --non-interactive [--scope <team>]
+VERCEL_TOKEN=<from the secret store> npx --yes vercel@<pinned version> project create <project> [--scope <team>]
 ```
 
 Leave deployment protection at Vercel's default. The adapter deploys an empty index first, so the first release is a protected preview. On no, give the command as a next step.
@@ -243,7 +243,7 @@ All answers are in. Now write to the repo, in this order:
      [--storybook-build "<command>"] [--playwright "<command>"] [--captures <file>]
    ```
 
-   Pass `--corepack` when package.json has `packageManager` for pnpm or Yarn and you are not using copied install steps. Pass `--node <major>` from `.nvmrc`, `.node-version` or `engines.node` when the repo has one. `--storybook-build` is needed when Figma is on. It is the command that writes a static Storybook to `storybook-static` (or to `outputs.figma.options.storybookDir`, which you then set in the config). Read the script to see where it writes, and in a workspace run it in its package: `pnpm --filter <package> <script>`, `npm run <script> -w <package>` or `yarn workspace <package> <script>`. Do not run the build here. `--captures` names the file the version picker reads when the repo's visual checks write one. The command prints the parts it kept, the secrets to set, and the result of actionlint. When actionlint is not installed it parses the YAML with python3 or ruby instead and says so. Report which check ran. If the check fails, fix the cause and render again.
+   Pass `--corepack` when package.json has `packageManager` for pnpm or Yarn and you are not using copied install steps. Pass `--node <major>` from `.nvmrc`, `.node-version` or `engines.node` when the repo has one. Leave `--playwright` out unless the default, `npx playwright install --with-deps chromium`, is wrong for the repo's package manager. `--storybook-build` is needed when Figma is on. It is the command that writes a static Storybook to `storybook-static` (or to `outputs.figma.options.storybookDir`, which you then set in the config). Read the script to see where it writes, and in a workspace run it in its package: `pnpm --filter <package> <script>`, `npm run <script> -w <package>` or `yarn workspace <package> <script>`. Do not run the build here. `--captures` names the file the version picker reads when the repo's visual checks write one. The command prints the parts it kept, the secrets to set, and the result of actionlint. When actionlint is not installed it parses the YAML with python3 or ruby instead and says so. Report which check ran. If the check fails, fix the cause and render again.
 5. **Housekeeping.** Add `.klaus/` to `.gitignore` unless `git check-ignore .klaus/state.json` says it is already ignored. Look at how the repo treats other copied script folders (`scripts/dieter`, for instance) in its lint, format and test configs, and treat `scripts/klaus` the same.
 
 ### 8.7 What the person does next
