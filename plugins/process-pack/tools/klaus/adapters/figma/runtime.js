@@ -10,8 +10,13 @@
  * This file is not run by Node. It is plain JavaScript for the Figma Plugin API
  * and it avoids newer syntax on purpose. It uses top-level await and return,
  * which use_figma allows. It never switches the current page, because a call
- * may switch only once. It touches other pages by loading them and moving nodes
- * onto them.
+ * may switch only once and the person may be looking at it.
+ *
+ * Pages it touches: the page each unit names (a component's page, or Screens)
+ * and Older versions, found or created by name. It touches no other page. Figma
+ * creates every new node on the current page, so each node is appended to its
+ * parent in the same step it is created, with no await in between, and never
+ * stays on the current page. The variables it writes are in CONFIG.collection.
  *
  * Nothing is overwritten. A set that already exists is left alone and reported
  * as "exists". A set that fails is removed again and reported as "failed", and
@@ -145,8 +150,9 @@ function paintOf(U, c) {
   return c[4] < 1 ? Object.assign({}, bound, { opacity: c[4] }) : bound;
 }
 
-async function makeText(U, n) {
+async function makeText(U, n, parent) {
   const t = figma.createText();
+  parent.appendChild(t);
   t.fontName = await fontFor(n.ff, n.wt);
   t.characters = n.v;
   t.fontSize = n.fs;
@@ -164,8 +170,9 @@ async function makeText(U, n) {
   return t;
 }
 
-function makeIcon(U, n) {
+function makeIcon(U, n, parent) {
   const icon = figma.createNodeFromSvg(U.svgs[n.s]);
+  parent.appendChild(icon);
   icon.name = n.n || "Icon";
   if (Math.abs(icon.width - n.w) > 0.5 || Math.abs(icon.height - n.h) > 0.5) icon.resize(Math.max(n.w, 1), Math.max(n.h, 1));
   if (n.c) {
@@ -219,8 +226,7 @@ async function fillBox(U, tree, f) {
     if (n.sc) f.strokesIncludedInLayout = true;
   }
   for (const child of tree[1]) {
-    const node = await makeNode(U, child);
-    f.appendChild(node);
+    const node = await makeNode(U, child, f);
     const c = U.nodes[child[0]];
     if (!n.L && c.x !== undefined) {
       node.x = c.x;
@@ -236,11 +242,14 @@ async function fillBox(U, tree, f) {
   return f;
 }
 
-async function makeNode(U, tree) {
+/** Makes a node inside parent. It is appended before anything else happens to it. */
+async function makeNode(U, tree, parent) {
   const n = U.nodes[tree[0]];
-  if (n.k === "t") return makeText(U, n);
-  if (n.k === "v") return makeIcon(U, n);
-  return fillBox(U, tree, figma.createFrame());
+  if (n.k === "t") return makeText(U, n, parent);
+  if (n.k === "v") return makeIcon(U, n, parent);
+  const frame = figma.createFrame();
+  parent.appendChild(frame);
+  return fillBox(U, tree, frame);
 }
 
 function parseVersion(node, name) {
@@ -312,11 +321,12 @@ function freeY(page) {
   return bottom + 120;
 }
 
-async function buildSet(U, created) {
+async function buildSet(U, page, created) {
   const name = U.name + " " + U.version;
   const parts = [];
   for (const cell of U.cells) {
     const component = figma.createComponent();
+    page.appendChild(component);
     created.push(component);
     await fillBox(U, cell[1], component);
     component.name = U.axes.map(function (a, i) { return a.name + "=" + a.values[cell[0][i]]; }).join(", ");
@@ -332,7 +342,7 @@ async function buildSet(U, created) {
     only.description = U.description;
     return only;
   }
-  const set = figma.combineAsVariants(parts.map(function (p) { return p.component; }), figma.currentPage);
+  const set = figma.combineAsVariants(parts.map(function (p) { return p.component; }), page);
   created.push(set);
   set.name = name;
   set.description = U.description;
@@ -377,12 +387,13 @@ async function writeComponent(U) {
     siblings.sort(function (a, b) { return compareVersions(parseVersion(a, U.name), parseVersion(b, U.name)); });
     const newest = siblings.length > 0 ? siblings[siblings.length - 1] : null;
     const latest = newest === null || compareVersions(U.version, parseVersion(newest, U.name)) > 0;
-    const node = await buildSet(U, created);
+    // Where it goes is worked out before the set is on the page, so the set does not count itself.
+    const x = newest ? newest.x : freeX(page.children);
+    const y = newest ? newest.y : 0;
+    const node = await buildSet(U, page, created);
     const moved = [];
     let archive = older;
     if (latest) {
-      const x = newest ? newest.x : freeX(page.children);
-      const y = newest ? newest.y : 0;
       for (const old of siblings) {
         archive = archive || (await pageNamed(U.older));
         const at = freeX(archive.children);
@@ -442,15 +453,16 @@ async function writeScreen(U) {
     const page = await pageNamed(U.page);
     const name = U.route + " " + U.release;
     if (page.children.some(function (n) { return n.name === name; })) return { id: U.id, status: "exists", name: name };
+    // Where it goes is worked out before the frame is on the page, so the frame does not count itself.
+    const earlier = page.children.filter(function (n) { return n.type === "FRAME" && screenKey(n.name) === U.route; });
+    const x = earlier.length > 0 ? freeX(earlier) : 0;
+    const y = earlier.length > 0 ? earlier[0].y : freeY(page);
     const frame = figma.createFrame();
+    page.appendChild(frame);
     created.push(frame);
     await fillBox(U, U.tree, frame);
     frame.name = name;
     frame.clipsContent = true;
-    const earlier = page.children.filter(function (n) { return n.type === "FRAME" && screenKey(n.name) === U.route; });
-    const x = earlier.length > 0 ? freeX(earlier) : 0;
-    const y = earlier.length > 0 ? earlier[0].y : freeY(page);
-    page.appendChild(frame);
     frame.x = x;
     frame.y = y;
     const removed = trimScreen(page, U.route, U.keep);
