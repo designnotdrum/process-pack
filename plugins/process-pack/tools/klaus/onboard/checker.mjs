@@ -48,7 +48,8 @@ export function checkerPrompt(item, boundary = newBoundary()) {
 
 /** A reason that is safe to put in a markdown table: plain characters only, short. */
 export function cleanReason(text) {
-  const plain = String(text ?? '').replace(/[^\x20-\x7e]/g, ' ').replace(/[`|<>[\]()@\\*_#~]/g, '').replace(/\s+/g, ' ').trim()
+  // A bare address becomes a link in a pull request, so addresses go before anything else is cleaned.
+  const plain = String(text ?? '').replace(/(?:https?:\/\/|www\.)\S*/gi, 'link removed').replace(/[^\x20-\x7e]/g, ' ').replace(/[`|<>[\]()@\\*_#~]/g, '').replace(/\s+/g, ' ').trim()
   return plain.length > MAX_REASON ? `${plain.slice(0, MAX_REASON - 3)}...` : plain
 }
 

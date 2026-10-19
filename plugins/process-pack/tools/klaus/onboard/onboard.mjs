@@ -14,6 +14,10 @@
  *       plan. Nothing is merged.
  *         --captures <file>           Dieter's captures for the baseline versions, as version.mjs reads them.
  *         --codex <path>              The Codex executable. Default: found on PATH.
+         --writer-branch <ref>       With an external writer: the branch that holds its edits. Without it the run
+                                     writes the briefs and stops, having changed nothing.
+         --checks-file <file>        With an external checker: its verdicts, as in briefs/checks.template.json.
+                                     Without it the run writes the briefs and stops, having changed nothing.
  *         --commit-trailer <line>     A line to end each commit message with. May be repeated.
  *         --body-footer <text>        Text to end each pull request body with.
  *
@@ -41,6 +45,8 @@ const OPTIONS = {
   json: { type: 'boolean' },
   captures: { type: 'string' },
   codex: { type: 'string' },
+  'writer-branch': { type: 'string' },
+  'checks-file': { type: 'string' },
   'commit-trailer': { type: 'string', multiple: true },
   'body-footer': { type: 'string' },
 }
@@ -66,6 +72,8 @@ async function runCommand(values) {
     approve: values.approve,
     captures: values.captures,
     codex: values.codex,
+    writerBranch: values['writer-branch'],
+    checksFile: values['checks-file'],
     commitTrailers: values['commit-trailer'] ?? [],
     bodyFooter: values['body-footer'] ?? '',
   })

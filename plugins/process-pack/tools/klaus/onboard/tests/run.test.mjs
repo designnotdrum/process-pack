@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
+import { execFileSync } from 'node:child_process'
 import { afterEach, beforeEach, test } from 'node:test'
 import { UserError } from '../../frame/errors.mjs'
 import { writeJsonFile } from '../../frame/json-file.mjs'
 import { readOnboardingConfig } from '../config.mjs'
-import { buildEstimate } from '../estimate.mjs'
+import { buildEstimate, renderEstimate } from '../estimate.mjs'
 import { buildPlan } from '../plan.mjs'
 import { BRANCHES, runOnboarding, workFolder } from '../run.mjs'
 import { makeGitSample, STUBS } from './helpers.mjs'
@@ -224,16 +225,110 @@ test('the run refuses a dirty tree, a branch that exists, a missing key and a ba
 test('a failure part way names the branches made and puts the tree back on the base branch', async () => {
   const estimated = await estimate()
   const messages = []
-  fs.writeFileSync(path.join(sample.base, 'gh-broken'), '')
-  // The second pull request cannot be made: the stub is told to fail from the log count.
-  process.env.STUB_GH_FAIL_AT = '2'
+  // A gh that makes the first pull request and fails on the second.
   const failing = path.join(sample.base, 'bin')
   fs.mkdirSync(failing)
-  fs.writeFileSync(path.join(failing, 'gh'), `#!/usr/bin/env node\nconst fs=require('fs');const a=process.argv.slice(2);if(a[0]==='pr'&&a[1]==='create'){const n=fs.existsSync(${JSON.stringify(logs.gh)})?fs.readFileSync(${JSON.stringify(logs.gh)},'utf8').split('\\n').filter(l=>l.includes('"create"')).length:0;if(n>=1){console.error('boom');process.exit(1)}}\nrequire(${JSON.stringify(path.join(STUBS, 'gh'))})\n`)
-  fs.chmodSync(failing, 0o755)
+  fs.writeFileSync(path.join(failing, 'gh'), `#!/usr/bin/env node
+const fs = require('fs')
+const a = process.argv.slice(2)
+if (a[0] === 'pr' && a[1] === 'create') {
+  const made = fs.existsSync(${JSON.stringify(logs.gh)}) ? fs.readFileSync(${JSON.stringify(logs.gh)}, 'utf8').split('\\n').filter((l) => l.includes('"create"')).length : 0
+  if (made >= 1) { console.error('boom'); process.exit(1) }
+}
+process.argv = [process.argv[0], ${JSON.stringify(path.join(STUBS, 'gh'))}, ...a]
+import(${JSON.stringify(path.join(STUBS, 'gh'))})
+`)
   fs.chmodSync(path.join(failing, 'gh'), 0o755)
   process.env.PATH = `${failing}${path.delimiter}${process.env.PATH}`
   await assert.rejects(() => run(estimated, { log: (m) => messages.push(m) }), /gh pr create .* failed/)
   assert.ok(messages.some((m) => /Branches made so far: klaus\/onboarding-1-list/.test(m)))
   assert.equal(sample.git('rev-parse', '--abbrev-ref', 'HEAD').trim(), 'main')
+})
+
+/** Settings that hand both parts to other agents, committed so the tree stays clean. */
+function useExternalAgents() {
+  const file = path.join(sample.repo, 'klaus.config.json')
+  const config = JSON.parse(fs.readFileSync(file, 'utf8'))
+  config.onboarding = { writer: { route: 'external', agent: 'Codex cloud (Terra)' }, checker: { route: 'external', agent: 'a Cyrus session on GLM' } }
+  fs.writeFileSync(file, JSON.stringify(config, null, 2))
+  sample.git('commit', '-qam', 'hand the work to other agents')
+}
+
+/** What an external writer does: edits the files the briefs list, on its own branch. */
+function externalWriterBranch(name, mode = 'good') {
+  const briefs = path.join(workFolder(sample.repo), 'briefs')
+  sample.git('checkout', '-q', '-b', name)
+  process.env.STUB_MODE = mode
+  for (const brief of fs.readdirSync(briefs).filter((f) => f.startsWith('writer-'))) {
+    execFileSync(path.join(STUBS, 'codex'), ['exec', '-C', sample.repo, '-'], { input: fs.readFileSync(path.join(briefs, brief)), env: process.env })
+  }
+  delete process.env.STUB_MODE
+  sample.git('add', '-A')
+  sample.git('commit', '-qm', 'purposes')
+  sample.git('checkout', '-q', 'main')
+}
+
+test('with an external writer the run writes the briefs and stops, having changed nothing', async () => {
+  useExternalAgents()
+  const estimated = await estimate()
+  assert.match(renderEstimate(estimated), /Writer: Codex cloud \(Terra\)\. 3 briefs/)
+  const result = await run(estimated)
+  assert.equal(result.waiting, 'writer')
+  const briefs = path.join(workFolder(sample.repo), 'briefs')
+  assert.deepEqual(fs.readdirSync(briefs).sort(), ['index.md', 'writer-01.md', 'writer-02.md', 'writer-03.md'])
+  const brief = fs.readFileSync(path.join(briefs, 'writer-03.md'), 'utf8')
+  assert.match(brief, /Your working folder is the repository root/)
+  assert.match(brief, /^- LinkButton, in packages\/ui\/src\/LinkButton\.tsx\./m)
+  assert.match(brief, /Edit the files in place with the tools you have/)
+  assert.equal(fs.existsSync(logs.gh), false, 'no pull request was made')
+  assert.equal(sample.git('branch', '--list', 'klaus/*').trim(), '')
+  assert.equal(sample.git('status', '--porcelain').trim(), '')
+})
+
+test('with an external writer and checker the run goes through two pauses and then makes the same three pull requests', async () => {
+  useExternalAgents()
+  const estimated = await estimate()
+  assert.equal((await run(estimated)).waiting, 'writer')
+  externalWriterBranch('cloud')
+
+  const second = await run(estimated, { writerBranch: 'cloud' })
+  assert.equal(second.waiting, 'checker')
+  const briefs = path.join(workFolder(sample.repo), 'briefs')
+  const template = JSON.parse(fs.readFileSync(path.join(briefs, 'checks.template.json'), 'utf8'))
+  assert.equal(template.checks.length, 4)
+  assert.match(fs.readFileSync(path.join(briefs, 'checker-01.md'), 'utf8'), /Reply with one JSON object/)
+  assert.equal(fs.existsSync(logs.gh), false)
+
+  const checks = path.join(sample.base, 'checks.json')
+  fs.writeFileSync(checks, JSON.stringify({ checks: template.checks.map((c) => ({ ...c, verdict: c.id.endsWith('#LinkButton') ? 'fail' : 'pass', reason: c.id.endsWith('#LinkButton') ? 'used for submit too [x](http://evil)' : 'fits' })) }))
+  const { report } = await run(estimated, { writerBranch: 'cloud', checksFile: checks })
+  assert.equal(report.pullRequests.length, 3)
+  assert.deepEqual(report.purposes.map((p) => [p.name, p.status]).sort(), [['ActivityFeed', 'kept'], ['Hero', 'kept'], ['LinkButton', 'dropped'], ['PrimaryButton', 'kept']])
+  assert.equal(report.purposes.find((p) => p.name === 'LinkButton').reason.includes('http'), false, 'a reason from outside is cleaned')
+  assert.equal(report.actual.writerTokens, null)
+  assert.equal(report.comparison.find((r) => r.metric === 'Writer tokens').within, null)
+  assert.equal(report.comparison.find((r) => r.metric === 'Writer calls').within, true)
+  assert.match(JSON.parse(sample.git('show', `${BRANCHES[1]}:inventory.json`)).entries.find((e) => e.name === 'Hero').purpose.useWhen, /the Hero component/)
+})
+
+test('an external writer that edits a file the plan did not list has the whole branch rejected', async () => {
+  useExternalAgents()
+  const estimated = await estimate()
+  await run(estimated)
+  externalWriterBranch('cloud', 'outside')
+  sample.git('checkout', '-q', 'cloud')
+  fs.writeFileSync(path.join(sample.repo, 'README.md'), 'sneaky')
+  sample.git('add', '-A')
+  sample.git('commit', '-qm', 'extra')
+  sample.git('checkout', '-q', 'main')
+  const checks = path.join(sample.base, 'checks.json')
+  fs.writeFileSync(checks, JSON.stringify({ checks: [] }))
+  const { report } = await run(estimated, { writerBranch: 'cloud', checksFile: checks })
+  assert.ok(report.purposes.every((p) => p.status === 'rejected' && /did not list/.test(p.reason)))
+})
+
+test('a branch that does not exist is refused by name', async () => {
+  useExternalAgents()
+  const estimated = await estimate()
+  await assert.rejects(() => run(estimated, { writerBranch: 'nowhere' }), /--writer-branch nowhere is not a branch/)
 })
