@@ -40,7 +40,7 @@ test('estimate prints the estimate and the plan id, keeps it in the git folder a
 test('estimate --json prints the estimate as data', async () => {
   assert.equal(await main(['estimate', '--repo', sample.repo, '--json'], { fetchImpl: prices }), 0)
   const estimate = JSON.parse(lines.join('\n'))
-  assert.deepEqual(estimate.duplicates, { pairs: 3, tickets: 1, decisions: 2 })
+  assert.deepEqual(estimate.duplicates, { pairs: 2, tickets: 1, removals: 0, decisions: 1 })
 })
 
 test('mistakes are exit 2 with a plain message, and no stack', async () => {
