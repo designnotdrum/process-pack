@@ -1,13 +1,26 @@
 /**
  * The part of every generated code file that is the same each time.
  *
- * codegen.mjs puts four constants in front of this text and sends the result
+ * codegen.mjs puts these constants in front of this text and sends the result
  * to Figma:
  *   CONFIG  { collection, mode }
  *   TOKENS  the colour variables the units in this file use
  *   UNITS   the component sets and screens to write, as built by spec.mjs
  *   SVGS    SVG markup, as template literals; a unit's svgs list holds indexes into it
  *   KEY     null, or the key the relay encoded every string of the data with
+ *   TOKEN_VALUES  only in the relay's code: when the call writes a changed token value (see below)
+ *
+ * A changed token value is written to its variable after every unit has run, because a version that
+ * moves to Older versions is frozen at the colours it shipped with, and those are the variable's
+ * colours until the write. The relay sends a release in several calls, so a write at the end of
+ * the first call would change the colours that a later call freezes. TOKEN_VALUES says what to do:
+ *   absent   write at the end of this run. The Klaus plugin applies a whole release in one run.
+ *   "hold"   write none. The call still creates a variable that is missing, and reports the
+ *            tokens whose value would change as tokens.held.
+ *   "last"   this call sends the release's last component unit. Write the values at the end, but
+ *            only if every component unit of this call was written or was already there. If one
+ *            failed or the run stopped early, hold them as "hold" does, because the retry of that
+ *            unit would freeze an older version at the new colours.
  *
  * With a KEY, every string in CONFIG, TOKENS and UNITS is base64 of its UTF-8
  * bytes XORed with the key, except the fields in PLAIN_FIELDS. decodeData turns
@@ -58,6 +71,8 @@ const PLAIN_FIELDS = ["kind", "k", "L", "pa", "ca", "td", "tt"];
 // The result's fields that stay plain when it is encoded: a status is one of the fixed words written, exists and failed.
 const RESULT_PLAIN_FIELDS = ["status"];
 const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+// What to do with a changed token value; see the header. The plugin defines no TOKEN_VALUES.
+const TOKEN_MODE = typeof TOKEN_VALUES === "undefined" ? "write" : TOKEN_VALUES;
 const warnings = [];
 const loadedFonts = {};
 let fontStyles = null;
@@ -100,8 +115,7 @@ async function fontFor(family, weight) {
 
 async function ensureTokens() {
   const made = [];
-  const updated = [];
-  if (TOKENS.length === 0) return { made: made, updated: updated };
+  if (TOKENS.length === 0) return { made: made, updated: [], held: [] };
   const collections = await figma.variables.getLocalVariableCollectionsAsync();
   let collection = collections.find(function (c) { return c.name === CONFIG.collection; });
   if (!collection) {
@@ -121,21 +135,40 @@ async function ensureTokens() {
       made.push(t.name);
       return variable;
     }
-    // Variables hold the app's current tokens, so a changed colour is written through. It waits until
-    // every unit has run, because a version that moves to Older versions is frozen at the colours it
-    // shipped with, and those are the variable's colours until this write.
+    // Variables hold the app's current tokens, so a changed colour is written through, but not here:
+    // writeTokenValues does it at the end of the run, or in the release's last call (see the header).
     const old = variable.valuesByMode[mode];
     const moved = !old || Math.abs(old.r - value.r) > 0.002 || Math.abs(old.g - value.g) > 0.002 || Math.abs(old.b - value.b) > 0.002 || Math.abs((old.a === undefined ? 1 : old.a) - value.a) > 0.002;
     if (moved) {
-      PENDING.push({ variable: variable, mode: mode, value: value });
-      updated.push(t.name);
+      PENDING.push({ name: t.name, variable: variable, mode: mode, value: value });
     }
     const scopes = variable.scopes.filter(function (s) { return s !== "ALL_SCOPES"; });
     t.scopes.forEach(function (s) { if (scopes.indexOf(s) < 0) scopes.push(s); });
     variable.scopes = scopes;
     return variable;
   });
-  return { made: made, updated: updated };
+  return { made: made, updated: [], held: [] };
+}
+
+/**
+ * Writes the changed token values ensureTokens collected, or holds them back (see the header).
+ * The names go in tokens.updated when written and in tokens.held when held.
+ * complete is true when every component unit of this call was written or was already there.
+ */
+function writeTokenValues(tokens, complete) {
+  if (PENDING.length === 0) return;
+  const names = PENDING.map(function (p) { return p.name; });
+  if (TOKEN_MODE === "hold" || (TOKEN_MODE === "last" && !complete)) {
+    tokens.held = names;
+    if (TOKEN_MODE === "last") note("Changed token values were not written, because a component of this call failed or the run stopped early. They are written when the release's last component unit is sent.");
+    return;
+  }
+  try {
+    PENDING.forEach(function (p) { p.variable.setValueForMode(p.mode, p.value); });
+    tokens.updated = names;
+  } catch (e) {
+    note("A changed token colour could not be written to its variable: " + message(e));
+  }
 }
 
 /** A paint without its variable binding, in the colour the variable has now. */
@@ -610,26 +643,28 @@ if (KEY) {
   decodeData(UNITS, "");
 }
 
-const result = { tokens: { made: [], updated: [] }, units: [], warnings: warnings };
+const result = { tokens: { made: [], updated: [], held: [] }, units: [], warnings: warnings };
+// True while every component unit of this call was written or was already there.
+let complete = true;
 try {
   result.tokens = await ensureTokens();
 } catch (e) {
-  result.tokens = { error: message(e), made: [], updated: [] };
+  result.tokens = { error: message(e), made: [], updated: [], held: [] };
   note("The variables could not be written, so colours are not bound: " + result.tokens.error);
 }
 try {
   for (const U of UNITS) {
-    if (U.kind === "component") result.units.push(await writeComponent(U));
-    else if (U.kind === "screen") result.units.push(await writeScreen(U));
+    if (U.kind === "component") {
+      const done = await writeComponent(U);
+      if (done.status === "failed") complete = false;
+      result.units.push(done);
+    } else if (U.kind === "screen") result.units.push(await writeScreen(U));
     else if (U.kind === "retain") result.units.push(await retainScreens(U));
   }
 } catch (e) {
   // Nothing escapes as a raw error, because the error text of an escaped exception is not encoded.
+  complete = false;
   note("The run stopped early: " + message(e));
 }
-try {
-  PENDING.forEach(function (p) { p.variable.setValueForMode(p.mode, p.value); });
-} catch (e) {
-  note("A changed token colour could not be written to its variable: " + message(e));
-}
+writeTokenValues(result.tokens, complete);
 return KEY ? encodeResult(result, "") : result;

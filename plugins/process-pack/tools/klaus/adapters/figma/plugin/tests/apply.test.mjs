@@ -1,5 +1,6 @@
 /** The built plugin applies a release in the fake Plugin API, the way the relay's code does. */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { codeFor } from "../../codegen.mjs";
 import { readData } from "../../data-file.mjs";
@@ -121,13 +122,39 @@ test("a token that changes in a release does not recolour an older set, whicheve
   assert.deepEqual(rgb(fillOf(plugin, "Older versions", "Card 1.0.0")), [124, 58, 237]);
   assert.deepEqual(rgb(fillOf(plugin, "Card", "Card 1.1.0")), [10, 20, 30]);
 
-  // One file at a time, as the relay sends them: the variable changes at the end of file 1, so Card 1.0.0 is frozen at the new colour.
+  // One file at a time with plain code, which writes a changed value at the end of every file: the variable changes
+  // at the end of file 1, so Card 1.0.0 is frozen at the new colour. The relay's code holds the value back
+  // until the release's last call (relay/tests/token-order.test.mjs), so it does not do this.
   const relay = newFigma();
   for (const files of [before, after]) {
     for (const name of ["figma-001.json", "figma-002.json"]) await runCode(codeFor(readData(files[name])), relay);
   }
   assert.deepEqual(rgb(fillOf(relay, "Older versions", "Button 1.0.0")), [124, 58, 237]);
   assert.deepEqual(rgb(fillOf(relay, "Older versions", "Card 1.0.0")), [10, 20, 30], "frozen at the new colour, not the one it shipped with");
+});
+
+test("the plugin writes a changed token value at the end of its run, because it applies the whole release at once", async () => {
+  const release = async (version, primary) => {
+    const files = await generate({ components: [{ name: "Button", version, capture: buttonCapture() }], release: `v${version}` });
+    if (primary) {
+      const data = JSON.parse(files["figma-001.json"]);
+      data.tokens.find((t) => t.name === "color/primary").rgba = primary;
+      files["figma-001.json"] = JSON.stringify(data);
+    }
+    return files;
+  };
+  const figma = newFigma();
+  const plugin = loadPlugin(figma);
+  await plugin.applyRelease(sourcesOf(await release("1.0.0")));
+
+  const result = await plugin.applyRelease(sourcesOf(await release("1.1.0", [10, 20, 30, 1])));
+
+  assert.deepEqual(rgb(figma.variableList.find((v) => v.name === "color/primary").valuesByMode.m1), [10, 20, 30]);
+  assert.deepEqual(result.tokens.updated, ["color/primary"]);
+  assert.deepEqual(result.tokens.held, []);
+  const frozen = figma.page("Older versions").children[0].children.find((c) => c.name === "Variant=primary, Size=md").fills[0].color;
+  assert.deepEqual(rgb(frozen), [124, 58, 237], "the older set was frozen before the write");
+  assert.doesNotMatch(readFileSync(new URL("../code.js", import.meta.url), "utf8"), /const TOKEN_VALUES/, "the plugin never says hold");
 });
 
 test("text in the release is data: code-like names and descriptions are drawn as text and run nothing", async () => {
