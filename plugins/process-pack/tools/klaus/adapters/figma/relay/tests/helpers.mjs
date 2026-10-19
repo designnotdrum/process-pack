@@ -12,7 +12,7 @@ export const KEY = "KlausRelayTestFileKey0000";
 export const RELAY = fileURLToPath(new URL("../relay.mjs", import.meta.url));
 export const STUBS = fileURLToPath(new URL("./stub", import.meta.url));
 
-const entry = (name, purpose = { useWhen: "", notFor: "", text: "" }) => ({
+const entry = (name, purpose = { useWhen: "", notFor: "", text: "" }, version = "1.0.0") => ({
   name,
   kind: "shared",
   folder: "packages/ui",
@@ -22,7 +22,7 @@ const entry = (name, purpose = { useWhen: "", notFor: "", text: "" }) => ({
   // The recorded capture's own axes, so the unit matches it.
   variants: { variant: ["primary", "secondary", "destructive", "outline", "ghost", "link"], size: ["sm", "md", "lg"] },
   purpose,
-  version: "1.0.0",
+  version,
   usedIn: ["a.tsx"],
 });
 
@@ -42,7 +42,7 @@ const browser = {
 /** A cap no test reaches unless it means to. At measured costs, the frame's default allows about one call. */
 export const ROOMY = { outputs: { figma: { enabled: true, target: KEY } }, spendingCap: { maxRelayTokens: 10000000 } };
 
-export async function generatedRepo({ components = ["Button", "Card"], perFile = 1, release = "v1.0.0", config = ROOMY, purpose } = {}) {
+export async function generatedRepo({ components = ["Button", "Card"], perFile = 1, release = "v1.0.0", version = "1.0.0", config = ROOMY, purpose } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "klaus-relay-"));
   if (config) writeFileSync(path.join(root, "klaus.config.json"), JSON.stringify(config));
   const ctx = {
@@ -51,7 +51,7 @@ export async function generatedRepo({ components = ["Button", "Card"], perFile =
     // The generator runs with the repo's own settings, as the relay reads them.
     settings: { ...config.outputs.figma, options: { ...config.outputs.figma.options, componentsPerCall: perFile } },
     selection: { componentGroups: [], screens: { mode: "none", routes: [] }, newComponents: { rule: "all", minUsage: 2 } },
-    inventory: { schemaVersion: 1, folders: ["packages/ui"], entries: components.map((name) => entry(name, purpose)) },
+    inventory: { schemaVersion: 1, folders: ["packages/ui"], entries: components.map((name) => entry(name, purpose, version)) },
     trigger: "manual",
     release,
     releases: [release],
@@ -70,7 +70,7 @@ export async function generatedRepo({ components = ["Button", "Card"], perFile =
  * Runs the relay as a command, with the stub codex and gh first on PATH.
  * @returns {Promise<{ code: number, stdout: string, stderr: string, calls: Array<{ args: string[], stdin: Buffer }>, report: object | null }>}
  */
-export function relay(root, args, { scenarios = "success", mcp, ghSource, ghRun, ghCompare, otherRunLedger, names, resultText, message, otherRunMarks, warnings } = {}) {
+export function relay(root, args, { scenarios = "success", mcp, ghSource, ghRun, ghCompare, otherRunLedger, names, resultText, message, otherRunMarks, warnings, figmaSeed, failDrawing } = {}) {
   const log = mkdtempSync(path.join(tmpdir(), "klaus-relay-log-"));
   const ghLog = path.join(log, "gh.json");
   const env = {
@@ -81,6 +81,11 @@ export function relay(root, args, { scenarios = "success", mcp, ghSource, ghRun,
     STUB_GH_LOG: ghLog,
   };
   if (mcp !== undefined) env.STUB_CODEX_MCP = JSON.stringify(mcp);
+  if (failDrawing !== undefined) env.STUB_CODEX_FIGMA_FAIL_DRAWING = failDrawing;
+  if (figmaSeed !== undefined) {
+    env.STUB_CODEX_FIGMA_SEED = path.join(log, "seed.json");
+    writeFileSync(env.STUB_CODEX_FIGMA_SEED, JSON.stringify(figmaSeed));
+  }
   if (ghSource) env.STUB_GH_SOURCE = ghSource;
   if (ghRun) env.STUB_GH_RUN = JSON.stringify(ghRun);
   if (ghCompare) env.STUB_GH_COMPARE = ghCompare;

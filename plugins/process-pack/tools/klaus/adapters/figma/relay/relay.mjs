@@ -39,6 +39,11 @@
  * Figma, and only the tool's result is read, never the model's reply. The call and its tokens are
  * counted under figma-relay and the spending cap applies.
  *
+ * A changed token value is written only by the call that sends the release's last component unit,
+ * so a version moved to Older versions in an earlier call is frozen in the colours it shipped with
+ * (runtime.js TOKEN_VALUES). Earlier calls create missing variables and change no existing value, and
+ * the report counts the changes that wait.
+ *
  * Before each call the relay checks the spending cap in klaus.config.json
  * (component writes and relay tokens) and, when given, --max-calls. A call
  * that would pass a limit is not made: that file and every file after it are
@@ -79,7 +84,7 @@ import { loadConfig } from "../../../frame/config.mjs";
 import { UserError } from "../../../frame/errors.mjs";
 import { readJsonFile, writeJsonFile } from "../../../frame/json-file.mjs";
 import { buildReport, writeReport } from "../../../frame/report.mjs";
-import { codeFor, newKey } from "../codegen.mjs";
+import { codeFor, newKey, withReleaseTokens } from "../codegen.mjs";
 import { checkTargets, DataError, readData } from "../data-file.mjs";
 import { fileKeyOf, MANIFEST_VERSION } from "../index.mjs";
 import { CHANGED, entrySent, entryStatus, GENERATED, generatedComponents, markGeneratedAsSent, readLedger, recordEntry, screenCount, SENT } from "../ledger.mjs";
@@ -283,15 +288,21 @@ function downloadArtifact({ gh, run, repo, artifact, cwd }) {
  * Reads and checks every data file the manifest lists, and builds each one's code, before any call.
  * Anything that is not the generator's shape, writes where the settings do not say, or does not
  * match the manifest's ledger entries stops the run here.
- * @returns {Map<string, { code: string, key: number[] }>}  The code of each data file, by name, with the key its strings are encoded with.
+ *
+ * Each file gets two versions of its code. The held one writes no changed token value. The last one
+ * is for the call that sends the release's last component unit: it carries the tokens of the release's
+ * other files too and writes every changed value at its end (runtime.js, TOKEN_VALUES). The run picks
+ * one when it reaches the file.
+ * @returns {Map<string, { key: number[], held: string, last: string }>}  The code of each data file, by name, with the key its strings are encoded with.
  */
 function prepareCode(folder, manifest, options) {
-  const code = new Map();
+  const refuse = (file) => (why) => {
+    throw new UserError(`${file.name} is refused, so nothing was sent: ${why}`);
+  };
+  const read = [];
   for (const file of manifest.files) {
     const where = path.join(folder, file.name);
-    const fail = (why) => {
-      throw new UserError(`${file.name} is refused, so nothing was sent: ${why}`);
-    };
+    const fail = refuse(file);
     if (!existsSync(where) || !lstatSync(where).isFile()) fail("it is not in the folder.");
     let data;
     try {
@@ -310,11 +321,25 @@ function prepareCode(folder, manifest, options) {
         : unit.kind === "screen" && entry.kind === "screen" && entry.route === unit.route && entry.release === unit.release;
       if (!same) fail(`its unit ${unit.id} does not match the manifest's ledger entry.`);
     }
+    read.push({ file, data });
+  }
+  const code = new Map();
+  for (const { file, data } of read) {
+    const fail = refuse(file);
     // A new key for each call: the model sees every piece of the data's text as noise (codegen.mjs).
     const key = newKey();
-    const built = codeFor(data, { key });
-    if (built.length > MAX_CODE_CHARS) fail(`its code comes to ${built.length} characters, more than the ${MAX_CODE_CHARS} one call takes.`);
-    code.set(file.name, { code: built, key });
+    const held = codeFor(data, { key, tokenValues: "hold" });
+    if (held.length > MAX_CODE_CHARS) fail(`its code comes to ${held.length} characters, more than the ${MAX_CODE_CHARS} one call takes.`);
+    let last;
+    try {
+      last = codeFor(withReleaseTokens(data, read.filter((other) => other.file !== file).map((other) => other.data)), { key, tokenValues: "last" });
+    } catch (error) {
+      fail(error.message);
+    }
+    if (last.length > MAX_CODE_CHARS) {
+      fail(`its code comes to ${last.length} characters with the tokens of the release's other files, which the call that sends the release's last component unit writes, and ${MAX_CODE_CHARS} is all one call takes. Lower outputs.figma.options.componentsPerCall.`);
+    }
+    code.set(file.name, { key, held, last });
   }
   return code;
 }
@@ -428,15 +453,18 @@ function judgeRun({ run, summary, timeoutMs, errors, warnings }) {
 
 /**
  * Sends one code file and reads the outcome.
- * @returns {Promise<{ units: Map<string, object>, changed: Set<string>, error: string | null, usage: object | null, tokens: number | null, warnings: string[], durationMs: number }>}
+ * @returns {Promise<{ units: Map<string, object>, changed: Set<string>, tokenValues: { held: string[], written: string[] }, error: string | null, usage: object | null, tokens: number | null, warnings: string[], durationMs: number }>}
  *   units holds what the code reported for each unit, from calls that carried the file's code unchanged.
  *   changed holds the units Figma wrote from code Codex had changed.
+ *   tokenValues holds the tokens whose changed value the code held back, and those it wrote, from the same calls.
  */
 async function sendFile({ codex, args, code, key, workdir, timeoutMs, fileKey, eventsFile }) {
   const startedAt = Date.now();
   const { run, summary, warnings } = await runCodex({ codex, args, code, workdir, timeoutMs, eventsFile });
   const units = new Map();
   const changed = new Set();
+  const held = new Set();
+  const written = new Set();
   const errors = [];
   const text = code.toString("utf8").trim();
 
@@ -473,6 +501,9 @@ async function sendFile({ codex, args, code, key, workdir, timeoutMs, fileKey, e
       // Over two calls, a unit counts as sent if either call sent it.
       if (!SENT_STATUSES.has(units.get(unit.id)?.status)) units.set(unit.id, unit);
     }
+    for (const [list, into] of [[returned.tokens?.held, held], [returned.tokens?.updated, written]]) {
+      for (const name of Array.isArray(list) ? list : []) if (typeof name === "string") into.add(name);
+    }
     for (const warning of Array.isArray(returned.warnings) ? returned.warnings : []) warnings.push(`Figma: ${String(warning).slice(0, 300)}`);
   }
 
@@ -481,6 +512,7 @@ async function sendFile({ codex, args, code, key, workdir, timeoutMs, fileKey, e
   return {
     units,
     changed,
+    tokenValues: { held: [...held].filter((name) => !written.has(name)), written: [...written] },
     error: errors.length > 0 ? [...new Set(errors)].join(" ") : null,
     usage: summary.usage,
     tokens: relayTokens(summary.usage),
@@ -575,11 +607,24 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
   let stopped = null;
   let planned = 0;
 
+  // Changed token values are written only by the call that sends the release's last component unit
+  // (runtime.js, TOKEN_VALUES), so a version moved to Older versions in an earlier call is frozen
+  // in the colours it shipped with. The count is taken from the results of the calls made.
+  const unitIds = manifest.files.flatMap((file) => file.units);
+  const componentIds = unitIds.filter((id) => manifest.ledgerEntries[id].kind === "component");
+  const sentIds = new Set(unitIds.filter((id) => entrySent(ledger, manifest.ledgerEntries[id])));
+  const tokenWritten = new Set();
+  const tokenWaiting = new Set();
+
   try {
     for (const file of manifest.files) {
       const entries = file.units.map((id) => ({ id, ...manifest.ledgerEntries[id] }));
       const pending = entries.filter((entry) => !entrySent(ledger, entry));
-      const { code: text, key } = prepared.get(file.name);
+      // This call is the release's last when every other component unit is already sent. Then it
+      // writes the changed token values, unless a component unit of this call fails (the runtime checks).
+      const lastCall = componentIds.every((id) => file.units.includes(id) || sentIds.has(id));
+      const { key, ...variants } = prepared.get(file.name);
+      const text = lastCall ? variants.last : variants.held;
       const code = Buffer.from(text, "utf8");
       const chars = text.length;
       const record = { name: file.name, chars, units: file.units };
@@ -589,6 +634,7 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
         unitRecords.push(...entries.map((entry) => ({ ...unitBase(entry), status: "already sent", calls: 0, tokens: 0 })));
         continue;
       }
+      record.tokenValues = lastCall ? "written at the end of the call" : "held";
       planned += pending.length;
       const predicted = predictTokens(chars, ratios);
       uncapped.calls += 1;
@@ -610,6 +656,8 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
       totals.componentWrites += components;
       if (dryRun) {
         totals.tokens += predicted;
+        // A dry run assumes the call succeeds, so the files after it can be the last.
+        for (const entry of pending) sentIds.add(entry.id);
         fileRecords.push({ ...record, status: "would send", predictedTokens: predicted, calls: 1, tokens: null });
         unitRecords.push(...entries.map((entry) => ({ ...unitBase(entry), status: pending.includes(entry) ? "would send" : "already sent", calls: share(1, entries.length), tokens: null })));
         continue;
@@ -631,6 +679,12 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
         ratios.push(outcome.tokens / predictTokens(chars));
       }
 
+      for (const name of outcome.tokenValues.held) tokenWaiting.add(name);
+      for (const name of outcome.tokenValues.written) {
+        tokenWaiting.delete(name);
+        tokenWritten.add(name);
+      }
+
       let sentHere = 0;
       const marks = [];
       for (const entry of entries) {
@@ -649,6 +703,7 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
         } else if (SENT_STATUSES.has(returned?.status)) {
           marks.push([entry, SENT]);
           sent.push(entry.id);
+          sentIds.add(entry.id);
           sentHere += 1;
           unitRecords.push({ ...base, status: "sent" });
           continue;
@@ -697,12 +752,17 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
   if (stopped === "larger-than-token-cap") {
     warnings.push("The next code file alone needs more relay tokens than spendingCap.maxRelayTokens allows, so it will never be sent at this cap. Raise the cap, or lower outputs.figma.options.componentsPerCall.");
   } else if (stopped) warnings.push(`The relay stopped before a call that would pass the ${stopped}. The rest is deferred to the next run.`);
+  const waiting = tokenWaiting.size;
+  if (waiting > 0) {
+    warnings.push("Changed token values wait for the call that sends the release's last component unit, so older versions keep the colours they shipped with. Run the relay on this folder again to send the rest. The count covers the calls made.");
+  }
 
   // A call that ended without a token count is left out of actual tokens, as for a send. The cap counted its prediction.
   const actual = { calls: dryRun ? 0 : totals.calls, tokens: dryRun ? 0 : totals.measured, usd: 0 };
+  const waitingNote = waiting > 0 ? ` ${plural(waiting, "token change")} waiting for the release's last call.` : "";
   const summary = dryRun
     ? `Figma relay, dry run: would send ${plural(unitRecords.filter((u) => u.status === "would send").length, "unit")} in ${plural(estimated.calls, "call")}, about ${estimated.tokens} relay tokens; ${deferred.length} deferred.`
-    : `Figma relay: sent ${sent.length} of ${plural(planned, "unit")} in ${plural(actual.calls, "call")}, ${actual.tokens} relay tokens; ${failed.length} failed, ${deferred.length} deferred.`;
+    : `Figma relay: sent ${sent.length} of ${plural(planned, "unit")} in ${plural(actual.calls, "call")}, ${actual.tokens} relay tokens; ${failed.length} failed, ${deferred.length} deferred.${waitingNote}`;
   const outputRecord = {
     output: REPORT_OUTPUT,
     status: dryRun ? "dry-run" : "ok",
@@ -726,6 +786,8 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
         effort,
         codexConfig: options.keepCodexConfig ? "user" : "clean",
         maxCalls,
+        // Token values this run's calls changed in Figma, and those they held back for the release's last call.
+        tokenChanges: { written: tokenWritten.size, waiting },
         files: fileRecords,
         units: unitRecords,
       },

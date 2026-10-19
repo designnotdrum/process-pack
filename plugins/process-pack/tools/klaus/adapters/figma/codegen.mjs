@@ -73,6 +73,9 @@ export function templateSafe(text) {
   return /^[\x20-\x7e\n\t]*$/.test(text) && !text.includes("`") && !text.includes("\\") && !text.includes("${");
 }
 
+/** What a call does with a changed token value: runtime.js TOKEN_VALUES. */
+export const TOKEN_VALUE_MODES = Object.freeze(["hold", "last"]);
+
 /**
  * The code of one call: the data as constants, then the runtime from this checkout. Every value is
  * written as JSON, except SVG markup, and the header must be one line of printable ASCII
@@ -84,11 +87,16 @@ export function templateSafe(text) {
  * keeps its index. Other markup stays a JSON string. The runtime holds no backslash either.
  *
  * @param {object} data  From dataFor, or from data-file.mjs readData.
- * @param {{ key?: number[] }} [options]  With a key, the relay's code: every string encoded (encodedCode).
- *   Without one, plain code for the Klaus Figma plugin, which no model reads.
+ * @param {{ key?: number[], tokenValues?: "hold" | "last" }} [options]
+ *   With a key, the relay's code: every string encoded (encodedCode). Without one, plain code for the
+ *   Klaus Figma plugin, which no model reads.
+ *   tokenValues says when the call writes a changed token value (TOKEN_VALUES in runtime.js): "hold"
+ *   writes none, "last" is the call that sends the release's last component unit. Left out, plain code
+ *   writes the values at the end of its run, as the plugin does, and the relay's code is "last".
  */
-export function codeFor(data, { key } = {}) {
-  if (key !== undefined) return encodedCode(data, key);
+export function codeFor(data, { key, tokenValues } = {}) {
+  if (tokenValues !== undefined && !TOKEN_VALUE_MODES.includes(tokenValues)) throw new Error(`tokenValues must be one of ${TOKEN_VALUE_MODES.join(", ")}.`);
+  if (key !== undefined) return encodedCode(data, key, tokenValues ?? "last");
   if (!/^[\x20-\x7e]*$/.test(data.header)) throw new Error("A file header must be one line of printable ASCII.");
   const svgs = [];
   const units = data.units.map((unit) => {
@@ -98,6 +106,7 @@ export function codeFor(data, { key } = {}) {
   return [
     `// ${data.header}`,
     "const KEY = null;",
+    ...(tokenValues === undefined ? [] : [`const TOKEN_VALUES = ${JSON.stringify(tokenValues)};`]),
     `const CONFIG = ${asciiJson(data.config)};`,
     `const TOKENS = ${asciiJson(data.tokens)};`,
     `const UNITS = ${asciiJson(units)};`,
@@ -105,6 +114,36 @@ export function codeFor(data, { key } = {}) {
     RUNTIME_CODE,
     "",
   ].join("\n");
+}
+
+/**
+ * The data with the tokens of the release's other data files added after its own. The call that
+ * sends the release's last component unit writes every changed token value of the release, and the
+ * tokens of the other files are not in its own file. A unit's "tk" indexes point into its file's own
+ * tokens, which keep their places. A token that two files share must agree on colour and code
+ * syntax, as the plugin requires when it joins the files.
+ *
+ * @param {object} data    From dataFor, or from data-file.mjs readData.
+ * @param {object[]} others  The release's other data files, in the same shape.
+ * @throws {Error} when two files give one token another colour or code syntax.
+ */
+export function withReleaseTokens(data, others) {
+  const tokens = data.tokens.map((token) => ({ ...token, scopes: [...token.scopes] }));
+  const at = new Map(tokens.map((token, i) => [token.name, i]));
+  for (const other of others) {
+    for (const token of other.tokens) {
+      if (!at.has(token.name)) {
+        at.set(token.name, tokens.length);
+        tokens.push({ ...token, scopes: [...token.scopes] });
+        continue;
+      }
+      const have = tokens[at.get(token.name)];
+      if (have.syntax !== token.syntax || have.rgba.some((part, i) => part !== token.rgba[i])) {
+        throw new Error(`The token ${token.name} has another colour or code syntax in another file of the release.`);
+      }
+    }
+  }
+  return { ...data, tokens };
 }
 
 /** Bytes in a key. */
@@ -168,11 +207,12 @@ function checkKey(key) {
  * except the values of a status field, and the relay decodes it (relay/events.mjs decodeResult).
  * The model keeps the result in its context, and a name in the Figma file could steer it.
  */
-function encodedCode(data, key) {
+function encodedCode(data, key, tokenValues) {
   checkKey(key);
   return [
     "// Klaus Figma code",
     `const KEY = [${key.join(",")}];`,
+    `const TOKEN_VALUES = ${JSON.stringify(tokenValues)};`,
     `const CONFIG = ${asciiJson(encodeStrings(data.config, key, ""))};`,
     `const TOKENS = ${asciiJson(encodeStrings(data.tokens, key, ""))};`,
     `const UNITS = ${asciiJson(encodeStrings(data.units, key, ""))};`,

@@ -69,10 +69,10 @@ node scripts/klaus/adapters/figma/relay/relay.mjs --run 1234567890 --repo acme/a
 
 1. Reads `manifest.json`. If it names another Figma file than `klaus.config.json`, the run stops.
 2. Reads every data file with `../data-file.mjs`, before any call. A file that is not JSON, is not the generator's shape, writes to a variable collection or page the settings do not name, or does not match the manifest stops the run, and nothing is sent.
-3. Builds each call's code from its data file and the runtime in this checkout (`../codegen.mjs` `codeFor`). Code in the artifact is never read. Every string from the data is encoded with a new random key for each call, so the model reads no text from the data (see "What the model sees" below).
+3. Builds each call's code from its data file and the runtime in this checkout (`../codegen.mjs` `codeFor`). Code in the artifact is never read. Every string from the data is encoded with a new random key for each call, so the model reads no text from the data (see "What the model sees" below). Each file gets two versions of its code, one that holds changed token values back and one for the release's last call (see "Token values wait for the release's last call").
 4. Checks that Codex has a `figma` server that is signed in. If not, it stops before any call.
 5. Reads the ledger, `.klaus/figma/ledger.json` (or `outputs.figma.options.outputDir`).
-6. For each data file in order, skips it when every unit in it is already sent. Otherwise it checks the spending cap, then runs `codex exec` once:
+6. For each data file in order, skips it when every unit in it is already sent. Otherwise it picks the held or the last version of its code, checks the spending cap, then runs `codex exec` once:
    - The code goes to Codex on stdin, byte for byte. The prompt holds no code. It tells Codex to call `use_figma` exactly once with that code, report the result, and do nothing else.
    - Codex runs with a clean config: only the `figma` server, only its `use_figma` tool, no plugins, no hooks, no shell tool (see "What the model sees"), a read-only sandbox, in an empty folder. `--keep-codex-config` uses `~/.codex/config.toml` instead.
    - The default model is `gpt-5.6-terra` at low effort. It copied the code exactly where `gpt-6-luna` did not (see "What the real runs measured" below). `--model` and `--effort` change it.
@@ -87,6 +87,19 @@ The pages the code touches are in the generator's README, under "Which pages it 
 A unit that failed stays `generated`. The next relay run on the same folder sends its file again, and the next generator run plans it again. Sending a file twice is safe: the code leaves a set that already exists alone and reports it as `exists`.
 
 When Codex changed the code and Figma still wrote a unit from it, the set in Figma may be wrong. The relay records that unit as `changed` and the report says to delete the set in Figma. While a unit is `changed`, an `exists` from a later call does not count, because it only means a set of that name is there. The unit becomes `sent` when a call writes it again from the right code.
+
+## Token values wait for the release's last call
+
+A version that moves to "Older versions" is frozen: its bound colours become the plain values it shipped with, which are the variables' values at that moment. If a call wrote a changed token value at its end, the next call would freeze its older version at the new colour. The relay sends one component version per call, so it holds the values back until the last one:
+
+- Every call creates the variables it uses that are missing and changes the value of none that exists. Its code says so with `const TOKEN_VALUES = "hold";` and reports the tokens whose value would change as `tokens.held`. The word is one of two the relay picks, never read from the data.
+- The call that sends the release's last component unit writes the values at its end (`TOKEN_VALUES = "last"`). A call is the last one when every other component unit in the manifest is already `sent` in the ledger when the call starts. Screens are never frozen, so they do not count. A release with no component unit writes the values in every call.
+- The last call also carries the tokens of the release's other data files, because a changed token may be used only by a version in an earlier file. That adds about 159 characters of code for each such token (measured with ten tokens of 19-character names and two scopes each). A token that two files share must have the same colour and code syntax in both, or the relay stops before any call, as the plugin does. The relay also checks the last version of every file against the 50,000-character limit before any call, and stops with a message to lower `outputs.figma.options.componentsPerCall` if one does not fit.
+- If a component unit in the last call fails, or the call stops early, the code holds the values as well. The retry that sends that unit is then the last call. Writing them first would freeze the unit's older version at the new colour.
+- If a run stops before the last call (the spending cap, `--max-calls` or a failure), the values wait. The next run on the same folder sends the units that are still `generated`, and the call that sends the last of them writes the values.
+- The report says how many are waiting: `adapter.details.tokenChanges` is `{ written, waiting }`, the summary names the count, and a warning explains it. A dry run lists `tokenValues` for each file: `held`, or `written at the end of the call`. The count comes from the results of the calls made. A token used only by a unit whose call was not made is not counted.
+- Reconcile mode never writes a token value. Its code touches no variable.
+- The Klaus plugin applies a whole release in one run, so it writes the values at the end of that run. Its code defines no `TOKEN_VALUES`.
 
 ## The spending cap
 
@@ -150,7 +163,8 @@ What follows from it:
 
 Next to the frame's fields (`written`, `deferred`, `failed`, `estimated`, `actual`), `adapter.details` lists:
 
-- `files`: each data file with its status (`sent`, `partly sent`, `failed`, `deferred`, `already sent`, `would send`), calls, tokens, Codex's token usage, predicted tokens and time taken.
+- `files`: each data file with its status (`sent`, `partly sent`, `failed`, `deferred`, `already sent`, `would send`), calls, tokens, Codex's token usage, predicted tokens and time taken. A file with units to send also says what its call does with changed token values: `tokenValues`.
+- `tokenChanges`: `{ written, waiting }`, the changed token values the run wrote and the ones it holds for the release's last call.
 - `units`: each unit with its status, what Figma reported, and its share of its file's call and tokens. A file's call is shared evenly among its units.
 
 Exit code 1 means a unit failed. Exit code 2 means something to fix before a run, such as the Figma sign-in.
@@ -206,4 +220,4 @@ On 2026-10-18 one real call ran against the Klaus prototype file, with `page` se
 node --test "plugins/process-pack/tools/klaus/adapters/figma/relay/**/*.test.mjs"
 ```
 
-The tests put a stub `codex` and a stub `gh` first on `PATH` (`tests/stub/`). The stub `gh` answers the run, repo and compare reads and the download. The stub `codex` keeps what it was given, so a test can check the code that would have reached Figma. The stub replays the event output in `tests/fixtures/`. `success.jsonl` is the event stream of real call 1, with the code, file key and result replaced by placeholders. The stub also covers a tool error, a crash, a reply with no call, and code changed on the way. `no-call.jsonl` is the real call 6. The crash fixture follows Codex's documented event shapes, because no real run has produced one.
+The tests put a stub `codex` and a stub `gh` first on `PATH` (`tests/stub/`). The stub `gh` answers the run, repo and compare reads and the download. The stub `codex` keeps what it was given, so a test can check the code that would have reached Figma. The stub replays the event output in `tests/fixtures/`. `success.jsonl` is the event stream of real call 1, with the code, file key and result replaced by placeholders. The stub also covers a tool error, a crash, a reply with no call, and code changed on the way. Its `figma` scenario runs the code in the fake Plugin API (`../tests/fake-figma.mjs`) and returns what the code returned, so `token-order.test.mjs` can check the colours an older version keeps. `no-call.jsonl` is the real call 6. The crash fixture follows Codex's documented event shapes, because no real run has produced one.
