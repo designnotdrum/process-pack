@@ -243,6 +243,48 @@ test("the workflow refuses to render without the repo's install, or Figma withou
   assert.throws(() => render({ ...CONFIG, inventory: { folders: [] } }), /inventory\.folders/);
 });
 
+test("the job names the secrets environment when one is set, in both modes, and names none otherwise", () => {
+  for (const trigger of [{ mode: "release", tagPattern: "v*" }, { mode: "schedule", cron: "0 6 * * 1" }]) {
+    const { text, kept } = render({ ...CONFIG, trigger: { ...trigger, secretsEnvironment: "klaus-release" } });
+    assert.ok(kept.includes("environment"));
+    assert.match(text, /^jobs:\n {2}klaus:\n {4}runs-on: ubuntu-latest\n(?: {4}#.*\n)+ {4}environment:\n {6}name: "klaus-release"\n {6}deployment: false\n {4}timeout-minutes: 30\n {4}steps:$/m);
+    assert.equal(text.match(/^\s*environment:/gm).length, 1, "the environment is on the job, once");
+    assert.doesNotMatch(text, /# klaus:/);
+  }
+  assert.match(render({ ...CONFIG, trigger: { mode: "release", tagPattern: "v*", secretsEnvironment: "acme.klaus_2" } }).text, /name: "acme\.klaus_2"/);
+
+  const without = render(CONFIG);
+  assert.equal(without.kept.includes("environment"), false);
+  assert.doesNotMatch(without.text, /^\s*environment:|deployment: false/m);
+  // The comment above the job does not claim an environment that is not there.
+  assert.doesNotMatch(without.text, /secrets are kept in this environment/);
+
+  for (const bad of ["", " ", "a b", "-x", ".x", "../x", "a/b", "x".repeat(65), "\"quoted\"", "a\nb"]) {
+    assert.throws(() => resolveConfig({ ...CONFIG, trigger: { mode: "release", tagPattern: "v*", secretsEnvironment: bad } }), /secretsEnvironment: must be an environment name/, JSON.stringify(bad));
+  }
+});
+
+test("the template and a workflow rendered with the environment pass actionlint when it is installed", (t) => {
+  const probe = spawnSync("actionlint", ["--version"], { encoding: "utf8" });
+  if (probe.error) t.skip("actionlint is not installed");
+  const template = lintWorkflow(path.join(SOURCE_ROOT, "templates", "klaus.yml"));
+  assert.equal(template.tool, "actionlint");
+  assert.equal(template.ok, true, template.message);
+
+  const repo = sampleRepo();
+  write(path.join(repo, "klaus.config.json"), JSON.stringify({ ...CONFIG, trigger: { mode: "release", tagPattern: "v*", secretsEnvironment: "klaus-release" } }));
+  const result = writeWorkflow({
+    repo,
+    install: "pnpm install --frozen-lockfile",
+    storybookBuild: "pnpm build-storybook -o storybook-static",
+    checkTags: () => ({ status: "protected", rulesets: [{ id: 1, name: RULESET_NAME }] }),
+    checkEnv: () => ({ status: "ok" }),
+  });
+  assert.match(readFileSync(result.destination, "utf8"), /environment:\n {6}name: "klaus-release"/);
+  assert.equal(result.lint.tool, "actionlint");
+  assert.equal(result.lint.ok, true, result.lint.message);
+});
+
 test("a written workflow passes actionlint when it is installed", (t) => {
   const repo = sampleRepo();
   const result = writeWorkflow({ repo, install: "pnpm install --frozen-lockfile", storybookBuild: "pnpm build-storybook -o storybook-static", checkTags: () => ({ status: "protected", rulesets: [{ id: 1, name: RULESET_NAME }] }) });

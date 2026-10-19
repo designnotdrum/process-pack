@@ -75,9 +75,11 @@ export function renderWorkflow({ template, config, install, installSteps, corepa
     "figma-build": figma,
     "figma-artifact": figma,
     captures: captures !== "",
+    environment: Boolean(config.trigger.secretsEnvironment),
   };
   const values = {
     "tag-pattern": config.trigger.tagPattern,
+    environment: config.trigger.secretsEnvironment ?? "",
     cron: config.trigger.cron ?? "0 6 * * 1",
     "node-version": String(node),
     "inventory-folders": folders.join(" "),

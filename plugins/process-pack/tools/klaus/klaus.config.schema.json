@@ -84,6 +84,12 @@
           "type": "string",
           "pattern": "^([0-9*/,A-Za-z?-]+ ){4}[0-9*/,A-Za-z?-]+$"
         },
+        "secretsEnvironment": {
+          "description": "Name of the GitHub environment that holds the workflow's secrets. Its deployment rules allow only the default branch and, in release mode, the release tags, so a workflow run from any other branch cannot read the secrets. When this is set the workflow's job names the environment, and every render checks the environment's rules and refuses if they have changed. When it is absent the secrets are repository secrets, which a workflow on any branch can read.",
+          "title": "an environment name of letters, digits, . _ and -",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+        },
         "approvedTagBypass": {
           "description": "Release mode only. Who besides repository admins may bypass the tag ruleset that protects the release tags. Each entry was approved by name when Klaus was installed. A later render of the workflow refuses if the ruleset has gained anyone who is not listed here.",
           "type": "array",
