@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import { readOnboardingConfig } from '../config.mjs'
-import { buildEstimate, compareToEstimate, predictCheckerTokens, predictWriterTokens, renderComparison, renderEstimate, WRITER_RATES } from '../estimate.mjs'
+import { buildEstimate, compareToEstimate, comparisonNotes, predictCheckerTokens, predictWriterTokens, renderComparison, renderEstimate, WRITER_RATES } from '../estimate.mjs'
 import { buildPlan } from '../plan.mjs'
 import { makeSample } from './helpers.mjs'
 
@@ -91,4 +91,53 @@ test('a dollar figure that is tiny passes on the floor even when it is far off i
   const estimate = await buildEstimate({ plan, onboarding: config.onboarding, fetchImpl: prices })
   const rows = compareToEstimate(estimate, { entries: 5, purposes: 4, writerCalls: 3, checkerCalls: 4, writerTokens: estimate.purposes.writerTokens, checkerTokens: estimate.purposes.checkerTokens, checkerUsd: estimate.purposes.checkerUsd + 0.0009, stories: 3, pairs: 3, tickets: 1, decisions: 2 })
   assert.equal(rows.find((r) => r.metric === 'Checker dollars').within, true)
+})
+
+test('the estimate keeps each call\'s own figure, and they add up to the totals', async () => {
+  const estimate = await buildEstimate({ plan, onboarding: config.onboarding, fetchImpl: prices })
+  const { purposes } = estimate
+  assert.equal(purposes.writerCallDetails.reduce((sum, c) => sum + c.tokens, 0), purposes.writerTokens)
+  assert.equal(purposes.checkerCallDetails.length, purposes.checkerCalls)
+  assert.equal(purposes.checkerCallDetails.reduce((sum, c) => sum + c.tokens, 0), purposes.checkerTokens)
+  assert.ok(Math.abs(purposes.checkerCallDetails.reduce((sum, c) => sum + c.usd, 0) - purposes.checkerUsd) < 1e-12)
+})
+
+test('calls reused or never reached count toward the calls, and only the calls made toward the tokens', async () => {
+  const estimate = await buildEstimate({ plan, onboarding: config.onboarding, fetchImpl: prices })
+  const [reusedCall] = estimate.purposes.writerCallDetails
+  const [notReached, reusedCheck] = estimate.purposes.checkerCallDetails
+  const writerLeft = estimate.purposes.writerTokens - reusedCall.tokens
+  const checkerLeft = estimate.purposes.checkerTokens - notReached.tokens - reusedCheck.tokens
+  const actual = {
+    entries: 5, purposes: 4, writerCalls: 2, writerReused: [reusedCall.id], checkerCalls: 2, checksMade: 2, checkerReused: [reusedCheck.id], checksNotReached: [notReached.id],
+    writerTokens: writerLeft, checkerTokens: checkerLeft, checkerUsd: estimate.purposes.checkerUsd / 2, stories: 3, pairs: 3, tickets: 1, decisions: 2,
+  }
+  const rows = compareToEstimate(estimate, actual)
+  const row = (metric) => rows.find((r) => r.metric === metric)
+  assert.deepEqual([row('Writer calls').actual, row('Checker calls').actual], [3, 4])
+  assert.ok(rows.every((r) => r.within === true), JSON.stringify(rows.filter((r) => !r.within)))
+  assert.deepEqual([row('Writer tokens').estimated, row('Checker tokens').estimated], [writerLeft, checkerLeft])
+  const notes = comparisonNotes(estimate, actual).join('\n')
+  assert.match(notes, /2 calls made, and 1 call reused from an earlier run of this plan/)
+  assert.match(notes, /of the 4 checks the estimate counted, 2 checks made, 1 check reused from an earlier run of this plan, at no cost this time, 1 component not checked/)
+  // Without the reused and unreached ids the calls do not add up, which is what the run reported before.
+  assert.equal(compareToEstimate(estimate, { ...actual, writerReused: [], checkerReused: [], checksNotReached: [] }).find((r) => r.metric === 'Checker calls').within, false)
+})
+
+test('an estimate made before each call\'s figure was kept is shared out evenly', async () => {
+  const estimate = await buildEstimate({ plan, onboarding: config.onboarding, fetchImpl: prices })
+  const old = { ...estimate, purposes: { ...estimate.purposes, checkerCallDetails: undefined, writerCallDetails: estimate.purposes.writerCallDetails.map(({ tokens, ...rest }) => rest) } }
+  const rows = compareToEstimate(old, { entries: 5, purposes: 4, writerCalls: 2, writerReused: [old.purposes.writerCallDetails[0].id], checkerCalls: 3, checksMade: 3, checksNotReached: ['x'], writerTokens: 1, checkerTokens: 1, checkerUsd: 0, stories: 3, pairs: 3, tickets: 1, decisions: 2 })
+  const row = (metric) => rows.find((r) => r.metric === metric)
+  const first = old.purposes.writerCallDetails[0]
+  assert.equal(row('Writer tokens').estimated, old.purposes.writerTokens - predictWriterTokens(first.promptChars, first.components))
+  assert.equal(row('Checker tokens').estimated, old.purposes.checkerTokens * 3 / 4)
+  assert.equal(row('Checker calls').within, true)
+})
+
+test('a retried checker request is said, and makes the calls more than the estimate', async () => {
+  const estimate = await buildEstimate({ plan, onboarding: config.onboarding, fetchImpl: prices })
+  const actual = { entries: 5, purposes: 4, writerCalls: 3, checkerCalls: 5, checksMade: 4, writerTokens: estimate.purposes.writerTokens, checkerTokens: estimate.purposes.checkerTokens, checkerUsd: estimate.purposes.checkerUsd, stories: 3, pairs: 3, tickets: 1, decisions: 2 }
+  assert.equal(compareToEstimate(estimate, actual).find((r) => r.metric === 'Checker calls').within, false)
+  assert.match(comparisonNotes(estimate, actual).join('\n'), /The checker sent 1 request more than it made checks/)
 })

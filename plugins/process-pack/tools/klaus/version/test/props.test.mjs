@@ -4,7 +4,7 @@ import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
 import ts from 'typescript'
 import { compareTrees } from '../props.mjs'
-import { cleanup, makeTree, typeScriptBefore54, writeFiles } from './helpers.mjs'
+import { cleanup, makeTree, tmpDir, typeScriptBefore54, writeFiles } from './helpers.mjs'
 
 after(cleanup)
 
@@ -346,5 +346,59 @@ describe('with a TypeScript that cannot say which way a type changed', () => {
     assert.equal(old.level, 'major')
     assert.equal(old.textOnly, true)
     assert.equal(find(old, 'type changed incompatibly', 'size').level, 'major')
+  })
+})
+
+/**
+ * Two releases of a component whose props come from another file, so the types they use are not
+ * in scope where the component is. React's types are installed the way pnpm installs them: in the
+ * store under `node_modules/.pnpm`, with `node_modules/@types/react` a link to that folder.
+ */
+function storeTree(props) {
+  const dir = tmpDir('klaus-store')
+  writeFiles(dir, {
+    'package.json': '{ "name": "store-repo", "private": true }\n',
+    'tsconfig.json': JSON.stringify({ compilerOptions: { jsx: 'preserve', module: 'esnext', moduleResolution: 'bundler', target: 'es2020', strict: true, noEmit: true, skipLibCheck: true, types: [] }, include: ['**/*.ts', '**/*.tsx'], exclude: ['node_modules'] }),
+    'stubs/jsx.d.ts': 'declare namespace JSX {\n  interface Element {}\n  interface IntrinsicElements {\n    [name: string]: any\n  }\n}\n',
+    'packages/ui/src/tokens.ts': 'export const space = 4\n',
+    'packages/ui/src/card-props.ts': `import type { ReactNode } from 'react'\nimport type * as tokens from './tokens'\n\nexport interface CardProps {\n${props}\n}\n`,
+    'packages/ui/src/card.tsx': "import type { CardProps } from './card-props'\n\nexport function Card(props: CardProps) {\n  return <div />\n}\n",
+  })
+  const store = path.join(dir, 'node_modules', '.pnpm', '@types+react@19.2.17', 'node_modules', '@types', 'react')
+  writeFiles(store, {
+    'package.json': '{ "name": "@types/react", "version": "19.2.17", "types": "index.d.ts" }\n',
+    'index.d.ts': 'export interface ReactElement {\n  type: string\n}\nexport type ReactNode = ReactElement | string | null | undefined\n',
+  })
+  fs.mkdirSync(path.join(dir, 'node_modules', '@types'), { recursive: true })
+  fs.symlinkSync(store, path.join(dir, 'node_modules', '@types', 'react'))
+  return dir
+}
+
+describe('a prop typed from another package or from a module', () => {
+  const file = 'packages/ui/src/card.tsx'
+  const checkouts = (result, base, head) => JSON.stringify(result).includes(base) || JSON.stringify(result).includes(head)
+
+  test('a ReactNode prop that changes is described with no absolute path', () => {
+    const base = storeTree('  children: ReactNode')
+    const head = storeTree('  children: ReactNode | number')
+    const result = compare(base, head, [{ primary: 'Card', file }]).get('Card')
+    assert.equal(find(result, 'type widened', 'children').detail, '+ number')
+    assert.equal(checkouts(result, base, head), false)
+  })
+
+  test('a prop typed as a module reads the same in two checkouts, so it is no change', () => {
+    const base = storeTree('  scale: typeof tokens')
+    const head = storeTree('  scale: typeof tokens')
+    const result = compare(base, head, [{ primary: 'Card', file }]).get('Card')
+    assert.deepEqual(result.changes, [])
+    assert.equal(checkouts(result, base, head), false)
+  })
+
+  test('a prop typed as a module is not a major change for a TypeScript that compares text only', () => {
+    const base = storeTree('  scale: typeof tokens')
+    const head = storeTree('  scale: typeof tokens')
+    const old = compareTrees({ ts: typeScriptBefore54(ts), base, head, jobs: [{ key: 'Card', primary: 'Card', names: ['Card'], baseFile: path.join(base, file), headFile: path.join(head, file) }] }).get('Card')
+    assert.equal(old.textOnly, true)
+    assert.equal(old.level, 'none')
   })
 })

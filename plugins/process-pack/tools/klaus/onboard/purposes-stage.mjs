@@ -68,13 +68,26 @@ function judgeCall({ ctx, call, items, pending, after, outside, failure }) {
   }
 }
 
-/** One Codex call for each folder, run here. The tree is read after each call and put back. */
+/**
+ * One Codex call for each folder, run here. The tree is read after each call and put back. A call
+ * an earlier run of this plan finished is read back from the store instead, and judged again.
+ */
 async function writeLocally({ ctx, state, items, pending }) {
-  const { repo, plan, onboarding, log, env, codex, work } = ctx
+  const { repo, plan, onboarding, log, env, codex, work, store } = ctx
   const guard = ctx.estimate.purposes.writerTokens ? ctx.estimate.purposes.writerTokens * RUNAWAY_FACTOR : Infinity
   let tokens = 0
   let executed = 0
-  for (const call of plan.calls) {
+  let reused = 0
+  for (const [index, call] of plan.calls.entries()) {
+    // A saved call costs nothing, so it is used even after the guard below has stopped the calls.
+    const saved = store.loadWriterCall(call)
+    if (saved) {
+      reused += 1
+      log(`Writer call ${index + 1} of ${plan.calls.length}: ${call.dir}, reused from an earlier run of this plan (no model call, no tokens)`)
+      state.writerCalls.push({ id: call.id, dir: call.dir, ok: true, tokens: 0, durationMs: 0, error: null, unexpected: [], components: call.count, reused: true })
+      judgeCall({ ctx, call, items, pending, after: saved.after, outside: saved.outside, failure: null })
+      continue
+    }
     if (tokens > guard) {
       for (const file of call.files) for (const c of file.components) items.set(c.id, { ...items.get(c.id), reason: `the run stopped before this call: the writer had used more than ${RUNAWAY_FACTOR} times its estimate` })
       state.guardNote = `The writer passed ${RUNAWAY_FACTOR} times its estimate, so the run stopped before the remaining calls.`
@@ -84,12 +97,12 @@ async function writeLocally({ ctx, state, items, pending }) {
     // A component file at the repo root has the repo itself as its folder, which is the base and not a path to check.
     if (path.resolve(dirAbs) !== repo) assertPlainPath(repo, dirAbs)
     const planned = new Set(call.files.map((f) => f.file))
-    log(`Writer call ${executed + 1} of ${plan.calls.length}: ${call.dir} (${plural(call.count, 'component')} in ${plural(call.files.length, 'file')})`)
-    const result = await runCodex({ codex, dir: dirAbs, prompt: writerPrompt(call), settings: onboarding.writer, env: writerEnvironment(env, onboarding.checker.secrets), eventsFile: path.join(work, 'events', `${pad(executed + 1)}.jsonl`) })
+    log(`Writer call ${index + 1} of ${plan.calls.length}: ${call.dir} (${plural(call.count, 'component')} in ${plural(call.files.length, 'file')})`)
+    const result = await runCodex({ codex, dir: dirAbs, prompt: writerPrompt(call), settings: onboarding.writer, env: writerEnvironment(env, onboarding.checker.secrets), eventsFile: path.join(work, 'events', `${pad(index + 1)}.jsonl`) })
     executed += 1
     tokens += result.summary.tokens ?? 0
     log(`  ${result.ok ? 'finished' : `failed: ${result.error}`}, ${result.summary.tokens ?? 0} tokens, ${Math.round(result.durationMs / 1000)} seconds${result.summary.unexpected.length ? `, used ${result.summary.unexpected.join(' and ')} (not expected)` : ''}`)
-    state.writerCalls.push({ id: call.id, dir: call.dir, ok: result.ok, tokens: result.summary.tokens ?? 0, durationMs: result.durationMs, error: result.error ?? null, unexpected: result.summary.unexpected, components: call.count })
+    state.writerCalls.push({ id: call.id, dir: call.dir, ok: result.ok, tokens: result.summary.tokens ?? 0, durationMs: result.durationMs, error: result.error ?? null, unexpected: result.summary.unexpected, components: call.count, reused: false })
 
     // Whatever happened, the working tree is read and then put back, so the next call starts clean.
     const changed = changedFiles(repo)
@@ -99,9 +112,12 @@ async function writeLocally({ ctx, state, items, pending }) {
     resetPaths(repo, changed, (p) => removePlainFile(repo, path.join(repo, p)))
     if (changedFiles(repo).length > 0) throw new Error('The working tree was not restored after a writer call.')
     judgeCall({ ctx, call, items, pending, after, outside, failure: result.ok ? null : result.error })
+    // Kept now, before the next call, so a stop at any later point does not lose it. A call that failed is made again next time.
+    if (result.ok) store.saveWriterCall(call, { after, outside, tokens: result.summary.tokens ?? 0, items })
   }
   state.writerTokens = tokens
   state.writerExecuted = executed
+  state.writerReused = reused
 }
 
 /** The briefs for an external writer: the same prompt the local route sends, with paths from the repo root. */
@@ -154,15 +170,27 @@ function setVerdict(items, id, verdict, reason) {
   else items.set(id, { ...current, status: 'unchecked', verdict: 'error', reason: `the checker could not answer: ${reason}` })
 }
 
-/** One OpenRouter call for each component that is used somewhere. */
+/**
+ * One OpenRouter call for each component that is used somewhere. A verdict an earlier run of this
+ * plan got for the same sentences and the same usage is read back from the store instead.
+ */
 async function checkLocally({ ctx, state, items, todo }) {
-  const { onboarding, env, log, fetchImpl } = ctx
+  const { onboarding, env, log, fetchImpl, store, sources } = ctx
   const { checker } = onboarding
   const key = env[checker.secrets[0]]
-  log(`Checker: ${plural(todo.length, 'call')} on ${checker.model}`)
-  await pool(todo, CHECKER_CONCURRENCY, async (p) => {
+  const saved = new Map(todo.map((p) => [p.component.id, store.loadCheck(p, sources.get(p.file))]))
+  const fresh = todo.filter((p) => !saved.get(p.component.id))
+  log(`Checker: ${plural(fresh.length, 'call')} on ${checker.model}${fresh.length < todo.length ? `, and ${plural(todo.length - fresh.length, 'verdict')} reused from an earlier run of this plan` : ''}`)
+  for (const p of todo.filter((x) => saved.get(x.component.id))) {
+    const { verdict, reason } = saved.get(p.component.id)
+    state.checkerRuns.push({ id: p.component.id, verdict, attempts: 0, tokens: 0, usd: 0, reused: true })
+    setVerdict(items, p.component.id, verdict, reason)
+  }
+  await pool(fresh, CHECKER_CONCURRENCY, async (p) => {
     const result = await runCheck({ key, model: checker.model, prompt: promptFor(p), fetchImpl })
-    state.checkerRuns.push({ id: p.component.id, verdict: result.verdict, attempts: result.attempts, tokens: result.tokens, usd: result.usd })
+    state.checkerRuns.push({ id: p.component.id, verdict: result.verdict, attempts: result.attempts, tokens: result.tokens, usd: result.usd, reused: false })
+    // Kept as it arrives. A check that could not answer is made again next time.
+    store.saveCheck(p, sources.get(p.file), result)
     setVerdict(items, p.component.id, result.verdict, result.reason)
     log(`  ${p.component.name}: ${result.verdict}${result.reason ? `, ${result.reason}` : ''} (${result.tokens} tokens)`)
   })
@@ -218,6 +246,10 @@ export async function obtainPurposes({ ctx, state }) {
     if (snippets.length === 0) items.set(p.component.id, { ...items.get(p.component.id), status: 'unchecked', reason: 'it is not used anywhere, so there is no usage to check against' })
     else todo.push({ ...p, snippets })
   }
+  // The estimate counts a check for every component that is used somewhere. One whose purpose the
+  // writer did not get through (rejected, or never written) is not checked, and the report says how many.
+  const sent = new Set(todo.map((p) => p.component.id))
+  state.checksNotReached = plan.purposes.components.filter((c) => !sent.has(c.id) && snippetsOf(ctx, c).length > 0).map((c) => c.id)
   if (onboarding.checker.route === 'external') {
     if (todo.length > 0 && !options.checksFile) {
       writeCheckerBriefs({ ctx, todo })

@@ -5,8 +5,11 @@
  *   2. the missing purposes, written and then checked against where each component is used
  *   3. stories for components that have none, and the screens for the data-bound ones (no model)
  *
- * The model work (purposes-stage.mjs) comes first and changes no branch, so a failure in it leaves
- * nothing behind. Then the branches are made and stacked: the second is cut from the first, the
+ * Before any model call, the files that need no model are worked out and the repo's pre-commit
+ * hook is tried on each commit's files (hook-check.mjs), so a hook that would refuse a commit
+ * stops the run before anything is spent. The model work (purposes-stage.mjs) comes next and
+ * changes no branch, and each result is saved as it arrives (results.mjs), so a stop after it
+ * does not lose it. Then the branches are made and stacked: the second is cut from the first, the
  * third from the second, and each pull request is based on the branch before it. Nothing is merged.
  */
 import { execFileSync } from 'node:child_process'
@@ -21,11 +24,13 @@ import { pickVersions, readCaptures } from '../version/version.mjs'
 import { listBody, purposesBody, renderPurposesView, renderStoriesView, renderSummary, storiesBody } from './bodies.mjs'
 import { readOnboardingConfig } from './config.mjs'
 import { renderDecisions, renderDuplicatesList, renderTicket, ticketFileName } from './duplicates.mjs'
-import { compareToEstimate } from './estimate.mjs'
-import { changedFiles, commit, createPullRequest, currentBranch, editPullRequest, git, gitDir, run as runProgram, topLevel } from './git.mjs'
+import { compareToEstimate, comparisonNotes } from './estimate.mjs'
+import { changedFiles, commit, createPullRequest, currentBranch, editPullRequest, git, gitDir, resetPaths, run as runProgram, topLevel } from './git.mjs'
+import { checkCommitHooks } from './hook-check.mjs'
 import { buildPlan } from './plan.mjs'
-import { mkdirPlain, writePlainFile } from './plain-path.mjs'
+import { mkdirPlain, removePlainFile, writePlainFile } from './plain-path.mjs'
 import { obtainPurposes } from './purposes-stage.mjs'
+import { createResultStore } from './results.mjs'
 import { renderStory } from './stories.mjs'
 import { applyPurposes } from './verify.mjs'
 
@@ -51,9 +56,71 @@ export function checkerLabel(onboarding) {
   return checker.route === 'external' ? checker.agent : `OpenRouter, ${checker.model}, one call for each component, billed for each token`
 }
 
-function writeInventoryFiles(repo, inventory) {
-  writePlainFile(repo, path.join(repo, 'inventory.json'), `${JSON.stringify(inventory, null, 2)}\n`)
-  writePlainFile(repo, path.join(repo, 'INVENTORY.md'), renderMarkdown(inventory))
+const inventoryFiles = (inventory) => [
+  { rel: 'inventory.json', text: `${JSON.stringify(inventory, null, 2)}\n` },
+  { rel: 'INVENTORY.md', text: renderMarkdown(inventory) },
+]
+
+/** The files of the first pull request: the list at 1.0.0 and the duplicates. None needs a model. */
+function listFiles(plan, inventory, docs) {
+  return [
+    ...inventoryFiles(inventory),
+    { rel: `${docs}/duplicates.md`, text: renderDuplicatesList(plan.duplicates) },
+    { rel: `${docs}/duplicates.json`, text: `${JSON.stringify(plan.duplicates, null, 2)}\n` },
+    { rel: `${docs}/decisions.md`, text: renderDecisions(plan.duplicates) },
+    ...plan.duplicates.filter((p) => p.verdict === 'merge').map((pair, index) => ({ rel: `${docs}/tickets/${ticketFileName(pair, index + 1)}`, text: renderTicket(pair) })),
+  ]
+}
+
+/**
+ * The files of the third pull request, the stories and their lists, and the story items for the
+ * report. None needs a model: a story is made from the component's name and props, which a
+ * purpose comment does not change.
+ */
+function storyFiles(plan, inventory, docs) {
+  const byId = new Map(inventory.entries.map((e) => [`${e.file}#${e.name}`, e]))
+  const captureOf = new Map((inventory.screens ?? []).map((s) => [s.route, s.screenshot]))
+  const files = []
+  const items = plan.stories.items.map((item) => {
+    if (item.status === 'write') files.push({ rel: item.storyFile, text: renderStory({ entry: byId.get(item.id), importPath: item.importPath, isDefault: item.isDefault, framework: plan.stories.framework, typed: item.typed, args: item.args }) })
+    if (item.status !== 'data-bound') return item
+    const screens = byId.get(item.id).usedIn
+    return { ...item, screens, capture: screens.map((s) => captureOf.get(s)).find(Boolean) ?? null }
+  })
+  const stories = { framework: plan.stories.framework, items }
+  files.push({ rel: `${docs}/stories.md`, text: renderStoriesView({ stories }) }, { rel: `${docs}/stories.json`, text: `${JSON.stringify(stories, null, 2)}\n` })
+  return { files, stories }
+}
+
+/** What the purpose comments read as in the commit hook check, before the writer has written one. */
+export const PLACEHOLDER_PURPOSE = Object.freeze({
+  useWhen: 'this placeholder stands in for the purpose the writer will write, so the commit hook can be tried first.',
+  notFor: 'anything that is committed, because the onboarding run writes the real purpose before it commits.',
+})
+
+/**
+ * The files of the second pull request as they would be with a placeholder purpose in each file
+ * the writer is given. The real commit holds only the purposes that pass, so it is a part of this.
+ */
+function placeholderPurposeFiles(state, plan, inventory, docs) {
+  // A file with many components can be split over two calls, and its commit holds them all.
+  const byFile = new Map()
+  for (const f of plan.calls.flatMap((call) => call.files)) byFile.set(f.file, { source: f.source, names: [...(byFile.get(f.file)?.names ?? []), ...f.components.map((c) => c.name)] })
+  const files = [...byFile].map(([file, { source, names }]) => ({ rel: file, text: applyPurposes(plan.ts, path.join(plan.root, file), source, names.map((name) => ({ name, ...PLACEHOLDER_PURPOSE }))) }))
+  const items = plan.purposes.components.map((c) => ({ id: c.id, name: c.name, file: c.file, status: 'kept', verdict: 'pass', reason: null, ...PLACEHOLDER_PURPOSE }))
+  return [...files, ...inventoryFiles(inventory), { rel: `${docs}/purposes.md`, text: renderPurposesView({ ...state, purposes: { items } }) }]
+}
+
+/**
+ * The three commits as the commit hook check tries them, in order, from the plan and the list at
+ * 1.0.0. The first and third hold what the real commits will. The second has a placeholder purpose.
+ */
+export function commitsToTry({ state, plan, inventory, docs }) {
+  return [
+    { label: 'pull request 1 (the list and the duplicates)', files: listFiles(plan, inventory, docs) },
+    { label: 'pull request 2 (the purpose comments, each written as a placeholder)', files: placeholderPurposeFiles(state, plan, inventory, docs) },
+    { label: 'pull request 3 (the stories)', files: storyFiles(plan, inventory, docs).files },
+  ]
 }
 
 function preflight({ repo, approve, onboarding, env, options, log }) {
@@ -114,9 +181,18 @@ export async function runOnboarding(options) {
   if (plan.id !== estimate.id) throw new UserError(`The repo is not the one the estimate was made on (the plan is now ${plan.id}, the estimate says ${estimate.id}). Run onboard.mjs estimate again.`)
   const caps = captures ? readCaptures(path.resolve(repo, captures)) : undefined
 
-  const state = { plan, estimate, prs: [], docsDir: onboarding.docsDir, writerLabel: writerLabel(onboarding), checkerLabel: checkerLabel(onboarding), writerCalls: [], writerExecuted: 0, writerTokens: 0, checkerRuns: [], purposes: { items: [] }, stories: null, rows: [], startedAt: new Date().toISOString() }
+  const state = { plan, estimate, prs: [], docsDir: onboarding.docsDir, writerLabel: writerLabel(onboarding), checkerLabel: checkerLabel(onboarding), writerCalls: [], writerExecuted: 0, writerReused: 0, writerTokens: 0, checkerRuns: [], checksNotReached: [], purposes: { items: [] }, stories: null, rows: [], notes: [], startedAt: new Date().toISOString() }
   mkdirPlain(repo, work)
-  const ctx = { repo, plan, estimate, onboarding, log, env, fetchImpl, codex, work, base, options }
+  const store = createResultStore({ repo, work, planId: plan.id })
+  const sources = new Map(plan.calls.flatMap((call) => call.files.map((f) => [f.file, f.source])))
+  const ctx = { repo, plan, estimate, onboarding, log, env, fetchImpl, codex, work, base, options, store, sources }
+  const docs = onboarding.docsDir
+
+  // ---- the commit hook, tried on every commit's files before anything is spent
+  // A dry run copies no screenshot, so the tree stays clean for the writer. The list is the same.
+  const listed = (await pickVersions({ root: repo, inventory: plan.inventory, baseline: true, captures: caps, ts: plan.ts, dryRun: true })).inventory
+  log('Trying the repo\'s pre-commit hook on the files of each pull request, before any model call.')
+  checkCommitHooks({ repo, log, hookRun: options.hookRun, outputFile: path.join(work, 'hook-check.txt'), steps: commitsToTry({ state, plan, inventory: listed, docs }) })
 
   // ---- the model work, before any branch exists
   const stage = await obtainPurposes({ ctx, state })
@@ -140,7 +216,6 @@ export async function runOnboarding(options) {
     commit(repo, { message, paths, trailers: commitTrailers })
     git(repo, ['push', '-q', '-u', 'origin', BRANCHES[step - 1]])
   }
-  const docs = onboarding.docsDir
   const put = (rel, text, into) => {
     writePlainFile(repo, path.join(repo, rel), text)
     into.push(toPosix(rel))
@@ -152,12 +227,8 @@ export async function runOnboarding(options) {
     // ---- 1. the list and the duplicates
     git(repo, ['checkout', '-q', '-b', BRANCHES[0]])
     const baseline = await pickVersions({ root: repo, inventory: plan.inventory, baseline: true, captures: caps, ts: plan.ts })
-    writeInventoryFiles(repo, baseline.inventory)
-    const listPaths = ['inventory.json', 'INVENTORY.md']
-    put(`${docs}/duplicates.md`, renderDuplicatesList(plan.duplicates), listPaths)
-    put(`${docs}/duplicates.json`, `${JSON.stringify(plan.duplicates, null, 2)}\n`, listPaths)
-    put(`${docs}/decisions.md`, renderDecisions(plan.duplicates), listPaths)
-    plan.duplicates.filter((p) => p.verdict === 'merge').forEach((pair, index) => put(`${docs}/tickets/${ticketFileName(pair, index + 1)}`, renderTicket(pair), listPaths))
+    const listPaths = []
+    for (const file of listFiles(plan, baseline.inventory, docs)) put(file.rel, file.text, listPaths)
     finish(1, 'Add the component inventory at 1.0.0 and the duplicates list\n\nWritten by the Klaus onboarding run. No model ran.', listPaths)
     open(1, bodyFile(1, listBody(state)), base)
 
@@ -173,8 +244,7 @@ export async function runOnboarding(options) {
     state.purposes.items = [...items.values()]
     const rebuilt = buildInventory({ root: repo, folders })
     const second = await pickVersions({ root: repo, inventory: rebuilt, baseline: true, captures: caps, ts: plan.ts })
-    writeInventoryFiles(repo, second.inventory)
-    purposePaths.push('inventory.json', 'INVENTORY.md')
+    for (const file of inventoryFiles(second.inventory)) put(file.rel, file.text, purposePaths)
     put(`${docs}/purposes.md`, renderPurposesView(state), purposePaths)
     finish(2, `Write ${keep.length} purpose comments, checked against where each component is used\n\nWritten by the Klaus onboarding run.`, purposePaths)
     open(2, bodyFile(2, purposesBody(state)), BRANCHES[0])
@@ -182,27 +252,26 @@ export async function runOnboarding(options) {
     // ---- 3. the stories
     git(repo, ['checkout', '-q', '-b', BRANCHES[2]])
     const storyPaths = []
-    const byId = new Map(second.inventory.entries.map((e) => [`${e.file}#${e.name}`, e]))
-    const captureOf = new Map((second.inventory.screens ?? []).map((s) => [s.route, s.screenshot]))
-    storyItems = plan.stories.items.map((item) => {
-      if (item.status === 'write') put(item.storyFile, renderStory({ entry: byId.get(item.id), importPath: item.importPath, isDefault: item.isDefault, framework: plan.stories.framework, typed: item.typed, args: item.args }), storyPaths)
-      if (item.status !== 'data-bound') return item
-      const screens = byId.get(item.id).usedIn
-      return { ...item, screens, capture: screens.map((s) => captureOf.get(s)).find(Boolean) ?? null }
-    })
-    state.stories = { framework: plan.stories.framework, items: storyItems }
-    put(`${docs}/stories.md`, renderStoriesView(state), storyPaths)
-    put(`${docs}/stories.json`, `${JSON.stringify(state.stories, null, 2)}\n`, storyPaths)
+    const written = storyFiles(plan, second.inventory, docs)
+    for (const file of written.files) put(file.rel, file.text, storyPaths)
+    state.stories = written.stories
+    storyItems = written.stories.items
 
     const external = (part) => onboarding[part].route === 'external'
+    const made = state.checkerRuns.filter((r) => !r.reused)
+    const reusedChecks = state.checkerRuns.filter((r) => r.reused)
     actual = {
       entries: second.inventory.entries.length,
       purposes: plan.purposes.components.length,
       writerCalls: state.writerExecuted,
-      checkerCalls: external('checker') ? state.checkerRuns.length : sumOf(state.checkerRuns, 'attempts'),
+      writerReused: state.writerCalls.filter((c) => c.reused).map((c) => c.id),
+      checkerCalls: external('checker') ? made.length : sumOf(made, 'attempts'),
+      checksMade: made.length,
+      checkerReused: reusedChecks.map((r) => r.id),
+      checksNotReached: state.checksNotReached,
       writerTokens: external('writer') ? null : state.writerTokens,
-      checkerTokens: external('checker') ? null : sumOf(state.checkerRuns, 'tokens'),
-      checkerUsd: external('checker') ? null : state.checkerRuns.some((r) => r.usd !== null) ? sumOf(state.checkerRuns, 'usd') : 0,
+      checkerTokens: external('checker') ? null : sumOf(made, 'tokens'),
+      checkerUsd: external('checker') ? null : made.some((r) => r.usd !== null) ? sumOf(made, 'usd') : 0,
       stories: storyItems.filter((i) => i.status === 'write').length,
       pairs: plan.duplicates.length,
       tickets: plan.duplicates.filter((p) => p.verdict === 'merge').length,
@@ -210,6 +279,7 @@ export async function runOnboarding(options) {
     }
     state.actual = actual
     state.rows = compareToEstimate(estimate, actual)
+    state.notes = comparisonNotes(estimate, actual)
     finish(3, `Add ${actual.stories} stories and list the data-bound components with their screens\n\nWritten by the Klaus onboarding run. No model wrote these stories.`, storyPaths)
     open(3, bodyFile(3, storiesBody(state)), BRANCHES[1])
 
@@ -218,7 +288,17 @@ export async function runOnboarding(options) {
     for (const pr of state.prs) editPullRequest(repo, pr.number, bodyFile(pr.step, bodies[pr.step]))
   } catch (error) {
     log(`The run stopped: ${error.message}`)
-    log(`Branches made so far: ${state.prs.map((p) => p.branch).join(', ') || 'none'}. To start over, delete them and close their pull requests.`)
+    // The run started from a clean tree, so whatever is left uncommitted is its own: the files of
+    // the commit that failed. They are put back, so the base branch can be checked out again.
+    try {
+      git(repo, ['reset', '-q'])
+      resetPaths(repo, changedFiles(repo), (p) => removePlainFile(repo, path.join(repo, p)))
+    } catch (restoreError) {
+      log(`The files of the commit that failed could not all be put back (${restoreError.message}). Check git status before the next run.`)
+    }
+    const branches = BRANCHES.filter((b) => git(repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${b}`], { allowFail: true }) !== null)
+    log(`Branches made so far: ${branches.join(', ') || 'none'}. Pull requests opened: ${state.prs.map((p) => p.url).join(', ') || 'none'}. To start over, delete the branches, here and on origin, and close the pull requests.`)
+    if (fs.existsSync(store.dir)) log(`The model's results are kept in ${store.dir}. A run with the same plan uses them again instead of calling the model.`)
     throw error
   } finally {
     git(repo, ['checkout', '-q', base], { allowFail: true })
@@ -236,7 +316,7 @@ export async function runOnboarding(options) {
     checkerRuns: state.checkerRuns,
     purposes: state.purposes.items.map(({ id, name, file, status, verdict, reason }) => ({ id, name, file, status, verdict: verdict ?? null, reason: reason ?? null })),
     stories: storyItems.map((s) => ({ id: s.id, status: s.status })),
-    notes: state.guardNote ? [state.guardNote] : [],
+    notes: [...(state.guardNote ? [state.guardNote] : []), ...state.notes],
   }
   writeJsonFile(path.join(work, 'report.json'), report)
   log(renderSummary(state))

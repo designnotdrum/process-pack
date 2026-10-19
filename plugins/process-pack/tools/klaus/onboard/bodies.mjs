@@ -127,6 +127,7 @@ export function storiesBody(state) {
     '',
     renderComparison(rows),
     '',
+    ...(state.notes ?? []).flatMap((note) => [note, '']),
     state.guardNote ?? '',
     stack(state, 3),
   ]
@@ -177,6 +178,7 @@ export function renderSummary(state) {
   const lines = ['Onboarding run finished.', '']
   for (const pr of state.prs) lines.push(`  Pull request ${pr.step} of 3: ${pr.url}`)
   lines.push('', renderComparison(state.rows))
+  for (const note of state.notes ?? []) lines.push('', note)
   const out = state.rows.filter((r) => r.within === false)
   lines.push('', out.length === 0 ? 'Every number landed within its margin.' : `${out.length} number${out.length === 1 ? '' : 's'} landed outside the margin: ${out.map((r) => r.metric).join(', ')}.`)
   return lines.join('\n')

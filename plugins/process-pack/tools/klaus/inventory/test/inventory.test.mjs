@@ -478,3 +478,65 @@ describe('the command', () => {
     }
   })
 })
+
+/**
+ * A repo laid out the way pnpm installs a package: the files are in the store under
+ * `node_modules/.pnpm/<name>@<version>/node_modules/<name>`, and `node_modules/<name>` is a link to
+ * that folder. The compiler follows the link, so it loads the package from the store path. The
+ * props are declared in one file and the component in another, so the types they use are not in
+ * scope where the component is, and the compiler prints them as `import("<file>")`.
+ */
+function writePnpmStyleRepo(repo) {
+  const store = path.join(repo, 'node_modules', '.pnpm', '@types+react@19.2.17', 'node_modules', '@types', 'react')
+  const files = {
+    'package.json': '{ "name": "store-repo", "private": true }\n',
+    'tsconfig.json': JSON.stringify({ compilerOptions: { jsx: 'preserve', module: 'esnext', moduleResolution: 'bundler', target: 'es2020', strict: true, noEmit: true, skipLibCheck: true, types: [] }, include: ['**/*.ts', '**/*.tsx'], exclude: ['node_modules'] }),
+    'stubs/jsx.d.ts': 'declare namespace JSX {\n  interface Element {}\n  interface IntrinsicElements {\n    [name: string]: any\n  }\n}\n',
+    'packages/ui/src/types.ts': 'export interface Row {\n  id: string\n}\n',
+    'packages/ui/src/card-props.ts': "import type { ReactNode, RefObject } from 'react'\nimport type { Row } from './types'\n\nexport interface CardProps {\n  children: ReactNode\n  container?: RefObject<string>\n  row: Row\n  rows: Row[]\n}\n",
+    'packages/ui/src/card.tsx': "import type { CardProps } from './card-props'\n\nexport function Card(props: CardProps) {\n  return <div>{props.row.id}</div>\n}\n",
+  }
+  for (const [file, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(repo, file)), { recursive: true })
+    fs.writeFileSync(path.join(repo, file), text)
+  }
+  fs.mkdirSync(store, { recursive: true })
+  fs.writeFileSync(path.join(store, 'package.json'), '{ "name": "@types/react", "version": "19.2.17", "types": "index.d.ts" }\n')
+  fs.writeFileSync(path.join(store, 'index.d.ts'), 'export interface ReactElement {\n  type: string\n}\nexport type ReactNode = ReactElement | string | number | null | undefined\nexport interface RefObject<T> {\n  current: T\n}\n')
+  fs.mkdirSync(path.join(repo, 'node_modules', '@types'), { recursive: true })
+  fs.symlinkSync(store, path.join(repo, 'node_modules', '@types', 'react'))
+  fs.symlinkSync(fs.realpathSync(path.join(here, '..', '..', 'node_modules', 'typescript')), path.join(repo, 'node_modules', 'typescript'))
+}
+
+describe('a prop typed from another package or another file', () => {
+  let repo
+  let card
+  before(() => {
+    repo = path.join(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'klaus-store-'))), 'repo')
+    writePnpmStyleRepo(repo)
+    card = buildInventory({ root: repo, folders: [{ path: 'packages/ui/src', role: 'shared' }] }).entries.find((e) => e.name === 'Card')
+  })
+  after(() => fs.rmSync(path.dirname(repo), { recursive: true, force: true }))
+
+  test('names a package by its specifier, with the pnpm store folders left out', () => {
+    assert.equal(card.props.find((p) => p.name === 'container').type, 'import("@types/react/index").RefObject<string>')
+    assert.equal(card.props.find((p) => p.name === 'children').type, 'import("@types/react/index").ReactNode')
+  })
+
+  test('names a file in the repo by its path from the repo root', () => {
+    assert.equal(card.props.find((p) => p.name === 'row').type, 'import("packages/ui/src/types").Row')
+    assert.equal(card.props.find((p) => p.name === 'rows').type, 'import("packages/ui/src/types").Row[]')
+  })
+
+  test('writes no absolute path into inventory.json or INVENTORY.md', () => {
+    const out = path.join(path.dirname(repo), 'out')
+    const result = spawnSync('node', [cli, '--root', repo, '--out', out, 'packages/ui/src'], { encoding: 'utf8' })
+    assert.equal(result.status, 0, result.stderr)
+    const json = fs.readFileSync(path.join(out, 'inventory.json'), 'utf8')
+    assert.ok(json.includes('RefObject'), 'inventory.json must hold the prop types, or the checks below test nothing')
+    assert.doesNotMatch(json, /import\(\\"(?:\/|[A-Za-z]:)/, 'inventory.json holds an absolute import path')
+    for (const file of ['inventory.json', 'INVENTORY.md']) {
+      assert.equal(fs.readFileSync(path.join(out, file), 'utf8').includes(path.dirname(repo)), false, `${file} holds the checkout's path`)
+    }
+  })
+})

@@ -67,6 +67,8 @@ export async function buildEstimate({ plan, onboarding, fetchImpl }) {
 
   const calls = plan.calls.map((call) => ({ id: call.id, dir: call.dir, components: call.count, files: call.files.length, promptChars: writerPrompt(call, 'DATA-0000000000000000').length }))
   const writerTokens = writer.route === 'external' ? null : calls.map((c) => predictWriterTokens(c.promptChars, c.components))
+  // Each call's own figure is kept, so a run that reuses some calls can be held to the estimate for the rest.
+  if (writerTokens) calls.forEach((c, i) => { c.tokens = writerTokens[i] })
 
   const checks = components.map((component) => {
     const snippets = snippetsFor({ ts: plan.ts, root: plan.root, usage: plan.usage, entry: component.entry, limit: checker.usageSnippets })
@@ -78,10 +80,10 @@ export async function buildEstimate({ plan, onboarding, fetchImpl }) {
 
   const price = checker.route === 'openrouter' ? await readPrice(checker.model, fetchImpl) : null
   let checkerUsd = null
-  if (price && checkerTokens) {
-    // Input is the prompt; everything else the call uses is reply and is priced as completion.
-    checkerUsd = CHECKER_RATES.priceFactor * checkable.reduce((sum, c) => sum + (c.promptChars / CHECKER_RATES.charsPerToken) * price.prompt + CHECKER_RATES.replyTokens * price.completion, 0)
-  }
+  // Input is the prompt; everything else the call uses is reply and is priced as completion.
+  const usdOf = (c) => CHECKER_RATES.priceFactor * ((c.promptChars / CHECKER_RATES.charsPerToken) * price.prompt + CHECKER_RATES.replyTokens * price.completion)
+  if (price && checkerTokens) checkerUsd = checkable.reduce((sum, c) => sum + usdOf(c), 0)
+  const checkerCallDetails = checker.route === 'external' ? null : checkable.map((c, i) => ({ id: c.id, promptChars: c.promptChars, tokens: checkerTokens[i], usd: price ? usdOf(c) : null }))
   const sum = (list) => (list ? list.reduce((a, b) => a + b, 0) : null)
   const items = plan.stories.items
   const count = (status) => items.filter((i) => i.status === status).length
@@ -104,6 +106,7 @@ export async function buildEstimate({ plan, onboarding, fetchImpl }) {
       unchecked: components.length - checkable.length,
       checkerTokens: sum(checkerTokens),
       checkerUsd,
+      checkerCallDetails,
     },
     stories: { write: count('write'), exists: count('exists'), dataBound: count('data-bound'), skipped: count('skipped') },
     duplicates: { pairs: plan.duplicates.length, tickets: plan.duplicates.filter((p) => p.verdict === 'merge').length, decisions: plan.duplicates.filter((p) => p.verdict !== 'merge').length },
@@ -141,6 +144,7 @@ export function renderEstimate(estimate) {
     lines.push(`    Checker: OpenRouter, ${checker.model}, a different model family from the writer. ${plural(purposes.checkerCalls, 'call')}, one for each component that is used somewhere, about ${approx(purposes.checkerTokens)} tokens.${cost}`)
   }
   if (purposes.unchecked > 0) lines.push(`    ${plural(purposes.unchecked, 'component')} ${purposes.unchecked === 1 ? 'is' : 'are'} not used anywhere, so there is no usage to check against. Their purposes are kept and listed as unchecked.`)
+  lines.push('    A purpose the writer gets wrong is rejected before the check and is not checked. The report counts those with the checker calls and says how many.')
   lines.push(`  Stories: ${stories.write} written with no model. ${stories.dataBound} listed with the screens they appear on instead, because they show live data. ${stories.exists} already had a story. ${stories.skipped} left for a person.`)
   lines.push(`  Duplicates: ${plural(duplicates.pairs, 'likely pair')}. ${duplicates.tickets} ${duplicates.tickets === 1 ? 'becomes a merge ticket' : 'become merge tickets'} and ${duplicates.decisions} ${duplicates.decisions === 1 ? 'goes' : 'go'} on the decisions list, as files in the pull request. Nothing is filed in a tracker. No model.`)
   const sends = []
@@ -148,19 +152,52 @@ export function renderEstimate(estimate) {
   if (checker.route !== 'external') sends.push('each component\'s props and a few places it is used go to OpenRouter')
   if (sends.length > 0) lines.push(`  Your code leaves this machine: ${sends.join(', and ')}.`)
   lines.push('  Pull requests: three, in order, each on a branch stacked on the one before. Nothing is merged.')
+  const kept = writer.route !== 'external' || checker.route !== 'external' ? ' Each result the run gets from a model is kept in the git folder as it arrives, and a later run of this plan uses it again instead of calling the model.' : ''
+  lines.push(`  Before any model call, the run tries the repo's pre-commit hook on the files of each pull request, so a hook that would refuse a commit stops the run before anything is spent.${kept}`)
   lines.push(`  The report sets these numbers beside what the run did. Calls and counts must match exactly. Tokens must land within ${Math.round(margins.tokens * 100)}%, and dollars within ${Math.round(margins.usd * 100)}% or ${dollars(margins.usdFloor)}, whichever is more.`)
   return lines.join('\n')
 }
 
 /**
+ * The estimate for the part of the work the run did itself. A writer call or a check reused from
+ * an earlier run of the plan costs nothing this time, and a check the run never reached (the
+ * writer's text was rejected first) was never made, so their share is taken out of the tokens and
+ * dollars. Each share is the call's own figure from the estimate. An estimate made before those
+ * were kept has only the totals, and the share is then the average.
+ */
+function estimateForWorkDone(estimate, actual) {
+  const { purposes } = estimate
+  const skippedWriter = new Set(actual.writerReused ?? [])
+  const skippedChecks = new Set([...(actual.checkerReused ?? []), ...(actual.checksNotReached ?? [])])
+  const writerDetails = purposes.writerCallDetails ?? []
+  const writerShare = (c) => c.tokens ?? predictWriterTokens(c.promptChars, c.components)
+  const writerTokens = purposes.writerTokens === null || skippedWriter.size === 0 ? purposes.writerTokens : purposes.writerTokens - writerDetails.filter((c) => skippedWriter.has(c.id)).reduce((sum, c) => sum + writerShare(c), 0)
+  const minus = (total, field) => {
+    if (total === null || total === undefined || skippedChecks.size === 0) return total ?? null
+    if (purposes.checkerCallDetails) return total - purposes.checkerCallDetails.filter((c) => skippedChecks.has(c.id)).reduce((sum, c) => sum + (c[field] ?? 0), 0)
+    return purposes.checkerCalls ? total * Math.max(0, purposes.checkerCalls - skippedChecks.size) / purposes.checkerCalls : total
+  }
+  return { writerTokens, checkerTokens: minus(purposes.checkerTokens, 'tokens'), checkerUsd: minus(purposes.checkerUsd, 'usd') }
+}
+
+/**
  * Sets the estimate beside the run's actual numbers.
+ *
+ * The calls must match exactly, so each call the estimate counted is accounted for: the writer's
+ * are made or reused, and the checker's are made, reused, or not reached because the writer's
+ * text for that component was rejected before the check. The estimate cannot know beforehand
+ * which text will be rejected, so the report counts those and says so. Tokens and dollars are
+ * compared for the calls made in this run only.
  *
  * @param {object} estimate
  * @param {object} actual { writerCalls, checkerCalls, writerTokens, checkerTokens, checkerUsd, purposes, stories, pairs, tickets, decisions, entries }
+ *   and, when some work was not done in this run, the ids in `writerReused`, `checkerReused` and `checksNotReached`.
  * @returns {{ metric: string, estimated: number | null, actual: number | null, rule: string, within: boolean | null }[]}
  */
 export function compareToEstimate(estimate, actual) {
   const { margins } = estimate
+  const forWorkDone = estimateForWorkDone(estimate, actual)
+  const count = (list) => list?.length ?? 0
   const rows = []
   const exact = (metric, estimated, got) => rows.push({ metric, estimated, actual: got, rule: 'exact', within: estimated === null || got === null ? null : estimated === got })
   const relative = (metric, estimated, got, share, floor = 0) => {
@@ -169,16 +206,34 @@ export function compareToEstimate(estimate, actual) {
   }
   exact('Entries in the list', estimate.list.entries, actual.entries)
   exact('Components needing a purpose', estimate.purposes.components, actual.purposes)
-  exact('Writer calls', estimate.purposes.writerCalls, actual.writerCalls)
-  exact('Checker calls', estimate.purposes.checkerCalls, actual.checkerCalls)
-  relative('Writer tokens', estimate.purposes.writerTokens, actual.writerTokens, margins.tokens)
-  relative('Checker tokens', estimate.purposes.checkerTokens, actual.checkerTokens, margins.tokens)
-  relative('Checker dollars', estimate.purposes.checkerUsd, actual.checkerUsd, margins.usd, margins.usdFloor)
+  exact('Writer calls', estimate.purposes.writerCalls, actual.writerCalls + count(actual.writerReused))
+  exact('Checker calls', estimate.purposes.checkerCalls, actual.checkerCalls + count(actual.checkerReused) + count(actual.checksNotReached))
+  relative('Writer tokens', forWorkDone.writerTokens, actual.writerTokens, margins.tokens)
+  relative('Checker tokens', forWorkDone.checkerTokens, actual.checkerTokens, margins.tokens)
+  relative('Checker dollars', forWorkDone.checkerUsd, actual.checkerUsd, margins.usd, margins.usdFloor)
   exact('Stories written', estimate.stories.write, actual.stories)
   exact('Likely duplicate pairs', estimate.duplicates.pairs, actual.pairs)
   exact('Merge tickets', estimate.duplicates.tickets, actual.tickets)
   exact('Decisions on the list', estimate.duplicates.decisions, actual.decisions)
   return rows
+}
+
+/** The lines under the comparison that say what the call counts are made of, when it is more than the calls made. */
+export function comparisonNotes(estimate, actual) {
+  const notes = []
+  const reusedWriter = actual.writerReused?.length ?? 0
+  const reusedChecks = actual.checkerReused?.length ?? 0
+  const notReached = actual.checksNotReached?.length ?? 0
+  if (reusedWriter > 0) notes.push(`Writer calls: ${plural(actual.writerCalls, 'call')} made, and ${plural(reusedWriter, 'call')} reused from an earlier run of this plan, at no cost this time. The writer tokens are compared with the estimate for the calls made.`)
+  if (reusedChecks > 0 || notReached > 0) {
+    const parts = [`${plural(actual.checksMade ?? actual.checkerCalls, 'check')} made`]
+    if (reusedChecks > 0) parts.push(`${plural(reusedChecks, 'check')} reused from an earlier run of this plan, at no cost this time`)
+    if (notReached > 0) parts.push(`${plural(notReached, 'component')} not checked, because the writer's text for ${notReached === 1 ? 'it' : 'them'} was rejected or not written, so there was nothing to check (the purposes list ${notReached === 1 ? 'it' : 'them'} as rejected, with the reason)`)
+    notes.push(`Checker calls: of the ${plural(estimate.purposes.checkerCalls, 'check')} the estimate counted, ${parts.join(', ')}. The checker tokens and dollars are compared with the estimate for the checks made.`)
+  }
+  const retries = (actual.checkerCalls ?? 0) - (actual.checksMade ?? actual.checkerCalls ?? 0)
+  if (retries > 0) notes.push(`The checker sent ${plural(retries, 'request')} more than it made checks: ${retries === 1 ? 'a request was' : 'requests were'} sent again after an error.`)
+  return notes
 }
 
 /** The comparison as a markdown table for a pull request. */

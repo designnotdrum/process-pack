@@ -2,6 +2,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { UserError } from '../frame/errors.mjs'
 import { isRepoFile, pascalCase } from './files.mjs'
+import { relativeTypeText } from './type-text.mjs'
 
 /**
  * TypeScript is the target repo's own copy, not one Klaus ships: the compiler has to read the
@@ -278,15 +279,16 @@ function readProps(ts, checker, symbol, declaration, root, domAttributes) {
       continue
     }
     const isRequired = required && count === members.length
-    props.push({ name, type: typeText(ts, checker, type, declaration, isRequired), required: isRequired })
+    props.push({ name, type: typeText(ts, checker, type, declaration, isRequired, root), required: isRequired })
     const options = literalOptions(ts, type)
     if (options) variants[name] = options
   }
   return { props, variants, omittedDomProps }
 }
 
-function typeText(ts, checker, type, location, required) {
-  let text = checker.typeToString(type, location, ts.TypeFormatFlags.NoTruncation)
+function typeText(ts, checker, type, location, required, root) {
+  // The paths go before the length limit, so a long path does not use up the room for the type.
+  let text = relativeTypeText(checker.typeToString(type, location, ts.TypeFormatFlags.NoTruncation), [root])
   // An optional prop always reads as `T | undefined`, which says nothing the `required` flag does not.
   if (!required) text = text.replace(/ \| undefined$/, '')
   return text.length > TYPE_LIMIT ? `${text.slice(0, TYPE_LIMIT - 3)}...` : text
