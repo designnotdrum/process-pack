@@ -45,6 +45,9 @@ function replaces(state, step) {
   return [`It replaces ${which}, which an earlier run of this plan opened. The run closed ${old.length === 1 ? 'it' : 'them'} and made this branch again from the plan.`, '']
 }
 
+/** What the list says when no pair is left: none were found, or every one found was set aside. */
+const noPairs = (duplicates, docsDir) => (duplicates.dismissed?.length > 0 ? `No pair needs a ticket or a question. ${duplicates.dismissed.length} ${duplicates.dismissed.length === 1 ? 'was' : 'were'} set aside as different components, and ${code(`${docsDir}/duplicates.md`)} lists ${duplicates.dismissed.length === 1 ? 'it' : 'them'} with the reason.` : 'None were found.')
+
 export function listBody(state) {
   const { plan, estimate } = state
   const lines = [
@@ -66,7 +69,7 @@ export function listBody(state) {
     '',
     '## Likely duplicates',
     '',
-    plan.duplicates.length === 0 ? 'None were found.' : table(['Keep', 'The other copy', 'Props in common', 'Class names in common', 'What happens'], plan.duplicates.map((p) => [code(p.keep.name), code(p.drop.name), p.propsSimilarity === null ? 'none' : `${Math.round(p.propsSimilarity * 100)}%`, p.lookSimilarity === null ? 'not comparable' : `${Math.round(p.lookSimilarity * 100)}%`, whatHappens(p)])),
+    plan.duplicates.length === 0 ? noPairs(plan.duplicates, state.docsDir) : table(['Keep', 'The other copy', 'Props in common', 'Class names in common', 'What happens'], plan.duplicates.map((p) => [code(p.keep.name), code(p.drop.name), p.propsSimilarity === null ? 'none' : `${Math.round(p.propsSimilarity * 100)}%`, p.lookSimilarity === null ? 'not comparable' : `${Math.round(p.lookSimilarity * 100)}%`, whatHappens(p)])),
     '',
     'The look is compared by the class names each component writes. The run has no screenshots. A pair at 75% or more looks the same.',
     '',

@@ -48,3 +48,24 @@ test('the command says how to use it when the repo is missing, and exits 2', asy
   }
   assert.match(errors.join('\n'), /Usage: write-decisions\.mjs --repo <dir>/)
 })
+
+test('files an earlier run wrote and this one does not are removed, and nothing else is', async () => {
+  const second = makeDecisionsSample()
+  try {
+    const docs = path.join(second.repo, 'docs/klaus')
+    fs.mkdirSync(path.join(docs, 'tickets'), { recursive: true })
+    fs.mkdirSync(path.join(docs, 'decisions'), { recursive: true })
+    fs.writeFileSync(path.join(docs, 'tickets/09-remove-oldthing-from-web.md'), 'old')
+    fs.writeFileSync(path.join(docs, 'tickets/notes.md'), 'mine')
+    fs.writeFileSync(path.join(docs, 'decisions/07-old-vs-older.png'), 'old')
+    fs.writeFileSync(path.join(docs, 'decisions/logo.svg'), 'mine')
+    const { removed } = await writeDecisions({ repo: second.repo, open: noBrowser, log: quiet, storybook: 'nowhere' })
+    assert.deepEqual(removed.sort(), ['docs/klaus/decisions/07-old-vs-older.png', 'docs/klaus/tickets/09-remove-oldthing-from-web.md'])
+    assert.equal(fs.existsSync(path.join(docs, 'tickets/09-remove-oldthing-from-web.md')), false)
+    assert.equal(fs.existsSync(path.join(docs, 'decisions/07-old-vs-older.png')), false)
+    assert.equal(fs.readFileSync(path.join(docs, 'tickets/notes.md'), 'utf8'), 'mine')
+    assert.equal(fs.readFileSync(path.join(docs, 'decisions/logo.svg'), 'utf8'), 'mine')
+  } finally {
+    second.cleanup()
+  }
+})

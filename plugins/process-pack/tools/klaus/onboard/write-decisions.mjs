@@ -27,7 +27,13 @@ import { createTsconfigLoader } from '../inventory/tsconfig.mjs'
 import { readOnboardingConfig } from './config.mjs'
 import { attachDecisionPictures, decisionFiles } from './decisions-pictures.mjs'
 import { countDuplicates, findDuplicates, renderDuplicatesList } from './duplicates.mjs'
-import { mkdirPlain, writePlainFile } from './plain-path.mjs'
+import { mkdirPlain, removePlainFile, writePlainFile } from './plain-path.mjs'
+
+/** The files an earlier run of this command may have left: numbered tickets and numbered pictures. Nothing else in those folders is touched. */
+const GENERATED = [
+  { folder: 'tickets', name: /^\d\d-(?:merge|remove)-.+\.md$/ },
+  { folder: 'decisions', name: /^\d\d-.+\.png$/ },
+]
 
 const USAGE = 'Usage: write-decisions.mjs --repo <dir> [--storybook <dir>] [--out <dir>] [--ask-all]'
 
@@ -45,6 +51,21 @@ export async function writeDecisions({ repo: given, storybook, out, askAll = fal
   const base = out ? path.resolve(out) : repo
   if (out) fs.mkdirSync(base, { recursive: true })
   const written = []
+  // The set of tickets and pictures changes when the pairs do, so what an earlier run wrote and this one does not is removed.
+  const wanted = new Set(files.map((f) => toPosix(f.rel)))
+  const stale = []
+  for (const { folder, name } of GENERATED) {
+    const dir = path.join(base, docs, folder)
+    if (!fs.existsSync(dir)) continue
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const rel = toPosix(path.posix.join(docs, folder, entry.name))
+      if (entry.isFile() && name.test(entry.name) && !wanted.has(rel)) stale.push(rel)
+    }
+  }
+  for (const rel of stale) {
+    if (out) fs.rmSync(path.join(base, rel), { force: true })
+    else removePlainFile(repo, path.join(repo, rel))
+  }
   for (const file of files) {
     if (out) {
       fs.mkdirSync(path.dirname(path.join(base, file.rel)), { recursive: true })
@@ -57,8 +78,8 @@ export async function writeDecisions({ repo: given, storybook, out, askAll = fal
   }
   const counts = countDuplicates(duplicates)
   const drawn = [...pictures.values()].filter((p) => p.file)
-  log(`${counts.pairs} pairs: ${counts.removals} removal tickets, ${counts.merges} merge tickets, ${counts.decisions} questions (${drawn.filter((p) => p.drawn[0] && p.drawn[1]).length} with both sides drawn, ${drawn.filter((p) => p.drawn[0] !== p.drawn[1]).length} with one side drawn, ${counts.decisions - drawn.length} with no picture). ${duplicates.dismissed.length} set aside as different components. Wrote ${written.length} files under ${base}.`)
-  return { duplicates, pictures, written, counts }
+  log(`${counts.pairs} pairs: ${counts.removals} removal tickets, ${counts.merges} merge tickets, ${counts.decisions} questions (${drawn.filter((p) => p.drawn[0] && p.drawn[1]).length} with both sides drawn, ${drawn.filter((p) => p.drawn[0] !== p.drawn[1]).length} with one side drawn, ${counts.decisions - drawn.length} with no picture). ${duplicates.dismissed.length} set aside as different components. Wrote ${written.length} files under ${base}${stale.length > 0 ? ` and removed ${stale.length} from an earlier run that no pair needs now` : ''}.`)
+  return { duplicates, pictures, written, removed: stale, counts }
 }
 
 export async function main(argv) {

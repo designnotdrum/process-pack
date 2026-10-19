@@ -15,6 +15,7 @@ import { toPosix } from '../inventory/files.mjs'
 import { describeMeasuredDifference } from './decisions-look.mjs'
 import { decisionPairs, decisionPictureName, renderDecisions, sidesOf } from './decisions.mjs'
 import { renderTicket, ticketFileName } from './duplicates.mjs'
+import { declaringFile, reExportedFiles } from './barrels.mjs'
 import { importsOf, parseSource } from './source.mjs'
 import { findStoryFiles } from './stories.mjs'
 import { NOT_SEARCHED } from './storybook.mjs'
@@ -65,75 +66,6 @@ export function findStorybookBuild({ root, configured }) {
 }
 
 // ---- which story draws which component
-
-/** True when a top-level statement declares `name`: a function, class, variable or enum. */
-function declares(ts, statement, name) {
-  if (ts.isVariableStatement(statement)) return statement.declarationList.declarations.some((d) => ts.isIdentifier(d.name) && d.name.text === name)
-  return (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement) || ts.isEnumDeclaration(statement)) && statement.name?.text === name
-}
-
-/**
- * The file that declares an export, followed through barrel files: `export { A } from './a'`,
- * `export { A as B } from './a'` and `export * from './a'`. Null when it is not found. `seen` stops a cycle.
- */
-function declaringFile({ ts, tsconfigs, file, name, seen = new Set() }) {
-  const key = `${file}#${name}`
-  if (seen.has(key)) return null
-  seen.add(key)
-  let sourceFile
-  try {
-    sourceFile = parseSource(ts, file)
-  } catch {
-    return null
-  }
-  const resolve = (spec) => {
-    const target = ts.resolveModuleName(spec, file, tsconfigs.optionsFor(file), ts.sys).resolvedModule?.resolvedFileName
-    return target && !target.endsWith('.d.ts') ? toPosix(target) : null
-  }
-  const stars = []
-  for (const statement of sourceFile.statements) {
-    if (ts.isExportDeclaration(statement)) {
-      const spec = statement.moduleSpecifier && ts.isStringLiteral(statement.moduleSpecifier) ? statement.moduleSpecifier.text : null
-      const clause = statement.exportClause
-      if (!clause) {
-        if (spec) stars.push(spec)
-        continue
-      }
-      if (!ts.isNamedExports(clause)) continue
-      for (const element of clause.elements.filter((e) => e.name.text === name)) {
-        if (!spec) return file
-        const target = resolve(spec)
-        return target ? (declaringFile({ ts, tsconfigs, file: target, name: (element.propertyName ?? element.name).text, seen }) ?? target) : null
-      }
-    } else if (declares(ts, statement, name)) return file
-  }
-  for (const spec of stars) {
-    const target = resolve(spec)
-    const found = target && declaringFile({ ts, tsconfigs, file: target, name, seen })
-    if (found) return found
-  }
-  return null
-}
-
-/** Every file a barrel file re-exports, through other barrel files too. A namespace import reaches all of them. */
-function reExportedFiles({ ts, tsconfigs, file, seen = new Set() }) {
-  if (seen.has(file) || seen.size > 500) return []
-  seen.add(file)
-  let sourceFile
-  try {
-    sourceFile = parseSource(ts, file)
-  } catch {
-    return []
-  }
-  const found = []
-  for (const statement of sourceFile.statements) {
-    if (!ts.isExportDeclaration(statement) || !statement.moduleSpecifier || !ts.isStringLiteral(statement.moduleSpecifier)) continue
-    const target = ts.resolveModuleName(statement.moduleSpecifier.text, file, tsconfigs.optionsFor(file), ts.sys).resolvedModule?.resolvedFileName
-    if (!target || target.endsWith('.d.ts')) continue
-    found.push(toPosix(target), ...reExportedFiles({ ts, tsconfigs, file: toPosix(target), seen }))
-  }
-  return found
-}
 
 /** The story files that import each component file, directly or through a barrel file, resolved with the repo's own TypeScript. */
 export function storyImports({ ts, root, tsconfigs }) {

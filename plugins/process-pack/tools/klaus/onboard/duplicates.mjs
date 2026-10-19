@@ -10,6 +10,9 @@
  * owner's decisions list (decisions.mjs).
  */
 import path from 'node:path'
+import { toPosix } from '../inventory/files.mjs'
+import { createTsconfigLoader } from '../inventory/tsconfig.mjs'
+import { declaringFile } from './barrels.mjs'
 import { describeClassDifference, READABLE_CLASS_COUNT } from './decisions-look.mjs'
 import { isVariantName, keepReason, removalFileName, renderDecisions, renderRemovalTicket, sidesOf } from './decisions.mjs'
 import { classTokens, importsOf, parseSource } from './source.mjs'
@@ -96,11 +99,24 @@ export function findDuplicates({ ts, root, inventory, setAside: setAsideOn = tru
     return tokens.get(entry.file)
   }
   const propNames = (entry) => new Set(entry.props.map((p) => p.name))
+  const tsconfigs = createTsconfigLoader(ts, root)
   const imported = new Map()
-  /** True when the file of `entry` imports something called `name`, so it is built on a component of that name. */
-  const builtOn = (entry, name) => {
-    if (!imported.has(entry.file)) imported.set(entry.file, importsOf(ts, parseSource(ts, path.join(root, entry.file))))
-    return imported.get(entry.file).some((item) => item.defaultName === name || item.names.some((n) => n.imported === name))
+  /**
+   * True when the file of `entry` imports `other`: by the name `other` has, which also covers a
+   * package import TypeScript cannot resolve, or from the file `other` is in, directly or through a
+   * barrel file, under whatever local name. Then `entry` is built on `other`.
+   */
+  const builtOn = (entry, other) => {
+    const file = path.join(root, entry.file)
+    if (!imported.has(entry.file)) imported.set(entry.file, importsOf(ts, parseSource(ts, file)))
+    const target = toPosix(path.join(root, other.file))
+    return imported.get(entry.file).some((item) => {
+      if (item.defaultName === other.name || item.names.some((n) => n.imported === other.name)) return true
+      const resolved = ts.resolveModuleName(item.module, file, tsconfigs.optionsFor(file), ts.sys).resolvedModule?.resolvedFileName
+      if (!resolved) return false
+      const module = toPosix(resolved)
+      return module === target || [...item.names.map((n) => n.imported), ...(item.defaultName ? ['default'] : [])].some((name) => declaringFile({ ts, tsconfigs, file: module, name }) === target)
+    })
   }
 
   const pairs = []
@@ -140,7 +156,7 @@ export function findDuplicates({ ts, root, inventory, setAside: setAsideOn = tru
       const unused = usedCount(keep) === 0 || usedCount(drop) === 0
       const ticket = unused ? 'remove' : lookSimilarity !== null && lookSimilarity >= THRESHOLDS.sameLook ? 'merge' : null
       // The data can also say a pair is no pair: one is built on the other, or the names differ and so does the look. Those are set aside, with the reason, not asked about.
-      const built = ticket || !setAsideOn ? null : builtOn(keep, drop.name) ? { on: keep } : builtOn(drop, keep.name) ? { on: drop } : null
+      const built = ticket || !setAsideOn ? null : builtOn(keep, drop) ? { on: keep } : builtOn(drop, keep) ? { on: drop } : null
       const reason = ticket || !setAsideOn ? null : setAsideReason({ keep, drop }, built, isVariantName(a.name, b.name))
       if (reason) {
         dismissed.push({ id: `${idOf(keep)} + ${idOf(drop)}`, keep, drop, reason })

@@ -311,3 +311,36 @@ test('the list says what Klaus and a story are, once, before the first question'
   const text = duplicates.renderDecisions(pairs)
   assert.match(text.split(/^## /m)[0], /Klaus is the tool that keeps the list of this repo's components\. It draws a component from its story, a Storybook example page for that one component\./)
 })
+
+test('a wrapper is found by the file it imports, under any local name and through a barrel file', async () => {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const second = makeDecisionsSample()
+  try {
+    const components = path.join(second.repo, 'apps/web/src/components')
+    const tile = (name, classes, body = '<div className="' + classes + '">{data}</div>') => `export function ${name}({ data, selected }: { data: string; selected?: boolean }) {\n  return ${body}\n}\n`
+    fs.writeFileSync(path.join(components, 'Base.tsx'), 'export default function BaseTile({ data, selected }: { data: string; selected?: boolean }) {\n  return <div className="rounded border bg-white" data-selected={selected}>{data}</div>\n}\n')
+    fs.writeFileSync(path.join(components, 'index.ts'), "import BaseTile from './Base'\nexport { BaseTile }\n")
+    fs.writeFileSync(path.join(components, 'FancyBaseTile.tsx'), "import Anything from './Base'\n\n" + tile('FancyBaseTile', 'shadow-lg', '<Anything data={data} selected={selected} />'))
+    fs.writeFileSync(path.join(components, 'BigBaseTile.tsx'), "import { BaseTile as Thing } from './index'\n\n" + tile('BigBaseTile', 'shadow-lg', '<Thing data={data} selected={selected} />'))
+    fs.mkdirSync(path.join(second.repo, 'apps/web/src/app/tiles'))
+    fs.writeFileSync(path.join(second.repo, 'apps/web/src/app/tiles/page.tsx'), "import BaseTile from '@/components/Base'\nimport { FancyBaseTile } from '@/components/FancyBaseTile'\nimport { BigBaseTile } from '@/components/BigBaseTile'\n\nexport default function TilesPage() {\n  return [BaseTile, FancyBaseTile, BigBaseTile]\n}\n")
+    const found = planOf(second.repo).duplicates
+    const reasons = found.dismissed.map((d) => d.reason)
+    assert.ok(reasons.includes("the web app's FancyBaseTile is built on BaseTile"), reasons.join(' | '))
+    assert.ok(reasons.includes("the web app's BigBaseTile is built on BaseTile"), reasons.join(' | '))
+    assert.equal(found.some((p) => [p.keep.name, p.drop.name].includes('FancyBaseTile') && p.verdict !== 'merge'), false)
+  } finally {
+    second.cleanup()
+  }
+})
+
+test('the pull request summary says when every pair found was set aside', async () => {
+  const { listBody } = await import('../bodies.mjs')
+  const none = Object.assign([], { dismissed: [{ id: 'x', keep: entry('A', 'app', 'apps/web/app', 1), drop: entry('B', 'app', 'apps/web/app', 1), reason: 'the names differ and the look differs, so they are different components' }] })
+  const state = { plan: { inventory: plan.inventory, duplicates: none }, estimate: { duplicates: { pairs: 0, tickets: 0, removals: 0, decisions: 0 } }, docsDir: 'docs/klaus', prs: [] }
+  assert.match(listBody(state), /No pair needs a ticket or a question\. 1 was set aside as different components, and `docs\/klaus\/duplicates\.md` lists it with the reason\./)
+  assert.doesNotMatch(listBody(state), /None were found/)
+  const nothing = { ...state, plan: { ...state.plan, duplicates: [] } }
+  assert.match(listBody(nothing), /None were found\./)
+})
