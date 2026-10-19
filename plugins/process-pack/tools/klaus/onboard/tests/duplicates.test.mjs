@@ -4,7 +4,7 @@ import { after, before, test } from 'node:test'
 import { loadTypeScript } from '../../inventory/components.mjs'
 import { buildInventory } from '../../inventory/inventory.mjs'
 import { readOnboardingConfig } from '../config.mjs'
-import { findDuplicates, headNoun, renderDecisions, renderDuplicatesList, renderTicket, ticketFileName } from '../duplicates.mjs'
+import { findDuplicates, headNoun, keepReason, renderDecisions, renderDuplicatesList, renderTicket, ticketFileName } from '../duplicates.mjs'
 import { makeSample } from './helpers.mjs'
 
 let sample
@@ -55,6 +55,9 @@ test('the list says what was compared, and the ticket has a goal, a done check, 
   const ticket = renderTicket(merge)
   for (const heading of ['## Goal', '## What Klaus found', '## Done when', '## Proof wanted']) assert.ok(ticket.includes(heading), heading)
   assert.match(ticket, /^Size: S$/m)
+  assert.match(ticket, /`Button` is kept because it is used in more places\./)
+  assert.match(ticket, /Files that import `PrimaryButton`: `apps\/web\/src\/app\/page\.tsx`\./)
+  assert.doesNotMatch(ticket, /Decide for each/, 'no props to decide on')
   assert.ok(ticket.split(/\s+/).length >= 120, `${ticket.split(/\s+/).length} words`)
   assert.equal(ticketFileName(merge, 1), '01-merge-primarybutton-into-button.md')
 })
@@ -74,4 +77,11 @@ test('nothing the run writes uses an em dash', () => {
 test('an empty result still reads as a result', () => {
   assert.match(renderDuplicatesList([]), /No likely duplicates were found/)
   assert.match(renderDecisions([]), /No pairs need a decision/)
+})
+
+test('the reason an entry is kept follows the order it was picked in', () => {
+  const entry = (kind, used) => ({ kind, usedIn: new Array(used).fill('x') })
+  assert.equal(keepReason(entry('shared', 0), entry('app', 5)), 'it is shared')
+  assert.equal(keepReason(entry('app', 3), entry('app', 1)), 'it is used in more places')
+  assert.equal(keepReason(entry('app', 1), entry('app', 1)), 'it comes first by name')
 })

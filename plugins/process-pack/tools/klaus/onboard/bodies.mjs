@@ -8,7 +8,7 @@ import { renderComparison } from './estimate.mjs'
 const MAX_ROWS = 60
 const code = (text) => `\`${String(text).replace(/`/g, "'")}\``
 const whole = (n) => Math.round(n).toLocaleString('en-US')
-const dollars = (v) => `USD ${v < 0.01 ? v.toFixed(4) : v.toFixed(2)}`
+const dollars = (v) => `USD ${v < 0.001 ? v.toFixed(5) : v < 0.01 ? v.toFixed(4) : v.toFixed(2)}`
 const cell = (text) => String(text ?? '').replace(/\|/g, '/').replace(/\s+/g, ' ')
 
 function table(header, rows) {
@@ -60,7 +60,7 @@ export function listBody(state) {
     '',
     stack(state, 1),
     '',
-    'Closes nothing: this repo has no ticket for the baseline. The run was started by `onboard.mjs run`, and the same numbers are in the report on the third pull request.',
+    'The estimate the run was held to, and what it did, is the table on the third pull request.',
   ]
   return lines.join('\n')
 }
@@ -68,6 +68,7 @@ export function listBody(state) {
 export function purposesBody(state) {
   const { purposes } = state
   const kept = purposes.items.filter((i) => i.status === 'kept' || i.status === 'unchecked')
+  const unchecked = purposes.items.filter((i) => i.status === 'unchecked')
   const lines = [
     '## What this is',
     '',
@@ -83,7 +84,7 @@ export function purposesBody(state) {
     '',
     `- ${purposes.items.length} components needed a purpose.`,
     `- ${purposes.items.filter((i) => i.status === 'kept').length} written and passed the check.`,
-    `- ${purposes.items.filter((i) => i.status === 'unchecked').length} written and not checked (${purposes.items.filter((i) => i.status === 'unchecked').map((i) => `${i.name}: ${i.reason}`).join('; ') || 'none'}). They are in this pull request.`,
+    ...(unchecked.length > 0 ? [`- ${unchecked.length} written and not checked (${unchecked.map((i) => `${i.name}: ${i.reason}`).join('; ')}). They are in this pull request.`] : []),
     `- ${purposes.items.filter((i) => i.status === 'dropped').length} failed the check and are not in this pull request. Their proposed text and the checker's reason are in ${code(`${state.docsDir}/purposes.md`)}.`,
     `- ${purposes.items.filter((i) => i.status === 'rejected').length} were rejected because the writer changed more than the comment, or the text was not acceptable.`,
     '',
@@ -114,7 +115,7 @@ export function storiesBody(state) {
     '',
     `## Shown through their screens (${bound.length})`,
     '',
-    bound.length === 0 ? 'None.' : table(['Component', 'Why it is data-bound', 'Appears on', 'Screen capture'], bound.map((i) => [code(i.name), i.reasons.join(', '), i.screens.length ? i.screens.map(code).join(', ') : 'no screen found', i.capture ?? 'none yet'])),
+    bound.length === 0 ? 'None.' : table(['Component', 'Why it is data-bound', 'Appears on', 'Screen capture'], bound.map((i) => [code(i.name), i.reasons.map(code).join(', '), i.screens.length ? i.screens.map(code).join(', ') : 'no screen found', i.capture ?? 'none yet'])),
     '',
     `## Left for a person (${skipped.length})`,
     '',
@@ -142,7 +143,7 @@ export function renderStoriesView(state) {
     'Written by the Klaus onboarding run. A component with a story is drawn by Storybook. A component that shows live data is shown through the screens it appears on.',
     '',
     ...section('Stories written', stories.items.filter((i) => i.status === 'write'), ['Component', 'Story file'], (i) => [code(i.name), code(i.storyFile)]),
-    ...section('Shown through their screens', stories.items.filter((i) => i.status === 'data-bound'), ['Component', 'Why it is data-bound', 'Appears on', 'Screen capture'], (i) => [code(i.name), i.reasons.join(', '), i.screens.length ? i.screens.map(code).join(', ') : 'no screen found', i.capture ?? 'none yet']),
+    ...section('Shown through their screens', stories.items.filter((i) => i.status === 'data-bound'), ['Component', 'Why it is data-bound', 'Appears on', 'Screen capture'], (i) => [code(i.name), i.reasons.map(code).join(', '), i.screens.length ? i.screens.map(code).join(', ') : 'no screen found', i.capture ?? 'none yet']),
     ...section('Already had a story', stories.items.filter((i) => i.status === 'exists'), ['Component'], (i) => [code(i.name)]),
     ...section('Left for a person', stories.items.filter((i) => i.status === 'skipped'), ['Component', 'Why'], (i) => [code(i.name), i.reason]),
   ].join('\n')

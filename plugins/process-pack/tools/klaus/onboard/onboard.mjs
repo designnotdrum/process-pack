@@ -53,11 +53,11 @@ const OPTIONS = {
 
 const USAGE = 'Usage: onboard.mjs estimate|run --repo <dir> [options]. See the top of this file.'
 
-async function estimateCommand(values) {
+async function estimateCommand(values, { fetchImpl } = {}) {
   const repo = fs.realpathSync(topLevel(path.resolve(values.repo)))
   const { onboarding, folders } = readOnboardingConfig(repo)
   const plan = buildPlan({ root: repo, folders, onboarding })
-  const estimate = await buildEstimate({ plan, onboarding })
+  const estimate = await buildEstimate({ plan, onboarding, fetchImpl })
   const dir = workFolder(repo)
   fs.mkdirSync(dir, { recursive: true })
   writeJsonFile(path.join(dir, 'estimate.json'), estimate)
@@ -66,8 +66,9 @@ async function estimateCommand(values) {
   return 0
 }
 
-async function runCommand(values) {
+async function runCommand(values, { fetchImpl } = {}) {
   await runOnboarding({
+    fetchImpl,
     repo: path.resolve(values.repo),
     approve: values.approve,
     captures: values.captures,
@@ -80,14 +81,14 @@ async function runCommand(values) {
   return 0
 }
 
-export async function main(argv) {
+export async function main(argv, dependencies = {}) {
   try {
     const { values, positionals } = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true })
     const [command, ...extra] = positionals
     if (extra.length > 0) throw new UserError(`Unexpected argument ${JSON.stringify(extra[0])}.`)
     if (!values.repo) throw new UserError(`--repo <dir> is needed.\n${USAGE}`)
-    if (command === 'estimate') return await estimateCommand(values)
-    if (command === 'run') return await runCommand(values)
+    if (command === 'estimate') return await estimateCommand(values, dependencies)
+    if (command === 'run') return await runCommand(values, dependencies)
     throw new UserError(USAGE)
   } catch (error) {
     if (error instanceof UserError || (typeof error?.code === 'string' && error.code.startsWith('ERR_PARSE_ARGS'))) {

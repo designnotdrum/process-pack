@@ -48,7 +48,7 @@ test('storyArgs fills required props only and names the prop it cannot fill', ()
   const ok = storyArgs({ props: [{ name: 'title', type: 'string', required: true }, { name: 'subtitle', type: 'string', required: false }] })
   assert.deepEqual(ok, { args: [['title', "'Sample'"]], blocked: null })
   const blocked = storyArgs({ props: [{ name: 'project', type: 'Project', required: true }] })
-  assert.match(blocked.blocked, /required prop project has the type Project/)
+  assert.match(blocked.blocked, /required prop project has the type `Project`/)
 })
 
 test('the plan sorts the fixture: one story exists, two are written, one is data-bound', () => {

@@ -114,7 +114,10 @@ export function storyArgs(entry) {
   const args = []
   for (const prop of entry.props.filter((p) => p.required)) {
     const value = sampleValue(prop.name, prop.type)
-    if (value === null) return { args: [], blocked: `the required prop ${prop.name} has the type ${prop.type.length > 60 ? `${prop.type.slice(0, 57)}...` : prop.type}, and Klaus will not invent a value for it` }
+    if (value === null) {
+      const type = (prop.type.length > 60 ? `${prop.type.slice(0, 57)}...` : prop.type).replace(/`/g, "'")
+      return { args: [], blocked: `the required prop ${prop.name} has the type \`${type}\`, and Klaus will not invent a value for it` }
+    }
     args.push([prop.name, value])
   }
   return { args, blocked: null }

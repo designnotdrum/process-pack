@@ -81,7 +81,8 @@ async function writeLocally({ ctx, state, items, pending }) {
       continue
     }
     const dirAbs = path.join(repo, call.dir)
-    assertPlainPath(repo, dirAbs)
+    // A component file at the repo root has the repo itself as its folder, which is the base and not a path to check.
+    if (path.resolve(dirAbs) !== repo) assertPlainPath(repo, dirAbs)
     const planned = new Set(call.files.map((f) => f.file))
     log(`Writer call ${executed + 1} of ${plan.calls.length}: ${call.dir} (${plural(call.count, 'component')} in ${plural(call.files.length, 'file')})`)
     const result = await runCodex({ codex, dir: dirAbs, prompt: writerPrompt(call), settings: onboarding.writer, env: writerEnvironment(env, onboarding.checker.secrets), eventsFile: path.join(work, 'events', `${pad(executed + 1)}.jsonl`) })

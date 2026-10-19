@@ -115,7 +115,7 @@ export async function buildEstimate({ plan, onboarding, fetchImpl }) {
 
 const whole = (n) => Math.round(n).toLocaleString('en-US')
 const plural = (n, one, many = `${one}s`) => `${whole(n)} ${n === 1 ? one : many}`
-const dollars = (v) => `USD ${v < 0.01 ? v.toFixed(4) : v.toFixed(2)}`
+const dollars = (v) => `USD ${v < 0.001 ? v.toFixed(5) : v < 0.01 ? v.toFixed(4) : v.toFixed(2)}`
 const perMillion = (v) => `USD ${(v * 1e6) >= 0.1 ? (v * 1e6).toFixed(2) : (v * 1e6).toFixed(4)}`
 /** A figure that is a prediction is shown to two significant digits, so it does not look more exact than it is. */
 const approx = (n) => (n < 100 ? whole(n) : whole(Number(n.toPrecision(2))))

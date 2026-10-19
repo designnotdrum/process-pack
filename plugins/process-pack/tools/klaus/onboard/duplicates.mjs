@@ -42,6 +42,13 @@ function keepFirst(a, b) {
 
 const idOf = (entry) => `${entry.file}#${entry.name}`
 
+/** Why the kept entry was picked, in the order keepFirst decides. */
+export function keepReason(keep, drop) {
+  if (keep.kind === 'shared' && drop.kind !== 'shared') return 'it is shared'
+  if (usedCount(keep) > usedCount(drop)) return 'it is used in more places'
+  return 'it comes first by name'
+}
+
 /**
  * @typedef {object} DuplicatePair
  * @property {string} id
@@ -170,22 +177,22 @@ export function renderTicket(pair) {
     '',
     `- The onboarding run lists the two as a likely pair because ${pair.reasons.join(' and ')}.`,
     `- They look the same: ${percent(pair.lookSimilarity)} of the class names they write are shared.`,
-    `- ${code(keep.name)} is used in ${places(keep)}, and ${code(drop.name)} in ${places(drop)}. ${code(keep.name)} is kept because it is ${keep.kind === 'shared' && drop.kind !== 'shared' ? 'shared' : 'the more used or the first by name'}.`,
+    `- ${code(keep.name)} is used in ${places(keep)}, and ${code(drop.name)} in ${places(drop)}. ${code(keep.name)} is kept because ${keepReason(keep, drop)}.`,
     `- Props in both: ${list(pair.sharedProps)}.`,
-    `- Props only ${code(drop.name)} has: ${list(pair.onlyDrop)}. Decide for each whether to add it to ${code(keep.name)} or drop it.`,
+    `- Props only ${code(drop.name)} has: ${list(pair.onlyDrop)}.${pair.onlyDrop.length > 0 ? ` Decide for each whether to add it to ${code(keep.name)} or drop it.` : ''}`,
     `- Class names only ${code(drop.name)} writes: ${list(pair.classesOnlyDrop.slice(0, 12))}${pair.classesOnlyDrop.length > 12 ? ', and more' : ''}.`,
-    `- Screens that show ${code(drop.name)}: ${list(drop.usedIn.slice(0, 10))}${drop.usedIn.length > 10 ? ', and more' : ''}.`,
+    `- ${drop.kind === 'shared' ? 'Files that import' : 'Screens that show'} ${code(drop.name)}: ${list(drop.usedIn.slice(0, 10))}${drop.usedIn.length > 10 ? ', and more' : ''}.`,
     '',
     '## Done when',
     '',
     `- Nothing imports ${code(drop.name)} any more and its file is deleted.`,
     `- Every place that used ${code(drop.name)} uses ${code(keep.name)}, with the props mapped.`,
     '- The inventory, rebuilt, lists one entry instead of two, and the app builds and its checks pass.',
-    '- The screens above look the same before and after.',
+    `- The ${drop.kind === 'shared' ? 'screens that use these files' : 'screens above'} look the same before and after.`,
     '',
     '## Proof wanted',
     '',
-    `The pull request shows the rebuilt inventory with ${code(drop.name)} gone, and before and after captures of the screens above, or the visual check's result for them.`,
+    `The pull request shows the rebuilt inventory with ${code(drop.name)} gone, and before and after captures of the screens that use it, or the visual check's result for them.`,
     '',
   ].join('\n')
 }
@@ -209,7 +216,7 @@ export function renderDecisions(pairs) {
       `- Why they are a pair: ${p.reasons.join(' and ')}.`,
       p.verdict === 'decide-look-unknown' ? '- Look: not comparable, because one of them does not style itself with class names. Open both in the app and compare.' : `- Look: ${percent(p.lookSimilarity)} of the class names are shared. Only ${code(p.keep.name)} writes ${list(p.classesOnlyKeep.slice(0, 10))}. Only ${code(p.drop.name)} writes ${list(p.classesOnlyDrop.slice(0, 10))}.`,
       `- Props only ${code(p.keep.name)} has: ${list(p.onlyKeep)}. Props only ${code(p.drop.name)} has: ${list(p.onlyDrop)}.`,
-      `- If you do not choose: keep ${code(p.keep.name)}, because it is ${p.keep.kind === 'shared' && p.drop.kind !== 'shared' ? 'shared' : 'the more used or the first by name'}.`,
+      `- If you do not choose: keep ${code(p.keep.name)}, because ${keepReason(p.keep, p.drop)}.`,
       `- Decision: [ ] keep ${p.keep.name}  [ ] keep ${p.drop.name}  [ ] keep both, and say why they differ`,
       '',
     )
