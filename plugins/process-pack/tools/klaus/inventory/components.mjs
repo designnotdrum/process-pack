@@ -148,7 +148,7 @@ export function ownProp(prop, root) {
   return declarations.some((d) => isRepoFile(d.getSourceFile().fileName, root))
 }
 
-function propsTypeOf(ts, checker, symbol, declaration) {
+export function propsTypeOf(ts, checker, symbol, declaration) {
   const type = checker.getTypeOfSymbolAtLocation(symbol, declaration)
   const call = type.getCallSignatures()[0]
   if (call) {

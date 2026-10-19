@@ -9,6 +9,7 @@ export const KLAUS = path.join(here, '..', '..')
 export const FIXTURE = path.join(here, 'fixtures', 'sample')
 export const STUBS = path.join(here, 'stub')
 const ICON_SET_FIXTURE = path.join(here, 'fixtures', 'icon-set')
+const STORIES_FIXTURE = path.join(here, 'fixtures', 'stories')
 
 /**
  * A copy of the sample fixture in a new folder, with a link to this package's node_modules so the
@@ -24,11 +25,36 @@ export function makeSample({ icons = false } = {}) {
   return { base, repo, cleanup: () => fs.rmSync(base, { recursive: true, force: true }) }
 }
 
+/**
+ * A copy of the stories fixture: three packages, only some of which a Storybook loads. Its
+ * node_modules is a real folder with the repo's own `typescript` linked in and a small library,
+ * `@flow/lib`, whose props the inventory leaves out because the library declares them.
+ */
+export function makeStoriesSample() {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'klaus-stories-'))
+  const repo = path.join(base, 'repo')
+  fs.cpSync(STORIES_FIXTURE, repo, { recursive: true })
+  const modules = path.join(repo, 'node_modules')
+  fs.mkdirSync(path.join(modules, '@flow'), { recursive: true })
+  fs.symlinkSync(fs.realpathSync(path.join(KLAUS, 'node_modules', 'typescript')), path.join(modules, 'typescript'))
+  fs.renameSync(path.join(repo, 'vendor', 'flow-lib'), path.join(modules, '@flow', 'lib'))
+  fs.rmdirSync(path.join(repo, 'vendor'))
+  return { base, repo, cleanup: () => fs.rmSync(base, { recursive: true, force: true }) }
+}
+
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
 
 /** The sample as a git repo on main with a bare repo as origin, ready for the run. */
 export function makeGitSample(options) {
-  const sample = makeSample(options)
+  return inGit(makeSample(options))
+}
+
+/** The stories fixture as a git repo on main with a bare repo as origin. */
+export function makeGitStoriesSample() {
+  return inGit(makeStoriesSample())
+}
+
+function inGit(sample) {
   const origin = path.join(sample.base, 'origin.git')
   git(sample.base, 'init', '-q', '--bare', '-b', 'main', origin)
   fs.writeFileSync(path.join(sample.repo, '.gitignore'), 'node_modules\n')

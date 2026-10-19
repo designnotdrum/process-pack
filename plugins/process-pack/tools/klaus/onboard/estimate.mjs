@@ -109,6 +109,7 @@ export async function buildEstimate({ plan, onboarding, fetchImpl }) {
       checkerCallDetails,
     },
     stories: { write: count('write'), exists: count('exists'), dataBound: count('data-bound'), skipped: count('skipped') },
+    storyCheck: plan.stories.check,
     duplicates: { pairs: plan.duplicates.length, tickets: plan.duplicates.filter((p) => p.verdict === 'merge').length, decisions: plan.duplicates.filter((p) => p.verdict !== 'merge').length },
     price,
     rates: { writer: WRITER_RATES, checker: CHECKER_RATES },
@@ -125,7 +126,7 @@ const approx = (n) => (n < 100 ? whole(n) : whole(Number(n.toPrecision(2))))
 
 /** Plain text for a person to read before the run. */
 export function renderEstimate(estimate) {
-  const { settings, list, purposes, stories, duplicates, price, margins } = estimate
+  const { settings, list, purposes, stories, storyCheck, duplicates, price, margins } = estimate
   const { writer, checker } = settings
   const lines = [`Onboarding run: the one-time estimate (plan ${estimate.id})`]
   lines.push(`  The list: ${plural(list.entries, 'entry', 'entries')} (${list.shared} shared, ${list.app} app, ${list.local} local, ${plural(list.iconSets, 'icon set')}) in ${plural(list.folders.length, 'folder')}. No model. Every entry starts at 1.0.0.`)
@@ -145,7 +146,8 @@ export function renderEstimate(estimate) {
   }
   if (purposes.unchecked > 0) lines.push(`    ${plural(purposes.unchecked, 'component')} ${purposes.unchecked === 1 ? 'is' : 'are'} not used anywhere, so there is no usage to check against. Their purposes are kept and listed as unchecked.`)
   lines.push('    A purpose the writer gets wrong is rejected before the check and is not checked. The report counts those with the checker calls and says how many.')
-  lines.push(`  Stories: ${stories.write} written with no model. ${stories.dataBound} listed with the screens they appear on instead, because they show live data. ${stories.exists} already had a story. ${stories.skipped} left for a person.`)
+  lines.push(`  Stories: ${stories.write} written with no model. ${stories.dataBound} listed with the screens they appear on instead, because they show live data. ${stories.exists} already had a story. ${stories.skipped} left for a person${storyCheck ? ` (${storyCheck.noStorybook} in folders no Storybook loads, ${storyCheck.needsValue} with a required prop Klaus cannot fill in, ${storyCheck.storybookMissing + storyCheck.didNotCompile} whose story did not compile)` : ''}.`)
+  if (storyCheck) lines.push(`    Each story is type-checked with the repo's own TypeScript and the tsconfig of its package, and written only if a Storybook config in the repo loads its path (${plural(storyCheck.typeChecked, 'story', 'stories')} checked). Nothing is written to check them.`)
   lines.push(`  Duplicates: ${plural(duplicates.pairs, 'likely pair')}. ${duplicates.tickets} ${duplicates.tickets === 1 ? 'becomes a merge ticket' : 'become merge tickets'} and ${duplicates.decisions} ${duplicates.decisions === 1 ? 'goes' : 'go'} on the decisions list, as files in the pull request. Nothing is filed in a tracker. No model.`)
   const sends = []
   if (writer.route !== 'external') sends.push('the source of the files in each folder goes to OpenAI through the Codex CLI')
@@ -212,6 +214,7 @@ export function compareToEstimate(estimate, actual) {
   relative('Checker tokens', forWorkDone.checkerTokens, actual.checkerTokens, margins.tokens)
   relative('Checker dollars', forWorkDone.checkerUsd, actual.checkerUsd, margins.usd, margins.usdFloor)
   exact('Stories written', estimate.stories.write, actual.stories)
+  if (actual.storiesLeft !== undefined) exact('Stories left for a person', estimate.stories.skipped, actual.storiesLeft)
   exact('Likely duplicate pairs', estimate.duplicates.pairs, actual.pairs)
   exact('Merge tickets', estimate.duplicates.tickets, actual.tickets)
   exact('Decisions on the list', estimate.duplicates.decisions, actual.decisions)
