@@ -87,7 +87,7 @@ export function writerPrompt(call, boundary = newBoundary(), { external = false 
     '',
     'Rules',
     external ? '1. Your working folder is the repository root. File paths below are relative to it. Edit only the files listed under FILES.' : `1. Your working folder is ${folder}. File paths below are relative to it. Edit only the files listed under FILES.`,
-    '2. For each component listed under COMPONENTS, put one doc comment directly above its declaration, above the `export` keyword or above the `const` statement. If the component already has a doc comment, replace that one comment and keep nothing of its layout.',
+    '2. For each component listed under COMPONENTS, put one doc comment directly above its declaration, above the `export` keyword or above the `const` statement. If the component already has a doc comment, one that starts with /**, replace that one comment and keep nothing of its layout. A comment that starts with // or with /* is not a doc comment: leave it exactly as it is, and put the new doc comment above it.',
     '3. The comment has exactly this form, with real text in place of the angle brackets:',
     '/**',
     ` * Use when: <one sentence of at most ${MAX_SENTENCE - 40} characters that says what the component is for and where it fits>.`,

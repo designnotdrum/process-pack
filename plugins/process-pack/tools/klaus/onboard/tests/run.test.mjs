@@ -17,7 +17,7 @@ const prices = async () => ({ ok: true, json: async () => ({ data: [{ id: 'z-ai/
 const checker = async (_url, init) => {
   const prompt = JSON.parse(init.body).messages[0].content
   const verdict = prompt.includes('Component: LinkButton') ? { verdict: 'fail', reason: 'it is also used for buttons that submit' } : { verdict: 'pass', reason: 'matches the places it is used' }
-  return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: JSON.stringify(verdict) } }], usage: { prompt_tokens: 500, completion_tokens: 200, cost: 0.00003 } }) }
+  return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: JSON.stringify(verdict) } }], usage: { prompt_tokens: 300, completion_tokens: 55, cost: 0.00003 } }) }
 }
 
 let sample
@@ -143,7 +143,7 @@ test('the writer never sees the checker key, and runs in the folder it was given
 test('the report holds the numbers the pull request shows, and the work folder holds the events', async () => {
   const { report } = await run(await estimate())
   assert.deepEqual([report.actual.writerCalls, report.actual.checkerCalls, report.actual.stories], [3, 4, 3])
-  assert.ok(report.comparison.every((r) => r.within))
+  assert.ok(report.comparison.every((r) => r.within), JSON.stringify(report.comparison.filter((r) => !r.within)))
   assert.equal(report.purposes.find((p) => p.id.endsWith('#LinkButton')).status, 'dropped')
   const dir = workFolder(sample.repo)
   assert.ok(fs.existsSync(path.join(dir, 'report.json')))
@@ -201,10 +201,11 @@ test('the run refuses without the plan id, with a wrong one, and when the repo c
   await assert.rejects(() => run({ id: 'abc' }), (e) => e instanceof UserError && /plan id the estimate shows/.test(e.message))
   fs.appendFileSync(path.join(sample.repo, 'apps/web/src/marketing/Hero.tsx'), '\n// changed\n')
   sample.git('commit', '-qam', 'change')
+  sample.git('push', '-q', 'origin', 'main')
   await assert.rejects(() => run(estimated), (e) => e instanceof UserError && /not the one the estimate was made on/.test(e.message))
 })
 
-test('the run refuses a dirty tree, a branch that exists, a missing key and a base that is not the default', async () => {
+test('the run refuses a dirty tree, a branch that exists, a missing key, a base that is not the default and a commit that is only here', async () => {
   const estimated = await estimate()
   fs.writeFileSync(path.join(sample.repo, 'note.txt'), 'x')
   await assert.rejects(() => run(estimated), /working tree has changes/)
@@ -220,6 +221,12 @@ test('the run refuses a dirty tree, a branch that exists, a missing key and a ba
 
   sample.git('branch', BRANCHES[1])
   await assert.rejects(() => run(estimated), /already exists/)
+  sample.git('branch', '-q', '-D', BRANCHES[1])
+
+  fs.writeFileSync(path.join(sample.repo, 'local-only.txt'), 'x')
+  sample.git('add', 'local-only.txt')
+  sample.git('commit', '-qm', 'only here')
+  await assert.rejects(() => run(estimated), /not the same commit/)
 })
 
 test('a failure part way names the branches made and puts the tree back on the base branch', async () => {
@@ -252,6 +259,7 @@ function useExternalAgents() {
   config.onboarding = { writer: { route: 'external', agent: 'Codex cloud (Terra)' }, checker: { route: 'external', agent: 'a Cyrus session on GLM' } }
   fs.writeFileSync(file, JSON.stringify(config, null, 2))
   sample.git('commit', '-qam', 'hand the work to other agents')
+  sample.git('push', '-q', 'origin', 'main')
 }
 
 /** What an external writer does: edits the files the briefs list, on its own branch. */

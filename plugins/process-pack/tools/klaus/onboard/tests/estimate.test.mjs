@@ -16,10 +16,12 @@ before(() => {
 })
 after(() => sample.cleanup())
 
-test('the writer prediction reproduces the measured call: 35,069 input over two requests with a 1,070 character prompt', () => {
-  // The measured call also used 170 output tokens, 35,239 in all.
-  const predicted = predictWriterTokens(1070, 1)
-  assert.ok(Math.abs(predicted - 35239) / 35239 < 0.02, `${predicted}`)
+test('the writer prediction reproduces the two measured calls it was fitted on', () => {
+  // 35,239 tokens for a 1,070 character prompt with one component, and 37,217 for 3,232 characters with two.
+  for (const [chars, components, measured] of [[1070, 1, 35239], [3232, 2, 37217]]) {
+    const predicted = predictWriterTokens(chars, components)
+    assert.ok(Math.abs(predicted - measured) / measured < 0.02, `${predicted} against ${measured}`)
+  }
   assert.equal(WRITER_RATES.requests, 2)
 })
 
@@ -35,6 +37,7 @@ test('the estimate counts calls and files exactly, and prices the checker from t
   assert.deepEqual(estimate.stories, { write: 3, exists: 1, dataBound: 1, skipped: 0 })
   assert.deepEqual(estimate.duplicates, { pairs: 3, tickets: 1, decisions: 2 })
   assert.ok(estimate.purposes.writerTokens > 90000 && estimate.purposes.writerTokens < 130000, `${estimate.purposes.writerTokens}`)
+  assert.match(renderEstimate(estimate), /times 1\.7 because OpenRouter routes to providers that charge more than its list shows/)
   assert.ok(estimate.purposes.checkerUsd > 0 && estimate.purposes.checkerUsd < 0.001)
   assert.equal(estimate.price.prompt, 3.92e-8)
 })
@@ -52,7 +55,7 @@ test('the text names who does what, what leaves the machine, the margins, and ne
   assert.match(text, /Checker: OpenRouter, z-ai\/glm-5\.3-flash, a different model family from the writer\. 4 calls/)
   assert.match(text, /Billed for each token through OpenRouter/)
   assert.match(text, /Your code leaves this machine/)
-  assert.match(text, /Tokens must land within 30%, and dollars within 50% or USD 0\.0010/)
+  assert.match(text, /Tokens must land within 30%, and dollars within 100% or USD 0\.0010/)
   assert.doesNotMatch(text, /\bfree\b/i)
   assert.equal(text.includes('—'), false)
 })

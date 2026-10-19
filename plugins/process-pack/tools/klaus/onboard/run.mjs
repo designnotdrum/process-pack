@@ -63,6 +63,10 @@ function preflight({ repo, approve, onboarding, env, options, log }) {
   const base = currentBranch(repo)
   const remoteDefault = runProgram('gh', repo, ['repo', 'view', '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name'], { allowFail: true })?.trim()
   if (remoteDefault && remoteDefault !== base) throw new UserError(`The run starts from the default branch, ${remoteDefault}, and the repo is on ${base}.`)
+  // The pull requests are based on the remote branch, so anything that is only on this machine would be inside the first one.
+  git(repo, ['fetch', '-q', 'origin', base])
+  const remoteTip = git(repo, ['rev-parse', `refs/remotes/origin/${base}`], { allowFail: true })?.trim()
+  if (remoteTip && remoteTip !== git(repo, ['rev-parse', 'HEAD']).trim()) throw new UserError(`${base} and origin/${base} are not the same commit. Push or pull first: the pull requests are based on origin/${base}, and a commit that is only here would end up in the first one.`)
   for (const branch of BRANCHES) {
     if (git(repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], { allowFail: true }) !== null) throw new UserError(`The branch ${branch} already exists. The onboarding run has been started here before.`)
   }

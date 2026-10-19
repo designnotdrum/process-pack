@@ -11,23 +11,33 @@ import { snippetsFor } from './source.mjs'
 import { writerPrompt } from './writer.mjs'
 
 /**
- * Measured on 2026-10-19 with codex-cli 0.163.0 and gpt-5.6-terra at low effort, shell off and no
- * user config: a call that patched one file with one comment used 35,069 input tokens over two
- * requests, with a prompt of about 1,070 characters, so a request carries about 17,300 tokens
- * before the prompt. `charsPerToken` is an assumption for source code, not a measurement.
+ * Fitted on 2026-10-19 to real calls of codex-cli 0.163.0 with gpt-5.6-terra at low effort, shell
+ * off and no user config. Each call made two requests (one that patches, one that says done).
+ *
+ *   one file, one component, a prompt of 1,070 characters:   35,069 input + 170 output = 35,239 tokens
+ *   two files, two components, a prompt of 3,232 characters: 37,198 and 37,236 tokens in two calls
+ *
+ * Two equations cannot fix three rates, so `charsPerToken` is assumed (3.0 for code with markup)
+ * and the other two are solved from the two calls: a request carries about 16,900 tokens before
+ * the prompt, and each component costs about 270 tokens in the patch. The prompts were 1 to 3
+ * thousand characters, so a prompt of tens of thousands of characters is an extrapolation and
+ * its report may land outside the margin.
  * The first try, with no file in the prompt, ran 16 failed patches and used 515,484 tokens:
- * that is why the files are in the prompt.
+ * that is why the files are in the prompt and why the run has a guard.
  */
-export const WRITER_RATES = Object.freeze({ requests: 2, requestBaseTokens: 17300, charsPerToken: 3.6, patchBaseTokens: 40, patchTokensPerComponent: 110, replyTokens: 20 })
+export const WRITER_RATES = Object.freeze({ requests: 2, requestBaseTokens: 16900, charsPerToken: 3.0, patchBaseTokens: 40, patchTokensPerComponent: 270, replyTokens: 20 })
 
 /**
- * The checker's reply is mostly reasoning, which glm-5.3-flash cannot switch off. A reply of
- * about 300 tokens is what the calibration calls on the fixture showed (see the README).
+ * Measured on 2026-10-19 over 4 calls to z-ai/glm-5.3-flash on the sample's components: prompts of
+ * 1,057 to 1,281 characters were 283 to 333 tokens (3.8 characters a token), and the replies,
+ * which include the model's reasoning (it cannot be switched off), were 37, 45, 56 and 72 tokens.
+ * OpenRouter reported 1.7 times the price on its models list for the same tokens, because it
+ * routes to providers that charge more than the list shows.
  */
-export const CHECKER_RATES = Object.freeze({ charsPerToken: 3.6, replyTokens: 300 })
+export const CHECKER_RATES = Object.freeze({ charsPerToken: 3.8, replyTokens: 55, priceFactor: 1.7 })
 
 /** How far a run may land from its estimate. Calls and counts must match exactly. */
-export const MARGINS = Object.freeze({ tokens: 0.3, usd: 0.5, usdFloor: 0.001 })
+export const MARGINS = Object.freeze({ tokens: 0.3, usd: 1, usdFloor: 0.001 })
 
 const PLACEHOLDER_SENTENCE = 'x'.repeat(150)
 
@@ -70,7 +80,7 @@ export async function buildEstimate({ plan, onboarding, fetchImpl }) {
   let checkerUsd = null
   if (price && checkerTokens) {
     // Input is the prompt; everything else the call uses is reply and is priced as completion.
-    checkerUsd = checkable.reduce((sum, c) => sum + (c.promptChars / CHECKER_RATES.charsPerToken) * price.prompt + CHECKER_RATES.replyTokens * price.completion, 0)
+    checkerUsd = CHECKER_RATES.priceFactor * checkable.reduce((sum, c) => sum + (c.promptChars / CHECKER_RATES.charsPerToken) * price.prompt + CHECKER_RATES.replyTokens * price.completion, 0)
   }
   const sum = (list) => (list ? list.reduce((a, b) => a + b, 0) : null)
   const items = plan.stories.items
@@ -126,7 +136,7 @@ export function renderEstimate(estimate) {
     lines.push(`    Checker: ${checker.agent}. ${plural(purposes.checkerCalls, 'brief')}, one for each component that is used somewhere. No estimate: ${checker.agent} bills on its own plan.`)
   } else {
     const cost = price
-      ? ` Billed for each token through OpenRouter, at ${perMillion(price.prompt)} for a million input tokens and ${perMillion(price.completion)} for a million output tokens (OpenRouter's models list, read ${price.readAt}), so about ${dollars(estimate.purposes.checkerUsd)}.`
+      ? ` Billed for each token through OpenRouter, at ${perMillion(price.prompt)} for a million input tokens and ${perMillion(price.completion)} for a million output tokens (OpenRouter's models list, read ${price.readAt}), times ${CHECKER_RATES.priceFactor} because OpenRouter routes to providers that charge more than its list shows (measured on 4 calls), so about ${dollars(estimate.purposes.checkerUsd)}.`
       : ' No dollar figure: the model list could not be read, so the price is unknown. It is billed for each token.'
     lines.push(`    Checker: OpenRouter, ${checker.model}, a different model family from the writer. ${plural(purposes.checkerCalls, 'call')}, one for each component that is used somewhere, about ${approx(purposes.checkerTokens)} tokens.${cost}`)
   }

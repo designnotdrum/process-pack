@@ -15,6 +15,7 @@ The decisions behind it are on the Klaus map in Linear: [NJM-1767](https://linea
 | Storybook adapter | `adapters/storybook/` | #26 |
 | Figma code generator, relay, plugin and reconcile mode | `adapters/figma/` | #27, #28, #43, #44 |
 | Onboarding step and baseline run | `skills/design-onboard/` (step 8) | #29, #30 |
+| Onboarding run: the list at 1.0.0, the purposes, the stories and the duplicates, in three pull requests | `onboard/` | #30 |
 | Install: the copy with its version line, the cost display, the workflow renderer | `install/` | #29 |
 | Penpot and Pencil adapters | `adapters/penpot/`, `adapters/pencil/` | #31, #32 |
 
