@@ -335,7 +335,7 @@ test("both modes refuse a commit and a tag that are not on the default branch, b
 test("release mode says that only a tag ruleset protects it, and schedule mode does not", () => {
   const release = render(CONFIG).text;
   assert.match(release, /Without that ruleset, use the schedule/);
-  assert.match(release, /repository\s+# ruleset that lets only maintainers create or update tags/);
+  assert.match(release, /repository\s+# ruleset that lets only maintainers create, update or delete tags/);
   assert.doesNotMatch(render({ ...CONFIG, trigger: { mode: "schedule", cron: "0 6 * * 1" } }).text, /Without that ruleset/);
 });
 
@@ -480,17 +480,18 @@ const TAG_RULESET = {
 };
 const APPROVED_BOT = { type: "Integration", id: 123, name: "release-bot" };
 
-test("the ruleset to create limits creating and updating the release tags, with admins let through", () => {
+test("the ruleset to create limits creating, updating and deleting the release tags, with admins let through", () => {
   const body = rulesetBody({ tagPattern: "v*", apps: [{ id: 123, name: "release-bot" }], teams: [{ id: 9, name: "releasers" }] });
   assert.equal(body.target, "tag");
   assert.equal(body.enforcement, "active");
   assert.deepEqual(body.conditions.ref_name, { include: ["refs/tags/v*"], exclude: [] });
-  assert.deepEqual(body.rules, [{ type: "creation" }, { type: "update" }]);
+  assert.deepEqual(body.rules, [{ type: "creation" }, { type: "update" }, { type: "deletion" }]);
   assert.deepEqual(body.bypass_actors, [ADMIN, RELEASE_BOT, { actor_id: 9, actor_type: "Team", bypass_mode: "always" }]);
   assert.throws(() => rulesetBody({ tagPattern: "v*", apps: [{ id: "abc", name: "x" }] }), /not an id/);
   const words = explainRuleset(body, new Map([["Integration:123", "release-bot"]]));
   assert.match(words, /Why: a pushed tag runs the workflow file from the tagged commit/);
   assert.match(words, /repository admins, app 123 \(release-bot\), team 9/);
+  assert.match(words, /can create, update or delete tags matching refs\/tags\/v\*/);
   assert.match(words, /Who it blocks: everyone not listed, including any workflow that makes release tags today/);
 });
 
@@ -516,19 +517,68 @@ test("a ruleset with only admins as bypass actors protects the tags, and one wit
   assert.equal(protects({ ...TAG_RULESET, bypass_actors: [ADMIN, { ...RELEASE_BOT, actor_id: 124 }] }, "v*", [APPROVED_BOT]), false);
 });
 
-test("a ruleset protects the tags only when it is on, covers the pattern, and limits both creating and updating", () => {
-  assert.equal(protects({ ...TAG_RULESET, conditions: { ref_name: { include: ["~ALL"], exclude: [] } } }, "v*"), true);
-  assert.equal(protects({ ...TAG_RULESET, enforcement: "evaluate" }, "v*"), false);
-  assert.equal(protects({ ...TAG_RULESET, enforcement: "disabled" }, "v*"), false);
-  assert.equal(protects({ ...TAG_RULESET, target: "branch" }, "v*"), false);
-  assert.equal(protects({ ...TAG_RULESET, rules: [{ type: "creation" }] }, "v*"), false);
-  assert.equal(protects({ ...TAG_RULESET, conditions: { ref_name: { include: ["refs/tags/release-*"], exclude: [] } } }, "v*"), false);
-  assert.equal(protects({ ...TAG_RULESET, conditions: { ref_name: { include: ["refs/tags/v*"], exclude: ["refs/tags/v*"] } } }, "v*"), false);
-  // Two rulesets can share the work, and then every bypass actor of both counts.
-  const creation = { ...TAG_RULESET, id: 1, rules: [{ type: "creation" }] };
-  const update = { ...TAG_RULESET, id: 2, rules: [{ type: "update" }] };
-  assert.equal(assess({ rulesets: [creation, update], tagPattern: "v*" }).status, "protected");
-  assert.equal(assess({ rulesets: [creation, { ...update, bypass_actors: [ADMIN, WRITE_ROLE] }], tagPattern: "v*" }).status, "unapproved");
+test("only a ruleset of one exact shape is accepted", () => {
+  const exact = (patch) => ({ ...TAG_RULESET, ...patch });
+  const include = (...entries) => ({ ref_name: { include: entries, exclude: [] } });
+  // The shapes that count: the release pattern, or all tags, written either way.
+  assert.equal(protects(TAG_RULESET, "v*"), true);
+  assert.equal(protects(exact({ conditions: include("~ALL") }), "v*"), true);
+  assert.equal(protects(exact({ conditions: include("refs/tags/*") }), "v*"), true);
+  assert.equal(protects(exact({ conditions: include("refs/tags/v*", "~ALL") }), "v*"), true);
+  assert.equal(protects(exact({ rules: [{ type: "creation" }, { type: "update" }, { type: "deletion" }, { type: "non_fast_forward" }] }), "v*"), true, "extra rules only add to it");
+  assert.equal(protects(exact({ conditions: { ref_name: { include: ["refs/tags/v*"] } } }), "v*"), true, "no exclude list is an empty one");
+
+  // Any exclusion is refused, a partial one too: it leaves the tags it names open.
+  for (const excluded of [["refs/tags/v1*"], ["refs/tags/v*"], ["refs/tags/v1.2.3"], ["~ALL"], ["refs/tags/**"]]) {
+    assert.equal(protects(exact({ conditions: { ref_name: { include: ["refs/tags/v*"], exclude: excluded } } }), "v*"), false, `exclude ${excluded}`);
+    assert.equal(protects(exact({ conditions: { ref_name: { include: ["~ALL"], exclude: excluded } } }), "v*"), false, `all tags, exclude ${excluded}`);
+  }
+  // Any other include is refused: narrower, different, wider than all tags can say, or mixed with something else.
+  for (const other of [["refs/tags/v1*"], ["refs/tags/release-*"], ["refs/tags/**"], ["refs/heads/*"], ["refs/tags/v*", "refs/tags/release-*"], ["~DEFAULT_BRANCH"], []]) {
+    assert.equal(protects(exact({ conditions: { ref_name: { include: other, exclude: [] } } }), "v*"), false, `include ${other}`);
+  }
+  assert.equal(protects(exact({ conditions: {} }), "v*"), false);
+  // A wider include is accepted only when everything else is exact too.
+  const all = { conditions: include("~ALL") };
+  assert.equal(protects(exact({ ...all, rules: [{ type: "creation" }, { type: "update" }] }), "v*"), false, "no deletion rule");
+  assert.equal(protects(exact({ ...all, enforcement: "evaluate" }), "v*"), false);
+  assert.equal(protects(exact({ ...all, target: "branch" }), "v*"), false);
+  assert.equal(protects(exact({ ...all, bypass_actors: [ADMIN, WRITE_ROLE] }), "v*"), false, "a write-role bypass actor");
+  // Each rule is needed.
+  for (const left of [["update", "deletion"], ["creation", "deletion"], ["creation", "update"]]) {
+    assert.equal(protects(exact({ rules: left.map((type) => ({ type })) }), "v*"), false, `only ${left}`);
+  }
+  assert.equal(protects(exact({ enforcement: "disabled" }), "v*"), false);
+  // The rules cannot be split between two rulesets.
+  const creation = exact({ id: 1, rules: [{ type: "creation" }] });
+  const rest = exact({ id: 2, rules: [{ type: "update" }, { type: "deletion" }] });
+  assert.equal(assess({ rulesets: [creation, rest], tagPattern: "v*" }).status, "missing");
+});
+
+test("a ruleset of another shape neither counts nor blocks", () => {
+  const exclusion = { ...TAG_RULESET, id: 50, name: "loose", conditions: { ref_name: { include: ["refs/tags/v*"], exclude: ["refs/tags/v1*"] } }, bypass_actors: [ADMIN, WRITE_ROLE] };
+  const otherInclude = { ...TAG_RULESET, id: 51, name: "elsewhere", conditions: { ref_name: { include: ["refs/tags/release-*"], exclude: [] } }, bypass_actors: [WRITE_ROLE] };
+  // On its own it does not count, and it is not reported as a ruleset with someone to approve.
+  assert.deepEqual(assess({ rulesets: [exclusion], tagPattern: "v*" }), { status: "missing" });
+  assert.deepEqual(assess({ rulesets: [exclusion, otherInclude], tagPattern: "v*" }), { status: "missing" });
+  // Beside an exact one it does not block it, whoever it lets bypass.
+  const result = assess({ rulesets: [exclusion, otherInclude, TAG_RULESET], tagPattern: "v*" });
+  assert.equal(result.status, "protected");
+  assert.deepEqual(result.rulesets, [TAG_RULESET]);
+  // A ruleset of the exact shape with an actor nobody approved is still listed, and still does not count.
+  const loose = { ...TAG_RULESET, id: 52, name: "wide open", bypass_actors: [ADMIN, WRITE_ROLE] };
+  assert.equal(assess({ rulesets: [loose], tagPattern: "v*" }).status, "unapproved");
+  assert.equal(assess({ rulesets: [exclusion, loose], tagPattern: "v*" }).unapproved.length, 1);
+});
+
+test("the ruleset Klaus creates passes its own check, for the pattern it renders", () => {
+  for (const tagPattern of ["v*", "release-*", "v[0-9]*"]) {
+    const created = { ...rulesetBody({ tagPattern, apps: [{ id: 123, name: "release-bot" }] }), id: 99 };
+    assert.equal(assess({ rulesets: [created], tagPattern }).status, "unapproved", "an app is a bypass actor until someone approves it");
+    assert.equal(assess({ rulesets: [created], tagPattern, approved: [APPROVED_BOT] }).status, "protected");
+    assert.equal(protects({ ...rulesetBody({ tagPattern }), id: 99 }, tagPattern), true);
+    assert.equal(protects({ ...rulesetBody({ tagPattern }), id: 99 }, "other-*"), false, "and not for another pattern");
+  }
 });
 
 test("a ruleset whose bypass list was not returned is not known to protect anything", () => {
@@ -569,9 +619,16 @@ test("checkRuleset reads every active tag ruleset in full, and reports protected
 
   const second = { ...TAG_RULESET, id: 42, name: "also tags", bypass_actors: [ADMIN, WRITE_ROLE] };
   const both = fakeGh({ list: [...SUMMARIES, { id: 42, name: "also tags", target: "tag", enforcement: "active" }], full: { 41: TAG_RULESET, 42: second } });
-  const refused = checkRuleset({ repo, tagPattern: "v*", run: both.run });
-  assert.equal(refused.status, "unapproved", "a second ruleset with a write-role actor counts, even though the first is clean");
+  const beside = checkRuleset({ repo, tagPattern: "v*", run: both.run });
+  assert.equal(beside.status, "protected", "a second ruleset that lets the write role through does not block the clean one");
+  assert.deepEqual(beside.rulesets, [TAG_RULESET]);
   assert.equal(both.calls.length, 3, "every active tag ruleset is read in full");
+
+  const onlyLoose = fakeGh({ list: SUMMARIES, full: { 41: { ...TAG_RULESET, conditions: { ref_name: { include: ["refs/tags/v*"], exclude: ["refs/tags/v1*"] } } } } });
+  assert.deepEqual(checkRuleset({ repo, tagPattern: "v*", run: onlyLoose.run }), { status: "missing" });
+
+  const refused = checkRuleset({ repo, tagPattern: "v*", run: fakeGh({ list: SUMMARIES, full: { 41: second } }).run });
+  assert.equal(refused.status, "unapproved");
 
   const none = fakeGh({ list: SUMMARIES.slice(0, 2) });
   assert.deepEqual(checkRuleset({ repo, tagPattern: "v*", run: none.run }), { status: "missing" });
@@ -596,7 +653,7 @@ test("createRuleset posts the body to the rulesets endpoint and nothing else", (
 test("the workflow is not rendered in release mode without a tag ruleset, and is in schedule mode", () => {
   const repo = sampleRepo();
   const options = { repo, install: "pnpm install --frozen-lockfile", storybookBuild: "pnpm build-storybook" };
-  assert.throws(() => writeWorkflow({ ...options, checkTags: () => ({ status: "missing" }) }), /No active ruleset limits who can create or update tags matching v\*/);
+  assert.throws(() => writeWorkflow({ ...options, checkTags: () => ({ status: "missing" }) }), /No ruleset of the shape Klaus needs .* protects tags matching v\*/);
   assert.equal(existsSync(path.join(repo, ".github/workflows/klaus.yml")), false, "nothing is written");
   assert.throws(() => writeWorkflow({ ...options, checkTags: () => ({ status: "unknown", reason: "gh api failed: HTTP 403" }) }), /could not be read \(gh api failed: HTTP 403\)/);
   assert.equal(requireTagRuleset({ repo, config: resolveConfig(CONFIG), checkTags: () => ({ status: "protected", rulesets: [{ id: 3, name: "x" }] }) })[0].name, "x");
@@ -667,8 +724,10 @@ esac
 
   const shown = run([]);
   assert.equal(shown.status, 0, shown.stderr);
-  assert.match(shown.stdout, /No active ruleset limits who can create or update tags matching v\*\. Nothing has been created/);
+  assert.match(shown.stdout, /No ruleset of the shape Klaus needs limits who can create, update or delete tags matching v\*\. Nothing has been created/);
   assert.match(shown.stdout, /"target": "tag"/);
+  assert.match(shown.stdout, /Only a ruleset of exactly this shape counts/);
+  assert.match(shown.stdout, /\{ ?"type": "deletion"|"type": "deletion"/);
   assert.equal(existsSync(`${log}.body`), false, "nothing was posted");
 
   const created = run(["--create", "--bypass-app", "123:release-bot"]);
@@ -680,9 +739,16 @@ esac
   rmSync(`${log}.body`);
   const summaries = [{ id: 41, name: "release tags", target: "tag", enforcement: "active" }];
   const already = run(["--create"], { list: summaries, full: TAG_RULESET });
-  assert.match(already.stdout, /protected by "release tags" \(id 41\)\. Every bypass actor is a repository admin or approved by name/);
+  assert.match(already.stdout, /protected by "release tags" \(id 41\), which has the shape Klaus needs\. Every bypass actor is a repository admin or approved by name/);
   assert.match(already.stdout, /Nothing to create/);
   assert.equal(existsSync(`${log}.body`), false, "nothing was posted when a ruleset exists");
+
+  // A ruleset with an exclusion does not count, so the command offers to create one and does not list its actors.
+  const excluded = { ...TAG_RULESET, conditions: { ref_name: { include: ["refs/tags/v*"], exclude: ["refs/tags/v1*"] } }, bypass_actors: [ADMIN, WRITE_ROLE] };
+  const ignored = run([], { list: summaries, full: excluded });
+  assert.equal(ignored.status, 0, ignored.stderr);
+  assert.match(ignored.stdout, /No ruleset of the shape Klaus needs/);
+  assert.doesNotMatch(ignored.stdout + ignored.stderr, /repository role 4/);
 
   // A write-role actor is listed and refused, and the exit code says so.
   const loose = { ...TAG_RULESET, bypass_actors: [ADMIN, WRITE_ROLE] };
