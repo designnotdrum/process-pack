@@ -54,9 +54,9 @@ function fingerprintOf({ root, file, kind }) {
   const abs = path.join(root, file)
   if (kind !== 'icon-set') return hashText(fs.readFileSync(abs, 'utf8'))
   const folder = toPosix(abs)
-  return walk(folder, (name) => !name.startsWith('.'))
-    .map((inside) => [path.posix.relative(folder, inside), hashText(fs.readFileSync(inside))])
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  const names = walk(folder, (name) => !name.startsWith('.')).map((inside) => path.posix.relative(folder, inside))
+  // The contents are read as bytes, not as text, so an icon that is not valid UTF-8 still changes the hash when it changes.
+  return names.sort().map((name) => [name, hashText(fs.readFileSync(path.join(folder, name)))])
 }
 
 /**
