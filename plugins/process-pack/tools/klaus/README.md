@@ -88,6 +88,10 @@ Each run writes one JSON file to `.klaus/reports/`, named `report-<time>.json`. 
 
 `templates/klaus.yml` is a GitHub Actions workflow for `.github/workflows/klaus.yml`. It refreshes the inventory, then runs `cli.mjs run --model-free` for the release tag, the schedule or a manual dispatch. It keeps the state file in the Actions cache. The cache can be dropped by GitHub, and the next run then covers only the newest release.
 
+### Where the secrets live
+
+A repository secret can be read from a workflow run on any branch. Set `trigger.secretsEnvironment` (for example `klaus-release`) to keep the workflow's secrets in a GitHub environment instead. The environment's deployment rules allow only the default branch and, in release mode, the release tag pattern, so a run from any other branch or tag is refused before it starts. The workflow's job names the environment, and every render of the workflow reads the environment's rules again and refuses when they have changed. `node install/install.mjs environment --repo <repo>` shows what it would create, creates it with `--create`, and checks with `gh api` that each secret is in the environment and not left as a repository secret. It never moves a secret. Step 8.6 of the design-onboard skill has the steps and what was checked in GitHub's documentation.
+
 ### Tests
 
 ```sh

@@ -146,8 +146,8 @@ Run this step after DESIGN.md exists, and run its commands from the repo root. A
 - **Limits come from `klaus-outputs.md`.** Quote the limit with its source and date. A limit older than a month is checked against the platform's own page first, and you say you did.
 - **One output per screen.** Each screen shows the route, the cost lines, the limits and the default, then asks one question.
 - **Secrets stay out.** The config holds names, never values. Never ask for a token and never print one. The person sets the values in the repo's CI secrets.
-- **Nothing that is not on the default branch gets a secret.** The workflow refuses a commit that is not on the default branch, ignores release tags that are not, and gives the Vercel token to one step only. Release mode is not set up without the tag ruleset in 8.5.
-- **Steps 8.1 to 8.9 run no model and write nothing to Figma.** They make no deploy and no Codex call. Step 8.10 runs the models the person approved, and only after they have seen what they cost.
+- **Nothing that is not on the default branch gets a secret.** The workflow refuses a commit that is not on the default branch, ignores release tags that are not, and gives the Vercel token to one step only. Release mode is not set up without the tag ruleset in 8.5. The secrets are kept in an environment that only the default branch and the release tags can use when the person says yes in 8.6, because a repository secret can be read from a workflow run on any branch.
+- **Steps 8.1 to 8.10 run no model and write nothing to Figma.** They make no deploy and no Codex call. Step 8.11 runs the models the person approved, and only after they have seen what they cost.
 
 ### 8.1 Preflight, read only
 
@@ -157,7 +157,7 @@ Run this step after DESIGN.md exists, and run its commands from the repo root. A
 4. **Package manager.** From the lockfile and `packageManager` in package.json. Work out the repo's install command: `pnpm install --frozen-lockfile`, `npm ci`, or `yarn install --immutable` (`--frozen-lockfile` before Yarn 2). Look at the repo's own CI workflow too. If it has install steps (a pinned `pnpm/action-setup`, for instance), copy those steps without the checkout into a file in the scratch folder and use them in place of the command.
 5. **CI.** Klaus renders a GitHub Actions workflow and nothing else. Look for `.github/workflows` and a GitHub remote (`git remote -v`). If the repo is not on GitHub Actions, do everything except the workflow, and say so. Note the default branch (`gh repo view --json defaultBranchRef`): the workflow builds only commits that are on it, and treats a tag as a release only when its commit is on it.
 6. **An earlier install.** If `scripts/klaus/VERSION.txt` or `klaus.config.json` exists, this is an upgrade. Show the version line, keep the existing answers as defaults, and expect `copy` to refuse a hand-edited copy.
-7. Make a scratch folder with `mktemp -d`. Everything until step 8.7 goes there. After each answer in 8.3 and 8.4, update `<scratch>/klaus.config.json` (outputs on or off with their target, the cap, the selection) before you re-run the cost command, because the command reads that file.
+7. Make a scratch folder with `mktemp -d`. Everything until step 8.8 goes there. After each answer in 8.3 and 8.4, update `<scratch>/klaus.config.json` (outputs on or off with their target, the cap, the selection) before you re-run the cost command, because the command reads that file.
 
 ### 8.2 Inventory folders
 
@@ -215,10 +215,36 @@ A pushed tag runs the workflow file from the tagged commit, so a check inside th
 3. **Find who makes release tags today.** Look in `.github/workflows` for `git tag`, `git push --tags`, `gh release create` or a release action, and ask. The ruleset refuses everyone not on its list, including that workflow. Repository admins are always on the list. Add a GitHub App with `--bypass-app <id>:<name>` (`gh api /apps/<slug> --jq .id` finds the id) or a team with `--bypass-team <id>:<name>`; adding one is also approving it. Whether a workflow's default `GITHUB_TOKEN` can be put on the list is unverified, so a workflow that cuts the tags needs an App token, or the schedule.
 4. **Show the plan and ask.** Show what the command printed: why it is needed, why only this shape counts, who can still push release tags, who is blocked, and the ruleset itself. Ask: create it, use the schedule instead, or leave release mode off.
 5. **Create it only after a yes.** Run the same command with `--create` and the same bypass flags. It checks again first, and creates nothing if a ruleset now exists. Show the id it prints.
-6. **Record the approvals.** When any actor besides admins is on the list (approved with `--approve`, or added with `--bypass-app` or `--bypass-team`), the command prints a line starting `Record this in klaus.config.json`. Put exactly that list under `trigger.approvedTagBypass` when you write the config in 8.7. Admins are never listed. With only admins, leave it out.
+6. **Record the approvals.** When any actor besides admins is on the list (approved with `--approve`, or added with `--bypass-app` or `--bypass-team`), the command prints a line starting `Record this in klaus.config.json`. Put exactly that list under `trigger.approvedTagBypass` when you write the config in 8.8. Admins are never listed. With only admins, leave it out.
 7. **On no,** set `trigger.mode` to `schedule` (ask for the cron) or to a one-off run, and say plainly that release mode was left off because the tags are unprotected.
 
-### 8.6 Create the Vercel project
+### 8.6 Keep the secrets in an environment
+
+Skip this when no output that is on reads a secret. `install.mjs environment` says so and calls nothing.
+
+A repository secret can be read by a workflow run from any branch. Anyone with write access can push a branch that carries a workflow of their own and print the secret, and where agent accounts open pull requests that includes the agents. A secret kept in a GitHub environment is different: GitHub checks the environment's deployment rules before a job starts, and refuses a job that runs from a branch or tag the rules do not name. Such a job never sees the secret.
+
+The rules Klaus sets, and the only ones it accepts: "selected branches and tags" is on; the default branch is allowed; in release mode the release tag pattern from 8.5 is allowed as a tag rule; nothing else is. Only the people the tag ruleset lets push those tags can reach the secrets from a tag, so run 8.5 first. A scheduled run, and a manual run from the default branch, run on the default branch.
+
+What was checked, on 2026-10-19:
+
+- **Rules can name tags as well as branches.** The environment's "Deployment branches and tags" setting, "Selected branches and tags", takes a rule with a ref type of Branch or Tag. Patterns are Ruby fnmatch, where `*` does not match `/`, as in the ruleset ([Managing environments for deployment](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments), [Deployments and environments](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments#deployment-branches-and-tags), [REST API for deployment branch policies](https://docs.github.com/en/rest/deployments/branch-policies)).
+- **Plans.** Environments and deployment branches and tags are available in public repos on every current plan. In a private repo they need GitHub Pro, Team or Enterprise (same first page; "Who can use this feature"). The required reviewers, wait timer and admin bypass rules are public-only on Free, Pro and Team, and Klaus uses none of them. A private repo on Free cannot use this step. What `gh` says there is unverified.
+- **Runs.** The rule is matched against the run's `GITHUB_REF`. A scheduled run's ref is the default branch and a pushed tag's ref is `refs/tags/<tag>` ([events that trigger workflows](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)). Tested on a scratch private repo (deleted afterwards) with the rules Klaus sets: jobs on `main` and on tag `v1.0.0` ran, and jobs on a branch and on tag `x1` were refused before any step ran, with `environment: <name>` and with `deployment: false` ([job environment syntax](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idenvironment)). A scheduled run could not be started on demand, so it was not tested, and only the documented ref says it runs on the default branch.
+- **A workflow that names an environment that does not exist creates it with no rules.** So the environment is made here, before the workflow is rendered with its name.
+
+1. **Ask.** Say what it is for in two sentences: the secrets stay repository secrets that any branch's workflow can read, or move to an environment that only the default branch and the release tags can use. Ask: keep them in an environment, or leave them as repository secrets. On no, go on to 8.7, leave `trigger.secretsEnvironment` out of the config, and say plainly in the report that the secrets are readable from any branch.
+2. **Look.** This needs `gh` signed in with admin rights on the repo. `install.mjs environment --repo <repo> --config <scratch>/klaus.config.json` reads the default branch and the environment `klaus-release` (`--name` picks another). The outcomes:
+   - **The rules are exactly right.** It says so and goes to the secrets (step 5).
+   - **No environment.** It shows why it is needed, who it blocks, the rules and the two kinds of call it would make, and creates nothing. Go to step 3.
+   - **The environment exists with other rules.** It lists each difference (a branch pattern that takes in every branch, a missing tag rule, a renamed default branch, "protected branches only") and stops. Klaus never changes an environment that exists, because it cannot see what else uses it. The person fixes it in GitHub (Settings, Environments, the name, Deployment branches and tags), or picks another name with `--name`. Run the command again.
+   - **It could not be read** (no admin rights, or a private repo on a plan without environments). Say so, leave the secrets as repository secrets, and say plainly in the report that they are readable from any branch.
+3. **Show the plan and ask.** Show what the command printed: why, what it does, who it blocks, and the calls. Ask: create it, or leave the secrets as repository secrets.
+4. **Create it only after a yes.** Run the same command with `--create`. It reads again first, and creates nothing if the environment now exists. It turns on selected branches and tags, then adds one rule for the default branch and, in release mode, one for the tag pattern.
+5. **The secrets.** Klaus never moves a secret, and GitHub does not show a secret's value, so it could not copy one. For each secret the command prints `gh secret set <NAME> --env <environment>`: the person runs it in their own terminal, `gh` asks for the value, and the value comes from their own secret store. Never ask for a value and never print one. Then run the command again: it reads the secret names in the environment and in the repository. A secret is done when it is in the environment and no repository secret of the same name is left, because a repository secret can be read from any branch whatever the environment says. The command says when all of them are done and what is left otherwise (`gh secret delete <NAME>` removes the repository copy, once the environment copy works).
+6. **Record it.** The command prints a line starting `Record this in klaus.config.json`. Put exactly that under `trigger.secretsEnvironment` when you write the config in 8.8.
+
+### 8.7 Create the Vercel project
 
 Skip this when Storybook is off. The Storybook adapter needs the project to exist before its first run, and onboarding creates it. It is the one platform call in this step, it creates an empty project, and it needs `VERCEL_TOKEN`. Ask first, once. On yes, run the command with the token in the environment of that one command, from the person's secret store, never printed. The adapter passes its token the same way, and pins the same CLI version (`VERCEL_CLI_VERSION` in `adapters/storybook/vercel.mjs`). `vercel project create <name>` and the `VERCEL_TOKEN` variable are in Vercel's CLI docs (read 2026-10-19). The command has not been run against the pinned version:
 
@@ -228,7 +254,7 @@ VERCEL_TOKEN=<from the secret store> npx --yes vercel@<pinned version> project c
 
 Leave deployment protection at Vercel's default. The adapter deploys an empty index first, so the first release is a protected preview. On no, give the command as a next step.
 
-### 8.7 Write the files
+### 8.8 Write the files
 
 All answers are in. Now write to the repo, in this order:
 
@@ -254,7 +280,7 @@ All answers are in. Now write to the repo, in this order:
    }
    ```
 
-   In release mode, `trigger` also holds `"approvedTagBypass": [{ "type": "Integration", "id": 123, "name": "release-bot" }]` from 8.5, or nothing when only admins can bypass the ruleset.
+   In release mode, `trigger` also holds `"approvedTagBypass": [{ "type": "Integration", "id": 123, "name": "release-bot" }]` from 8.5, or nothing when only admins can bypass the ruleset. When the person said yes in 8.6, `trigger` also holds `"secretsEnvironment": "klaus-release"` (or the name they chose).
 
 2. **The scripts:** `node <klaus-src>/install/install.mjs copy --repo <repo>`. It copies Klaus to `scripts/klaus/` and writes `scripts/klaus/VERSION.txt`, one line with the Klaus version, the process-pack version and a hash of the files. Show that line. It refuses, even with `--force`, when `scripts/klaus`, any folder on the way to it, or any file in it is a symbolic link, because writing through a link changes a file outside the repo. Ask the person to remove the link. The same holds for the workflow file and `.github/workflows`.
 3. **Check the config:** `node scripts/klaus/frame/cli.mjs validate` must print that the file is valid. Fix what it names and run it again. Its errors never repeat a secret.
@@ -266,20 +292,20 @@ All answers are in. Now write to the repo, in this order:
      [--storybook-build "<command>"] [--playwright "<command>"] [--captures <file>]
    ```
 
-   Pass `--corepack` when package.json has `packageManager` for pnpm or Yarn and you are not using copied install steps. Pass `--node <major>` from `.nvmrc`, `.node-version` or `engines.node` when the repo has one. Leave `--playwright` out unless the default, `npx playwright install --with-deps chromium`, is wrong for the repo's package manager. `--storybook-build` is needed when Figma is on. It is the command that writes a static Storybook to `storybook-static` (or to `outputs.figma.options.storybookDir`, which you then set in the config). Read the script to see where it writes, and in a workspace run it in its package: `pnpm --filter <package> <script>`, `npm run <script> -w <package>` or `yarn workspace <package> <script>`. Do not run the build here. `--captures` names the file the version picker reads when the repo's visual checks write one. In release mode it first checks for the tag ruleset and stops without writing if there is none. The command prints the parts it kept, the ruleset that protects the tags, the secrets to set, and the result of actionlint. When actionlint is not installed it parses the YAML with python3 or ruby instead and says so. Report which check ran. If the check fails, fix the cause and render again.
+   Pass `--corepack` when package.json has `packageManager` for pnpm or Yarn and you are not using copied install steps. Pass `--node <major>` from `.nvmrc`, `.node-version` or `engines.node` when the repo has one. Leave `--playwright` out unless the default, `npx playwright install --with-deps chromium`, is wrong for the repo's package manager. `--storybook-build` is needed when Figma is on. It is the command that writes a static Storybook to `storybook-static` (or to `outputs.figma.options.storybookDir`, which you then set in the config). Read the script to see where it writes, and in a workspace run it in its package: `pnpm --filter <package> <script>`, `npm run <script> -w <package>` or `yarn workspace <package> <script>`. Do not run the build here. `--captures` names the file the version picker reads when the repo's visual checks write one. In release mode it first checks for the tag ruleset and stops without writing if there is none. When `trigger.secretsEnvironment` is set it then reads the environment and stops without writing if its rules are no longer the ones Klaus set, and the job names the environment. The command prints the parts it kept, the ruleset that protects the tags, the environment and what it allows, the secrets to set, and the result of actionlint. When actionlint is not installed it parses the YAML with python3 or ruby instead and says so. Report which check ran. If the check fails, fix the cause and render again.
 5. **Housekeeping.** Add `.klaus/` to `.gitignore` unless `git check-ignore .klaus/state.json` says it is already ignored. Look at how the repo treats other copied script folders (`scripts/dieter`, for instance) in its lint, format and test configs, and treat `scripts/klaus` the same.
 
-### 8.8 What the person does next
+### 8.9 What the person does next
 
 Show these as a short list. Do not run them.
 
-- **What the workflow refuses.** It builds only commits on the default branch. A tag whose commit is not on it is ignored, with a warning, and a pushed tag like that fails the run. State from an earlier run is restored only from a successful run of this workflow on the default branch or at a commit on it, and only if its files have the shape Klaus writes; otherwise the run starts from the newest release. The Vercel token is on the Run Klaus step alone, and the Storybook build inside it starts without the token.
+- **What the workflow refuses.** It builds only commits on the default branch. A tag whose commit is not on it is ignored, with a warning, and a pushed tag like that fails the run. State from an earlier run is restored only from a successful run of this workflow on the default branch or at a commit on it, and only if its files have the shape Klaus writes; otherwise the run starts from the newest release. The Vercel token is on the Run Klaus step alone, and the Storybook build inside it starts without the token. With an environment, a run from any branch or tag the environment does not name is refused before it starts, and every later render refuses if the environment's rules have changed.
 - **Push.** The workflow runs only once it is on the default branch of the GitHub repo. Push the commit and open a pull request the way the repo does for other changes.
 - **State.** Each run keeps Klaus's state in the `klaus-state` artifact for up to 90 days (the repo's artifact retention may be shorter). If no release runs for longer than that, the next run starts again from the newest release.
-- **Secrets** to add in the repo's settings, by name: the ones the command printed. Their values come from the person's own secret store.
+- **Secrets** to add by name: the ones the command printed. With an environment from 8.6 they go in the environment (`gh secret set <NAME> --env <environment>`), and the repository copy is deleted afterwards. Without one they go in the repo's settings, readable from any branch. Their values come from the person's own secret store.
 - **Figma, when on.** (1) Once, in the Figma desktop app: open the target file, then Plugins, Development, Import plugin from manifest, and pick `scripts/klaus/adapters/figma/plugin/manifest.json` in the repo. (2) On the machine that will run the relay, install the Codex CLI and sign it in to Figma: the steps are in `scripts/klaus/adapters/figma/relay/README.md`. (3) After the onboarding run has written the Figma data files, apply them with the plugin ("Klaus: apply a release"), then run `relay.mjs --reconcile` once so the relay does not send what the plugin wrote.
 
-### 8.9 The outputs' one-time estimate, and the commit
+### 8.10 The outputs' one-time estimate, and the commit
 
 Print the one-time estimate for the outputs that are on:
 
@@ -289,18 +315,18 @@ node <klaus-src>/install/install.mjs costs --repo <repo> --config klaus.config.j
 
 Commit `scripts/klaus/`, `klaus.config.json`, the workflow and `.gitignore` (when it changed) in one commit, apart from the design commits.
 
-The onboarding run builds the baseline. Ask the person to approve the estimate above, then go on to 8.10. If they decline, end here: the estimate and the commit are the result, and 8.8 lists what is left.
+The onboarding run builds the baseline. Ask the person to approve the estimate above, then go on to 8.11. If they decline, end here: the estimate and the commit are the result, and 8.9 lists what is left.
 
-### 8.10 The onboarding run
+### 8.11 The onboarding run
 
-The run builds the repo's baseline in three pull requests, in order, each on a branch stacked on the one before: (1) the list of components at 1.0.0, with the duplicates, (2) the missing purposes, written and then checked against where each component is used, (3) stories for components that have none, with the data-bound components listed with their screens. Its scripts and its README are in `<klaus-src>/onboard/` (and in `scripts/klaus/onboard/` after 8.7). Nothing is merged and nothing is filed in a tracker. The duplicates become files in the first pull request.
+The run builds the repo's baseline in three pull requests, in order, each on a branch stacked on the one before: (1) the list of components at 1.0.0, with the duplicates, (2) the missing purposes, written and then checked against where each component is used, (3) stories for components that have none, with the data-bound components listed with their screens. Its scripts and its README are in `<klaus-src>/onboard/` (and in `scripts/klaus/onboard/` after 8.8). Nothing is merged and nothing is filed in a tracker. The duplicates become files in the first pull request.
 
 Rules for this step:
 
 - **The estimate comes first.** `onboard.mjs run` refuses without the plan id that `onboard.mjs estimate` printed, and refuses again if the repo no longer gives that plan. Show the estimate as printed. Do not rework a number in it.
 - **Say what leaves the machine.** The estimate has a line for it. Read it out, because the files of each folder go to OpenAI and each component's props go to OpenRouter.
 - **Never ask for a key, never print one.** The checker's key stays in the person's secret store. Start the one command through it.
-- **The 8.9 commit must be on the default branch of the remote** before the run, because the pull requests are based on it. Without that, the run refuses. If the repo's workflow is to open a pull request for it, that pull request is merged first.
+- **The 8.10 commit must be on the default branch of the remote** before the run, because the pull requests are based on it. Without that, the run refuses. If the repo's workflow is to open a pull request for it, that pull request is merged first.
 - **Do not merge the run's pull requests, and do not retry by hand.** If the run stops, it names the branches it made. To start again, delete them and close their pull requests.
 
 1. **Preflight, read only.** `git status` is clean and the repo is on its default branch. `gh auth status` works. For a local writer, `codex --version` and `codex login status`. For a local checker, ask the person whether the key is in their secret store, and by what name (`OPENROUTER_API_KEY` unless they say otherwise).
@@ -321,4 +347,4 @@ Rules for this step:
 
 End with: the path taken, the direction or branch the user picked, the references, the Jev results with their sources, the checks installed and whether they pass, each UI Skill with its pinned commit, and anything left open.
 
-For Klaus, say whether it was skipped. If it was set up, give each output as on or off with its cost lines as `install.mjs costs` printed them, the spending cap, the trigger (in release mode, the tag ruleset that protects it, or why release mode was left off), the version line from `scripts/klaus/VERSION.txt`, the secrets still to set, the steps left for the person, which workflow check ran, and the onboarding run's one-time estimate. If the onboarding run happened, give its three pull request addresses and the estimate set beside the run's actual numbers.
+For Klaus, say whether it was skipped. If it was set up, give each output as on or off with its cost lines as `install.mjs costs` printed them, the spending cap, the trigger (in release mode, the tag ruleset that protects it, or why release mode was left off), whether the secrets are kept in an environment limited to the default branch and the release tags or are repository secrets that any branch's workflow can read, the version line from `scripts/klaus/VERSION.txt`, the secrets still to set, the steps left for the person, which workflow check ran, and the onboarding run's one-time estimate. If the onboarding run happened, give its three pull request addresses and the estimate set beside the run's actual numbers.
