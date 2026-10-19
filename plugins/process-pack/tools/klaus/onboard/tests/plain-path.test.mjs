@@ -53,3 +53,13 @@ test('a path outside the repo is refused', () => {
     r.cleanup()
   }
 })
+
+test('a file directly in the repo root is written', () => {
+  const r = repo()
+  try {
+    writePlainFile(r.repo, path.join(r.repo, 'inventory.json'), '{}')
+    assert.equal(fs.readFileSync(path.join(r.repo, 'inventory.json'), 'utf8'), '{}')
+  } finally {
+    r.cleanup()
+  }
+})

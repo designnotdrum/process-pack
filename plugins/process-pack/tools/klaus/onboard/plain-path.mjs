@@ -48,7 +48,8 @@ export function mkdirPlain(repo, directory) {
 /** Writes a file to a temporary name in its folder, then renames it over the destination. */
 export function writePlainFile(repo, file, data) {
   const wanted = assertPlainPath(repo, file)
-  mkdirPlain(repo, path.dirname(wanted))
+  // A file at the repo root has the repo itself as its folder, and that folder is the base, not a path to check.
+  if (path.resolve(repo) !== path.dirname(wanted)) mkdirPlain(repo, path.dirname(wanted))
   const temporary = path.join(path.dirname(wanted), `.${path.basename(wanted)}.${process.pid}.${Date.now()}.tmp`)
   try {
     fs.writeFileSync(temporary, data, { flag: 'wx' })

@@ -1,0 +1,25 @@
+#!/usr/bin/env node
+// A stand-in for gh that records pull request calls in STUB_GH_LOG.
+import fs from 'node:fs'
+
+const args = process.argv.slice(2)
+const log = process.env.STUB_GH_LOG
+const record = (entry) => log && fs.appendFileSync(log, `${JSON.stringify(entry)}\n`)
+const value = (flag) => args[args.indexOf(flag) + 1]
+if (args[0] === 'auth') process.exit(0)
+if (args[0] === 'repo') {
+  console.log(process.env.STUB_DEFAULT_BRANCH ?? 'main')
+  process.exit(0)
+}
+if (args[0] === 'pr' && args[1] === 'create') {
+  const number = (log && fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter((l) => l.includes('"create"')).length : 0) + 1
+  record({ action: 'create', base: value('--base'), head: value('--head'), title: value('--title'), body: fs.readFileSync(value('--body-file'), 'utf8'), number })
+  console.log(`https://github.com/acme/sample/pull/${number}`)
+  process.exit(0)
+}
+if (args[0] === 'pr' && args[1] === 'edit') {
+  record({ action: 'edit', number: Number(args[2]), body: fs.readFileSync(value('--body-file'), 'utf8') })
+  process.exit(0)
+}
+console.error(`stub gh: unexpected ${args.join(' ')}`)
+process.exit(1)
