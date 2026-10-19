@@ -154,9 +154,9 @@ Run this step after DESIGN.md exists. Ask once whether to set Klaus up now. If n
 2. **The repo's own TypeScript.** The inventory reads components with the repo's `typescript` package. Not installed: stop and say to install it.
 3. **Storybook.** Find a `.storybook` folder (`git ls-files` for `*/.storybook/*`) and the script that runs `storybook build`. Without Storybook, Storybook and Figma cannot be turned on: Figma draws each component from its story. Say that Klaus does not install Storybook.
 4. **Package manager.** From the lockfile and `packageManager` in package.json. Work out the repo's install command: `pnpm install --frozen-lockfile`, `npm ci`, or `yarn install --immutable` (`--frozen-lockfile` before Yarn 2). Look at the repo's own CI workflow too. If it has install steps (a pinned `pnpm/action-setup`, for instance), copy those steps without the checkout into a file in the scratch folder and use them in place of the command.
-5. **CI.** GitHub Actions only. On other CI, do everything except the workflow and say so.
+5. **CI.** Klaus renders a GitHub Actions workflow and nothing else. Look for `.github/workflows` and a GitHub remote (`git remote -v`). If the repo is not on GitHub Actions, do everything except the workflow, and say so.
 6. **An earlier install.** If `scripts/klaus/VERSION.txt` or `klaus.config.json` exists, this is an upgrade. Show the version line, keep the existing answers as defaults, and expect `copy` to refuse a hand-edited copy.
-7. Make a scratch folder with `mktemp -d`. Everything until step 8.6 goes there.
+7. Make a scratch folder with `mktemp -d`. Everything until step 8.6 goes there. After each answer in 8.3 and 8.4, update `<scratch>/klaus.config.json` (outputs on or off with their target, the cap, the selection) before you re-run the cost command, because the command reads that file.
 
 ### 8.2 Inventory folders
 
@@ -168,7 +168,7 @@ node <klaus-src>/inventory/inventory.mjs --root <repo> --out <scratch> <folder> 
 
 It prints one line for each folder. A folder under `packages/` is `shared`, any other is `app`. Show those lines.
 
-Write `<scratch>/klaus.config.json` as a draft with both outputs off, `inventory.folders`, and `selection` set to the defaults in 8.4. The cost command reads it.
+Write `<scratch>/klaus.config.json` as a draft with both outputs off, `inventory.folders`, and `selection` set to the defaults in 8.4 (`screens.mode` `none` until 8.4 asks about screens). The cost command reads it.
 
 ### 8.3 The outputs, one per screen
 
@@ -180,10 +180,10 @@ node <klaus-src>/install/install.mjs costs --repo <repo> --config <scratch>/klau
 
 Then show one output at a time: its block from that text, then its limits and credential from `klaus-outputs.md`, then the default and the question. Re-run the command with `--outputs <name>` when an answer changes a cost.
 
-1. **Storybook.** Default on when the repo has Storybook, otherwise off. Ask for the Vercel project name (suggest `<repo>-storybook`) and whether a Vercel team owns it. Secrets: `VERCEL_TOKEN`, and `VERCEL_ORG_ID` for a team. Storybook ignores the component selection and shows every component with a story.
+1. **Storybook.** Default on when the repo has Storybook, otherwise off. Ask for the Vercel project name (suggest the `name` in package.json without its scope, plus `-storybook`) and whether a Vercel team owns it. Secrets: `VERCEL_TOKEN`, and `VERCEL_ORG_ID` for a team. Storybook ignores the component selection and shows every component with a story.
 2. **Figma.** Ask whether the team uses Figma. On only if they say yes and the repo has Storybook and `@playwright/test`. Say plainly that there are two parts: the plugin does the first load at no token cost, and the relay does the updates after each release at the cost printed. Then ask the two Figma settings:
    - the Figma file to write to (a file URL or key, in a file the person can edit), and
-   - the relay's cost cap for one run, `spendingCap.maxRelayTokens`, with the default and the component limit `maxComponentWrites` shown. After the answer, re-run the cost command so the line says how many versions a run sends under that cap.
+   - the relay's cost cap for one run, `spendingCap.maxRelayTokens`, with the default and the component limit `maxComponentWrites` shown. After the answer, re-run the cost command so the cap line says how many of the selected versions a run sends under that cap.
 3. **Penpot and Pencil.** Off. Show the "no adapter yet" line and the limits. Nothing to ask. Write `{ "enabled": false }` for each, so the choice is recorded.
 4. **Claude Design and Paper.** Show the reason each cannot run unattended and the limit. Nothing to ask, and they have no entry in the config.
 
@@ -199,10 +199,10 @@ If a changed selection moves a cost, re-run the cost command and show the new li
 
 ### 8.5 Create the Vercel project
 
-Skip this when Storybook is off. The Storybook adapter needs the project to exist before its first run, and onboarding creates it. It is the one platform call in this step, it creates an empty project, and it needs `VERCEL_TOKEN`. Ask first, once. On yes, run the command with the token in the environment of that one command, from the person's secret store, never printed:
+Skip this when Storybook is off. The Storybook adapter needs the project to exist before its first run, and onboarding creates it. It is the one platform call in this step, it creates an empty project, and it needs `VERCEL_TOKEN`. Ask first, once. On yes, run the command with the token in the environment of that one command, from the person's secret store, never printed. The adapter passes its token the same way, and pins the same CLI version (`VERCEL_CLI_VERSION` in `adapters/storybook/vercel.mjs`). The command name comes from the adapter's README and has not been run:
 
 ```bash
-npx vercel@64.5.0 project create <project> [--scope <team>]
+VERCEL_TOKEN=<from the secret store> npx --yes vercel@<pinned version> project create <project> --non-interactive [--scope <team>]
 ```
 
 Leave deployment protection at Vercel's default. The adapter deploys an empty index first, so the first release is a protected preview. On no, give the command as a next step.
@@ -243,13 +243,15 @@ All answers are in. Now write to the repo, in this order:
      [--storybook-build "<command>"] [--playwright "<command>"] [--captures <file>]
    ```
 
-   `--storybook-build` is needed when Figma is on. It is the command that writes a static Storybook to `storybook-static` (or to `outputs.figma.options.storybookDir`). `--captures` names the file the version picker reads when the repo's visual checks write one. The command prints the parts it kept, the secrets to set, and the result of actionlint. When actionlint is not installed it parses the YAML with python3 or ruby instead and says so. Report which check ran. If the check fails, fix the cause and render again.
-5. **Housekeeping.** Add `.klaus/` to `.gitignore`. Look at how the repo treats other copied script folders (`scripts/dieter`, for instance) in its lint, format and test configs, and treat `scripts/klaus` the same.
+   Pass `--corepack` when package.json has `packageManager` for pnpm or Yarn and you are not using copied install steps. Pass `--node <major>` from `.nvmrc`, `.node-version` or `engines.node` when the repo has one. `--storybook-build` is needed when Figma is on. It is the command that writes a static Storybook to `storybook-static` (or to `outputs.figma.options.storybookDir`, which you then set in the config). Read the script to see where it writes, and in a workspace run it in its package: `pnpm --filter <package> <script>`, `npm run <script> -w <package>` or `yarn workspace <package> <script>`. Do not run the build here. `--captures` names the file the version picker reads when the repo's visual checks write one. The command prints the parts it kept, the secrets to set, and the result of actionlint. When actionlint is not installed it parses the YAML with python3 or ruby instead and says so. Report which check ran. If the check fails, fix the cause and render again.
+5. **Housekeeping.** Add `.klaus/` to `.gitignore` unless `git check-ignore .klaus/state.json` says it is already ignored. Look at how the repo treats other copied script folders (`scripts/dieter`, for instance) in its lint, format and test configs, and treat `scripts/klaus` the same.
 
 ### 8.7 What the person does next
 
 Show these as a short list. Do not run them.
 
+- **Push.** The workflow runs only once it is on the default branch of the GitHub repo. Push the commit and open a pull request the way the repo does for other changes.
+- **State.** Each run keeps Klaus's state in the `klaus-state` artifact for up to 90 days (the repo's artifact retention may be shorter). If no release runs for longer than that, the next run starts again from the newest release.
 - **Secrets** to add in the repo's settings, by name: the ones the command printed. Their values come from the person's own secret store.
 - **Figma, when on.** (1) Once, in the Figma desktop app: open the target file, then Plugins, Development, Import plugin from manifest, and pick `scripts/klaus/adapters/figma/plugin/manifest.json` in the repo. (2) On the machine that will run the relay, install the Codex CLI and sign it in to Figma: the steps are in `scripts/klaus/adapters/figma/relay/README.md`. (3) After the onboarding run has written the Figma data files, apply them with the plugin ("Klaus: apply a release"), then run `relay.mjs --reconcile` once so the relay does not send what the plugin wrote.
 
@@ -261,9 +263,9 @@ Print the one-time estimate for the outputs that are on:
 node <klaus-src>/install/install.mjs costs --repo <repo> --config klaus.config.json --inventory <scratch>/inventory.json --enabled
 ```
 
-Commit `scripts/klaus/`, `klaus.config.json`, the workflow and `.gitignore` in one commit, apart from the design commits.
+Commit `scripts/klaus/`, `klaus.config.json`, the workflow and `.gitignore` (when it changed) in one commit, apart from the design commits.
 
-The onboarding run builds the baseline (process-pack issue #30). It starts here, after the person has read the estimate and said yes. If that step is not in this skill yet, stop after the estimate and say what is left.
+The onboarding run builds the baseline (process-pack issue #30). Ask the person to approve the estimate. On yes, continue with the onboarding run, which is that issue's step. When this skill has no such step yet, say so and end here: the estimate and the commit are the result, and 8.7 lists what is left.
 
 ## Report
 

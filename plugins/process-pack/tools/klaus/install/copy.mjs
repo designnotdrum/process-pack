@@ -3,7 +3,7 @@
  *
  * The copy holds what runs: the frame, the inventory, the version picker, the
  * reuse check and the adapters, with the Figma plugin's built files. It leaves
- * out tests, fixtures, the lockfile, package.json (the folder runs with plain
+ * out tests, fixtures, the lockfile, .gitignore, package.json (the folder runs with plain
  * node and installs nothing), the workflow template and this install folder.
  *
  * `VERSION.txt` is one line: the Klaus version, the process-pack version it came
@@ -20,7 +20,7 @@ import { UserError } from "../frame/errors.mjs";
 export const SOURCE_ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 const SKIP_DIRECTORIES = new Set(["test", "tests", "fixtures", "node_modules", "install", "templates"]);
-const SKIP_FILES = new Set(["package.json", "pnpm-lock.yaml", ".DS_Store"]);
+const SKIP_FILES = new Set(["package.json", "pnpm-lock.yaml", ".gitignore", ".DS_Store"]);
 
 /** Not VERSION: on a case-insensitive disk (macOS) that name is also the version/ folder. */
 export const VERSION_FILE = "VERSION.txt";
