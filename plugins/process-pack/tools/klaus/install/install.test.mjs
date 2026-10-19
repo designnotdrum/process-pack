@@ -5,15 +5,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { resolveConfig } from "../frame/config.mjs";
+import { checkState } from "../ci/check-state.mjs";
 import { copyKlaus, listFiles, SOURCE_ROOT, versionLine } from "./copy.mjs";
 import { estimateOutputs, formatCosts } from "./costs.mjs";
-import { checkRuleset, createRuleset, explainRuleset, protects, rulesetBody, RULESET_NAME } from "./ruleset.mjs";
+import { assess, checkRuleset, createRuleset, explainRuleset, parseActor, protects, rulesetBody, RULESET_NAME } from "./ruleset.mjs";
 import { lintWorkflow, renderWorkflow, requireTagRuleset, writeWorkflow } from "./workflow.mjs";
 
 const tempDir = () => mkdtempSync(path.join(tmpdir(), "klaus-install-"));
@@ -198,7 +199,7 @@ test("state is kept in an artifact, not the Actions cache, and every upload incl
   assert.doesNotMatch(text, /actions\/cache/);
   assert.match(text, /permissions:\n {2}contents: read\n {2}actions: read/);
   assert.match(text, /name: klaus-state\n/);
-  assert.match(text, /gh run download "\$run_id" --name klaus-state --dir \.klaus/);
+  assert.match(text, /gh run download "\$run_id" --name klaus-state --dir "\$dir"/);
   // Everything under .klaus is hidden to upload-artifact, which skips hidden files unless told not to.
   const uploads = text.match(/uses: actions\/upload-artifact@/g).length;
   assert.equal(text.match(/include-hidden-files: true/g).length, uploads);
@@ -244,7 +245,7 @@ test("the workflow refuses to render without the repo's install, or Figma withou
 
 test("a written workflow passes actionlint when it is installed", (t) => {
   const repo = sampleRepo();
-  const result = writeWorkflow({ repo, install: "pnpm install --frozen-lockfile", storybookBuild: "pnpm build-storybook -o storybook-static", checkTags: () => ({ status: "protected", ruleset: { id: 1, name: RULESET_NAME } }) });
+  const result = writeWorkflow({ repo, install: "pnpm install --frozen-lockfile", storybookBuild: "pnpm build-storybook -o storybook-static", checkTags: () => ({ status: "protected", rulesets: [{ id: 1, name: RULESET_NAME }] }) });
   assert.equal(result.destination, path.join(repo, ".github/workflows/klaus.yml"));
   assert.ok(readFileSync(result.destination, "utf8").length > 0, "the workflow was written");
   if (result.lint.tool !== "actionlint") t.skip(`actionlint is not installed (${result.lint.tool} ran instead)`);
@@ -464,28 +465,58 @@ test("a run started from a branch that is not on main is refused, and a tag on m
 // The tag ruleset release mode needs.
 // ---------------------------------------------------------------------------------------------
 
-const TAG_RULESET = { id: 41, name: "release tags", target: "tag", enforcement: "active", conditions: { ref_name: { include: ["refs/tags/v*"], exclude: [] } }, rules: [{ type: "creation" }, { type: "update" }, { type: "deletion" }] };
+const ADMIN = { actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "always" };
+const WRITE_ROLE = { actor_id: 4, actor_type: "RepositoryRole", bypass_mode: "always" };
+const RELEASE_BOT = { actor_id: 123, actor_type: "Integration", bypass_mode: "always" };
+const TAG_RULESET = {
+  id: 41,
+  name: "release tags",
+  target: "tag",
+  enforcement: "active",
+  bypass_actors: [ADMIN],
+  conditions: { ref_name: { include: ["refs/tags/v*"], exclude: [] } },
+  rules: [{ type: "creation" }, { type: "update" }, { type: "deletion" }],
+  _links: { html: { href: "https://github.com/acme/sample/rules/41" } },
+};
+const APPROVED_BOT = { type: "Integration", id: 123, name: "release-bot" };
 
 test("the ruleset to create limits creating and updating the release tags, with admins let through", () => {
-  const body = rulesetBody({ tagPattern: "v*", apps: ["123"], teams: [9] });
+  const body = rulesetBody({ tagPattern: "v*", apps: [{ id: 123, name: "release-bot" }], teams: [{ id: 9, name: "releasers" }] });
   assert.equal(body.target, "tag");
   assert.equal(body.enforcement, "active");
   assert.deepEqual(body.conditions.ref_name, { include: ["refs/tags/v*"], exclude: [] });
   assert.deepEqual(body.rules, [{ type: "creation" }, { type: "update" }]);
-  assert.deepEqual(body.bypass_actors, [
-    { actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "always" },
-    { actor_id: 123, actor_type: "Integration", bypass_mode: "always" },
-    { actor_id: 9, actor_type: "Team", bypass_mode: "always" },
-  ]);
-  assert.throws(() => rulesetBody({ tagPattern: "v*", apps: ["abc"] }), /not an id/);
-  const words = explainRuleset(body);
+  assert.deepEqual(body.bypass_actors, [ADMIN, RELEASE_BOT, { actor_id: 9, actor_type: "Team", bypass_mode: "always" }]);
+  assert.throws(() => rulesetBody({ tagPattern: "v*", apps: [{ id: "abc", name: "x" }] }), /not an id/);
+  const words = explainRuleset(body, new Map([["Integration:123", "release-bot"]]));
   assert.match(words, /Why: a pushed tag runs the workflow file from the tagged commit/);
-  assert.match(words, /repository admins, app 123, team 9/);
+  assert.match(words, /repository admins, app 123 \(release-bot\), team 9/);
   assert.match(words, /Who it blocks: everyone not listed, including any workflow that makes release tags today/);
 });
 
-test("a ruleset protects the tags only when it is on, covers the pattern, and limits both creating and updating", () => {
+test("actors are read as Type:id:name or id:name, and need an id and a name", () => {
+  assert.deepEqual(parseActor("Integration:123:release-bot"), APPROVED_BOT);
+  assert.deepEqual(parseActor("123:release bot: v2", "Integration"), { type: "Integration", id: 123, name: "release bot: v2" });
+  assert.throws(() => parseActor("Integration:123"), /give the name/);
+  assert.throws(() => parseActor("Integration:abc:x"), /whole number/);
+  assert.throws(() => parseActor("Robot:1:x"), /not an actor type/);
+});
+
+test("a ruleset with only admins as bypass actors protects the tags, and one with a write-role actor does not", () => {
   assert.equal(protects(TAG_RULESET, "v*"), true);
+  const writeRole = { ...TAG_RULESET, bypass_actors: [ADMIN, WRITE_ROLE] };
+  assert.equal(protects(writeRole, "v*"), false);
+  const result = assess({ rulesets: [writeRole], tagPattern: "v*" });
+  assert.equal(result.status, "unapproved");
+  assert.deepEqual(result.unapproved.map((entry) => entry.actor), [{ type: "RepositoryRole", id: 4, mode: "always" }]);
+  assert.equal(result.unapproved[0].ruleset.url, "https://github.com/acme/sample/rules/41");
+  // Approving it by name is a choice the person can make, and the list is what a later render checks.
+  assert.equal(protects(writeRole, "v*", [{ type: "RepositoryRole", id: 4, name: "write" }]), true);
+  // An approval is for one actor, not for a type.
+  assert.equal(protects({ ...TAG_RULESET, bypass_actors: [ADMIN, { ...RELEASE_BOT, actor_id: 124 }] }, "v*", [APPROVED_BOT]), false);
+});
+
+test("a ruleset protects the tags only when it is on, covers the pattern, and limits both creating and updating", () => {
   assert.equal(protects({ ...TAG_RULESET, conditions: { ref_name: { include: ["~ALL"], exclude: [] } } }, "v*"), true);
   assert.equal(protects({ ...TAG_RULESET, enforcement: "evaluate" }, "v*"), false);
   assert.equal(protects({ ...TAG_RULESET, enforcement: "disabled" }, "v*"), false);
@@ -493,6 +524,18 @@ test("a ruleset protects the tags only when it is on, covers the pattern, and li
   assert.equal(protects({ ...TAG_RULESET, rules: [{ type: "creation" }] }, "v*"), false);
   assert.equal(protects({ ...TAG_RULESET, conditions: { ref_name: { include: ["refs/tags/release-*"], exclude: [] } } }, "v*"), false);
   assert.equal(protects({ ...TAG_RULESET, conditions: { ref_name: { include: ["refs/tags/v*"], exclude: ["refs/tags/v*"] } } }, "v*"), false);
+  // Two rulesets can share the work, and then every bypass actor of both counts.
+  const creation = { ...TAG_RULESET, id: 1, rules: [{ type: "creation" }] };
+  const update = { ...TAG_RULESET, id: 2, rules: [{ type: "update" }] };
+  assert.equal(assess({ rulesets: [creation, update], tagPattern: "v*" }).status, "protected");
+  assert.equal(assess({ rulesets: [creation, { ...update, bypass_actors: [ADMIN, WRITE_ROLE] }], tagPattern: "v*" }).status, "unapproved");
+});
+
+test("a ruleset whose bypass list was not returned is not known to protect anything", () => {
+  const hidden = { ...TAG_RULESET, bypass_actors: undefined };
+  const result = assess({ rulesets: [hidden], tagPattern: "v*" });
+  assert.equal(result.status, "unknown");
+  assert.match(result.reason, /Sign in to gh as a repository admin/);
 });
 
 /** A fake `gh` for checkRuleset and createRuleset. It answers the two rulesets endpoints from the table. */
@@ -509,19 +552,28 @@ function fakeGh({ list, full = {}, fail } = {}) {
   return { run, calls };
 }
 
-test("checkRuleset reads the list, then each active tag ruleset in full, and reports protected, missing or unknown", () => {
+const SUMMARIES = [
+  { id: 7, name: "main: checks", target: "branch", enforcement: "active" },
+  { id: 8, name: "old", target: "tag", enforcement: "disabled" },
+  { id: 41, name: "release tags", target: "tag", enforcement: "active" },
+];
+
+test("checkRuleset reads every active tag ruleset in full, and reports protected, unapproved, missing or unknown", () => {
   const repo = tempDir();
-  const summaries = [
-    { id: 7, name: "main: checks", target: "branch", enforcement: "active" },
-    { id: 8, name: "old", target: "tag", enforcement: "disabled" },
-    { id: 41, name: "release tags", target: "tag", enforcement: "active" },
-  ];
-  const found = fakeGh({ list: summaries, full: { 41: TAG_RULESET } });
-  assert.deepEqual(checkRuleset({ repo, tagPattern: "v*", run: found.run }), { status: "protected", ruleset: TAG_RULESET });
+  const found = fakeGh({ list: SUMMARIES, full: { 41: TAG_RULESET } });
+  const result = checkRuleset({ repo, tagPattern: "v*", run: found.run });
+  assert.equal(result.status, "protected");
+  assert.deepEqual(result.rulesets, [TAG_RULESET]);
   assert.deepEqual(found.calls.map((call) => call.args.at(-1)), ["repos/{owner}/{repo}/rulesets", "repos/{owner}/{repo}/rulesets/41"]);
   assert.equal(found.calls[0].cwd, repo, "gh runs inside the repo, so it fills in {owner} and {repo}");
 
-  const none = fakeGh({ list: summaries.slice(0, 2) });
+  const second = { ...TAG_RULESET, id: 42, name: "also tags", bypass_actors: [ADMIN, WRITE_ROLE] };
+  const both = fakeGh({ list: [...SUMMARIES, { id: 42, name: "also tags", target: "tag", enforcement: "active" }], full: { 41: TAG_RULESET, 42: second } });
+  const refused = checkRuleset({ repo, tagPattern: "v*", run: both.run });
+  assert.equal(refused.status, "unapproved", "a second ruleset with a write-role actor counts, even though the first is clean");
+  assert.equal(both.calls.length, 3, "every active tag ruleset is read in full");
+
+  const none = fakeGh({ list: SUMMARIES.slice(0, 2) });
   assert.deepEqual(checkRuleset({ repo, tagPattern: "v*", run: none.run }), { status: "missing" });
   assert.equal(none.calls.length, 1, "a branch ruleset and a disabled one are not read in full");
 
@@ -544,16 +596,55 @@ test("createRuleset posts the body to the rulesets endpoint and nothing else", (
 test("the workflow is not rendered in release mode without a tag ruleset, and is in schedule mode", () => {
   const repo = sampleRepo();
   const options = { repo, install: "pnpm install --frozen-lockfile", storybookBuild: "pnpm build-storybook" };
-  const missing = () => ({ status: "missing" });
-  assert.throws(() => writeWorkflow({ ...options, checkTags: missing }), /No active ruleset limits who can create or update tags matching v\*/);
+  assert.throws(() => writeWorkflow({ ...options, checkTags: () => ({ status: "missing" }) }), /No active ruleset limits who can create or update tags matching v\*/);
   assert.equal(existsSync(path.join(repo, ".github/workflows/klaus.yml")), false, "nothing is written");
   assert.throws(() => writeWorkflow({ ...options, checkTags: () => ({ status: "unknown", reason: "gh api failed: HTTP 403" }) }), /could not be read \(gh api failed: HTTP 403\)/);
-  assert.match(requireTagRuleset({ repo, config: resolveConfig(CONFIG), checkTags: () => ({ status: "protected", ruleset: { id: 3, name: "x" } }) }).name, /x/);
+  assert.equal(requireTagRuleset({ repo, config: resolveConfig(CONFIG), checkTags: () => ({ status: "protected", rulesets: [{ id: 3, name: "x" }] }) })[0].name, "x");
 
   write(path.join(repo, "klaus.config.json"), JSON.stringify({ ...CONFIG, trigger: { mode: "schedule", cron: "0 6 * * 1" } }));
   const scheduled = writeWorkflow({ ...options, checkTags: () => assert.fail("a schedule needs no tag ruleset") });
-  assert.equal(scheduled.ruleset, null);
+  assert.equal(scheduled.rulesets, null);
   assert.ok(existsSync(scheduled.destination));
+});
+
+test("a ruleset that gains an actor nobody approved makes the next render refuse", () => {
+  const repo = sampleRepo();
+  const withApproval = { ...CONFIG, trigger: { mode: "release", tagPattern: "v*", approvedTagBypass: [APPROVED_BOT] } };
+  write(path.join(repo, "klaus.config.json"), JSON.stringify(withApproval));
+  const options = { repo, install: "pnpm install --frozen-lockfile", storybookBuild: "pnpm build-storybook" };
+  const checkWith = (ruleset) => {
+    const fake = fakeGh({ list: SUMMARIES, full: { 41: ruleset } });
+    return (args) => checkRuleset({ ...args, run: fake.run });
+  };
+
+  // At onboarding: admins and the approved release bot.
+  const onboarded = writeWorkflow({ ...options, checkTags: checkWith({ ...TAG_RULESET, bypass_actors: [ADMIN, RELEASE_BOT] }) });
+  assert.equal(onboarded.rulesets[0].id, 41);
+  assert.ok(existsSync(onboarded.destination));
+
+  // Later someone adds the write role to the ruleset. The same config now refuses, and nothing is rewritten.
+  const before = readFileSync(onboarded.destination, "utf8");
+  write(onboarded.destination, `${before}# marker\n`);
+  assert.throws(
+    () => writeWorkflow({ ...options, checkTags: checkWith({ ...TAG_RULESET, bypass_actors: [ADMIN, RELEASE_BOT, WRITE_ROLE] }) }),
+    (error) => /everyone with repository role 4/.test(error.message) && /"release tags" \(id 41\)/.test(error.message) && /Release mode stays off/.test(error.message),
+  );
+  assert.match(readFileSync(onboarded.destination, "utf8"), /# marker\n$/, "the refused render wrote nothing");
+
+  // An actor swapped for another id is not the approved one either.
+  assert.throws(() => writeWorkflow({ ...options, checkTags: checkWith({ ...TAG_RULESET, bypass_actors: [ADMIN, { ...RELEASE_BOT, actor_id: 999 }] }) }), /app 999/);
+
+  // Without the approval in the config, the same ruleset is refused at onboarding too.
+  write(path.join(repo, "klaus.config.json"), JSON.stringify(CONFIG));
+  assert.throws(() => writeWorkflow({ ...options, checkTags: checkWith({ ...TAG_RULESET, bypass_actors: [ADMIN, RELEASE_BOT] }) }), /app 123/);
+});
+
+test("klaus.config.json records the approved bypass actors, by type, id and name", () => {
+  const ok = { ...CONFIG, trigger: { mode: "release", tagPattern: "v*", approvedTagBypass: [APPROVED_BOT, { type: "Team", id: 9, name: "releasers" }] } };
+  assert.equal(resolveConfig(ok).trigger.approvedTagBypass.length, 2);
+  for (const bad of [[{ type: "Integration", id: 123 }], [{ type: "Robot", id: 1, name: "x" }], [{ type: "Team", id: "9", name: "x" }], [{ type: "Team", id: 9, name: "x", extra: true }]]) {
+    assert.throws(() => resolveConfig({ ...CONFIG, trigger: { mode: "release", approvedTagBypass: bad } }));
+  }
 });
 
 test("the ruleset command shows what it would create, creates it only with --create, and says so when one exists", () => {
@@ -563,29 +654,241 @@ test("the ruleset command shows what it would create, creates it only with --cre
 echo "$@" >> "${log}"
 case "$*" in
   *"--method POST"*) cat > "${log}.body"; echo '{"id": 77, "name": "Klaus release tags"}' ;;
-  *"rulesets/41"*) echo '${JSON.stringify(TAG_RULESET)}' ;;
+  *"rulesets/41"*) echo "$GH_FULL" ;;
   *rulesets) echo "$GH_LIST" ;;
 esac
 `);
   spawnSync("chmod", ["+x", path.join(stub, "gh")]);
-  const run = (args, list) => spawnSync(process.execPath, [path.join(SOURCE_ROOT, "install/install.mjs"), "ruleset", "--repo", tempDir(), "--tag-pattern", "v*", ...args], {
+  const repo = tempDir();
+  const run = (args, { list, full } = { list: [] }) => spawnSync(process.execPath, [path.join(SOURCE_ROOT, "install/install.mjs"), "ruleset", "--repo", repo, "--tag-pattern", "v*", ...args], {
     encoding: "utf8",
-    env: { ...process.env, PATH: `${stub}:${process.env.PATH}`, GH_LIST: JSON.stringify(list) },
+    env: { ...process.env, PATH: `${stub}:${process.env.PATH}`, GH_LIST: JSON.stringify(list), GH_FULL: JSON.stringify(full ?? null) },
   });
 
-  const shown = run([], []);
+  const shown = run([]);
   assert.equal(shown.status, 0, shown.stderr);
   assert.match(shown.stdout, /No active ruleset limits who can create or update tags matching v\*\. Nothing has been created/);
   assert.match(shown.stdout, /"target": "tag"/);
   assert.equal(existsSync(`${log}.body`), false, "nothing was posted");
 
-  const created = run(["--create", "--bypass-app", "123"], []);
+  const created = run(["--create", "--bypass-app", "123:release-bot"]);
   assert.equal(created.status, 0, created.stderr);
   assert.match(created.stdout, /Created the ruleset "Klaus release tags" \(id 77\)/);
+  assert.match(created.stdout, /"approvedTagBypass": \[\{"type":"Integration","id":123,"name":"release-bot"\}\]/);
   assert.equal(JSON.parse(readFileSync(`${log}.body`, "utf8")).bypass_actors.some((actor) => actor.actor_id === 123 && actor.actor_type === "Integration"), true);
 
   rmSync(`${log}.body`);
-  const already = run(["--create"], [{ id: 41, name: "release tags", target: "tag", enforcement: "active" }]);
-  assert.match(already.stdout, /already limits who can create or update tags matching v\*: "release tags" \(id 41\)\. Nothing to create/);
+  const summaries = [{ id: 41, name: "release tags", target: "tag", enforcement: "active" }];
+  const already = run(["--create"], { list: summaries, full: TAG_RULESET });
+  assert.match(already.stdout, /protected by "release tags" \(id 41\)\. Every bypass actor is a repository admin or approved by name/);
+  assert.match(already.stdout, /Nothing to create/);
   assert.equal(existsSync(`${log}.body`), false, "nothing was posted when a ruleset exists");
+
+  // A write-role actor is listed and refused, and the exit code says so.
+  const loose = { ...TAG_RULESET, bypass_actors: [ADMIN, WRITE_ROLE] };
+  const refused = run(["--create"], { list: summaries, full: loose });
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /everyone with repository role 4 \(RepositoryRole 4, bypass always\) can bypass "release tags" \(id 41\)/);
+  assert.equal(existsSync(`${log}.body`), false, "nothing was posted when a ruleset is too loose");
+
+  // Approved by name, it passes, and the command says what to record.
+  const approved = run(["--approve", "RepositoryRole:4:write-role"], { list: summaries, full: loose });
+  assert.equal(approved.status, 0, approved.stderr);
+  assert.match(approved.stdout, /Approved besides admins: write-role \(RepositoryRole 4\)/);
+  assert.match(approved.stdout, /"approvedTagBypass": \[\{"type":"RepositoryRole","id":4,"name":"write-role"\}\]/);
+
+  // The names already recorded in klaus.config.json count without the flag.
+  write(path.join(repo, "klaus.config.json"), JSON.stringify({ ...CONFIG, trigger: { mode: "release", tagPattern: "v*", approvedTagBypass: [{ type: "RepositoryRole", id: 4, name: "write-role" }] } }));
+  assert.equal(run([], { list: summaries, full: loose }).status, 0);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Restoring state from an earlier run.
+// ---------------------------------------------------------------------------------------------
+
+const RESTORE = "Restore Klaus state";
+
+function stateFolder(files = {}) {
+  const dir = tempDir();
+  const all = {
+    "state.json": JSON.stringify({ version: 1, outputs: { storybook: { lastRelease: "v1.0.0", lastRunAt: "2026-10-18T06:00:00.000Z", unwritten: [] } } }),
+    "inventory.versioned.json": JSON.stringify({ entries: [{ name: "Button", version: "1.0.0" }], screens: [], versioned: { release: "v1.0.0", commit: "abc" } }),
+    "figma/ledger.json": JSON.stringify({ version: 2, components: { Button: { "1.0.0": "generated" } }, screens: {} }),
+    ...files,
+  };
+  for (const [name, content] of Object.entries(all)) if (content !== null) write(path.join(dir, name), content);
+  return dir;
+}
+
+test("check-state passes what Klaus writes and refuses everything else", () => {
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("rest")]);
+  const good = stateFolder();
+  write(path.join(good, "screenshots/components/Button/1.0.0.png"), png);
+  assert.deepEqual(checkState(good), { ok: true, errors: [] });
+
+  const refuses = (dir, pattern) => {
+    const result = checkState(dir);
+    assert.equal(result.ok, false);
+    assert.match(result.errors.join("\n"), pattern);
+  };
+  refuses(stateFolder({ "notes.txt": "x" }), /notes\.txt is not something Klaus keeps/);
+  refuses(stateFolder({ "state.json": JSON.stringify({ version: 9, outputs: {} }) }), /not a Klaus state file/);
+  refuses(stateFolder({ "state.json": "{" }), /not valid JSON/);
+  refuses(stateFolder({ "inventory.versioned.json": JSON.stringify({ entries: [{ name: "Button", version: "latest" }], versioned: { release: "v1" } }) }), /not x\.y\.z/);
+  refuses(stateFolder({ "inventory.versioned.json": JSON.stringify({ entries: [] }) }), /does not say which release/);
+  refuses(stateFolder({ "figma/ledger.json": JSON.stringify({ version: 2, components: { Button: { "1.0.0": "run-this" } }, screens: {} }) }), /status Klaus does not write/);
+  const badPng = stateFolder();
+  write(path.join(badPng, "screenshots/a.png"), "not a png");
+  refuses(badPng, /not a PNG file/);
+  const linked = stateFolder();
+  symlinkSync("/etc/hosts", path.join(linked, "figma/link.json"));
+  refuses(linked, /symbolic link/);
+  refuses(path.join(tempDir(), "missing"), /is not a folder/);
+});
+
+/**
+ * A stand-in `gh` for the restore step. runs.json maps a run id to what `gh api runs/<id>` returns,
+ * and artifacts.json is the artifact list. `gh run download` copies folders/<id> into --dir and logs it.
+ */
+function fakeRestoreGh({ runs, folders }) {
+  const dir = tempDir();
+  const artifacts = Object.keys(runs).sort((a, b) => b - a).map((id) => ({ id: Number(id), expired: false, created_at: new Date(Date.UTC(2026, 9, 1) + Number(id) * 3600e3).toISOString(), workflow_run: { id: Number(id) } }));
+  write(path.join(dir, "artifacts.json"), JSON.stringify({ total_count: artifacts.length, artifacts }));
+  for (const [id, run] of Object.entries(runs)) write(path.join(dir, `runs/${id}.json`), JSON.stringify(run));
+  for (const [id, source] of Object.entries(folders)) {
+    mkdirSync(path.join(dir, `download/${id}`), { recursive: true });
+    spawnSync("cp", ["-R", `${source}/.`, path.join(dir, `download/${id}`)]);
+  }
+  write(path.join(dir, "bin/gh"), `#!/bin/sh
+echo "gh $*" >> "${dir}/calls.log"
+case "$*" in
+  "api repos/acme/sample/actions/artifacts?"*) cat "${dir}/artifacts.json" ;;
+  "api repos/acme/sample/actions/runs/"*) cat "${dir}/runs/\${2##*/}.json" ;;
+  "run download "*)
+    id=$3
+    while [ $# -gt 0 ]; do [ "$1" = "--dir" ] && target=$2; shift; done
+    mkdir -p "$target" && cp -R "${dir}/download/$id/." "$target/" ;;
+  *) echo "unexpected gh call: $*" >&2; exit 1 ;;
+esac
+`);
+  spawnSync("chmod", ["+x", path.join(dir, "bin/gh")]);
+  return { bin: path.join(dir, "bin"), downloads: () => (existsSync(path.join(dir, "calls.log")) ? readFileSync(path.join(dir, "calls.log"), "utf8").split("\n").filter((line) => line.startsWith("gh run download")).map((line) => line.split(" ")[3]) : []) };
+}
+
+test("state is restored only from a successful run of this workflow, on the default branch or at a commit on it, with the shape Klaus writes", () => {
+  const { repo, git } = gitRepo();
+  const mainTip = git("rev-parse", "main");
+  const hostile = git("rev-parse", "feature/exfil");
+  const klaus = ".github/workflows/klaus.yml";
+  const run = (overrides) => ({ path: klaus, conclusion: "success", event: "schedule", head_branch: "main", head_sha: mainTip, ...overrides });
+  const poisoned = stateFolder({ "state.json": JSON.stringify({ version: 1, outputs: {}, injected: true }) });
+  const wrongShape = stateFolder({ "state.json": "[]" });
+  const good = stateFolder();
+  const fake = fakeRestoreGh({
+    runs: {
+      306: run({ path: ".github/workflows/other.yml" }), // another workflow
+      305: run({ event: "workflow_dispatch", head_branch: "feature/exfil", head_sha: hostile }), // another branch
+      304: run({ conclusion: "failure" }), // did not succeed
+      303: run({ event: "push", head_branch: "v9.9.9", head_sha: hostile }), // a tag whose commit is not on main
+      302: run({ event: "pull_request" }), // an event Klaus never starts from
+      301: run({ event: "push", head_branch: "v1.1.0", head_sha: git("rev-parse", "v1.1.0^{commit}") }), // a release tag on main, but its files are the wrong shape
+      300: run({ event: "push", head_branch: "v1.0.0", head_sha: git("rev-parse", "v1.0.0^{commit}") }), // a release tag on main with the right files
+      299: run(), // never reached
+    },
+    folders: { 306: poisoned, 305: poisoned, 304: poisoned, 303: poisoned, 302: poisoned, 301: wrongShape, 300: good, 299: good },
+  });
+  const { text } = render(CONFIG);
+  const klausDir = path.join(SOURCE_ROOT);
+  const result = runStep(text, RESTORE, {
+    repo,
+    event: "schedule",
+    extraEnv: { PATH: `${fake.bin}:${process.env.PATH}`, KLAUS: klausDir, KLAUS_DEFAULT_BRANCH: "main", GH_REPO: "acme/sample" },
+  });
+  assert.equal(result.status, 0, result.output);
+  assert.deepEqual(fake.downloads(), ["301", "300"], "only runs that pass the checks are downloaded, newest first");
+  assert.match(result.output, /::warning::The klaus-state artifact of run 301 does not have the shape Klaus writes/);
+  assert.equal(readFileSync(path.join(repo, ".klaus/state.json"), "utf8"), readFileSync(path.join(good, "state.json"), "utf8"));
+  assert.equal(existsSync(path.join(repo, ".klaus/injected")), false);
+});
+
+test("when no earlier state qualifies, nothing is restored and the run says so", () => {
+  const { repo, git } = gitRepo();
+  const hostile = git("rev-parse", "feature/exfil");
+  const poisoned = stateFolder({ "state.json": JSON.stringify({ version: 1, outputs: { storybook: { lastRelease: "v9.9.9", unwritten: [] } } }) });
+  const fake = fakeRestoreGh({
+    runs: { 401: { path: ".github/workflows/klaus.yml", conclusion: "success", event: "push", head_branch: "v9.9.9", head_sha: hostile }, 400: { path: ".github/workflows/deploy.yml", conclusion: "success", event: "schedule", head_branch: "main", head_sha: git("rev-parse", "main") } },
+    folders: { 401: poisoned, 400: poisoned },
+  });
+  const { text } = render(CONFIG);
+  const result = runStep(text, RESTORE, { repo, event: "push", tag: "v1.1.0", extraEnv: { PATH: `${fake.bin}:${process.env.PATH}`, KLAUS: SOURCE_ROOT, KLAUS_DEFAULT_BRANCH: "main", GH_REPO: "acme/sample" } });
+  assert.equal(result.status, 0, result.output);
+  assert.deepEqual(fake.downloads(), []);
+  assert.match(result.output, /No earlier Klaus state that can be trusted/);
+  assert.equal(existsSync(path.join(repo, ".klaus/state.json")), false);
+});
+
+test("the state step runs after the copy of Klaus and the check, and the state is kept only after a successful run", () => {
+  const { text } = render(CONFIG);
+  const names = stepsOf(text).map((step) => step.name);
+  assert.ok(names.indexOf("Copy Klaus out of the working tree") < names.indexOf(RESTORE));
+  assert.ok(names.indexOf(RESTORE) < names.indexOf(PICK));
+  assert.match(shellOf(text, RESTORE).run, /node "\$KLAUS\/ci\/check-state\.mjs" "\$dir"/);
+  assert.match(stepsOf(text).find((step) => step.name === "Keep Klaus state for the next run").text, /if: success\(\) && hashFiles/);
+});
+
+// ---------------------------------------------------------------------------------------------
+// Symbolic links in the places Klaus writes.
+// ---------------------------------------------------------------------------------------------
+
+/** A folder outside the repo, and a way to see whether anything in it changed. */
+function outsideFolder() {
+  const dir = tempDir();
+  write(path.join(dir, "keep.txt"), "outside\n");
+  write(path.join(dir, "target.mjs"), "original\n");
+  const state = () => readdirSync(dir, { recursive: true }).sort().map((name) => `${name}=${lstatSync(path.join(dir, name)).isFile() ? readFileSync(path.join(dir, name), "utf8") : "dir"}`).join("|");
+  return { dir, state };
+}
+
+test("a symlinked scripts, scripts/klaus, folder or file inside it is refused, and nothing outside the repo changes", () => {
+  for (const place of ["scripts", "scripts/klaus", "scripts/klaus/frame", "scripts/klaus/frame/cli.mjs"]) {
+    const repo = sampleRepo();
+    const outside = outsideFolder();
+    if (place.split("/").length > 2) copyKlaus({ repo });
+    const target = path.join(repo, place);
+    mkdirSync(path.dirname(target), { recursive: true });
+    rmSync(target, { recursive: true, force: true });
+    symlinkSync(place.endsWith(".mjs") ? path.join(outside.dir, "target.mjs") : outside.dir, target);
+    const before = outside.state();
+    assert.throws(() => copyKlaus({ repo, force: true }), /symbolic link/, place);
+    assert.equal(outside.state(), before, `${place}: nothing outside the repo changed`);
+    assert.ok(lstatSync(target).isSymbolicLink(), `${place}: the link is left as it was`);
+  }
+});
+
+test("a symlinked .github, .github/workflows or klaus.yml is refused, and the file it points at is not written", () => {
+  const checkTags = () => ({ status: "protected", rulesets: [{ id: 1, name: "x" }] });
+  for (const place of [".github", ".github/workflows", ".github/workflows/klaus.yml"]) {
+    const repo = sampleRepo();
+    const outside = outsideFolder();
+    const target = path.join(repo, place);
+    mkdirSync(path.dirname(target), { recursive: true });
+    symlinkSync(place.endsWith(".yml") ? path.join(outside.dir, "target.mjs") : outside.dir, target);
+    const before = outside.state();
+    assert.throws(() => writeWorkflow({ repo, install: "pnpm install --frozen-lockfile", storybookBuild: "pnpm build-storybook", checkTags }), /symbolic link/, place);
+    assert.equal(outside.state(), before, `${place}: nothing outside the repo changed`);
+    assert.ok(lstatSync(target).isSymbolicLink(), `${place}: the link is left as it was`);
+  }
+});
+
+test("files are written through a temporary name and renamed, leaving none behind", () => {
+  const repo = sampleRepo();
+  copyKlaus({ repo });
+  writeWorkflow({ repo, install: "pnpm install --frozen-lockfile", storybookBuild: "pnpm build-storybook", checkTags: () => ({ status: "protected", rulesets: [{ id: 1, name: "x" }] }) });
+  const stray = (dir) => readdirSync(dir, { recursive: true }).filter((name) => String(name).endsWith(".tmp"));
+  assert.deepEqual(stray(path.join(repo, "scripts")), []);
+  assert.deepEqual(stray(path.join(repo, ".github")), []);
+  // The repo folder itself may be a link (macOS temp folders are), and that is not refused.
+  const alias = path.join(tempDir(), "alias");
+  symlinkSync(repo, alias);
+  assert.doesNotThrow(() => copyKlaus({ repo: alias }));
 });
