@@ -202,13 +202,19 @@ If a changed selection moves a cost, re-run the cost command and show the new li
 
 Skip this when the trigger is a schedule or a one-off run.
 
-A pushed tag runs the workflow file from the tagged commit, so a check inside the workflow cannot stop a hostile tag. Anyone who can push a tag matching the pattern could run their own copy of the Klaus workflow with the repo's secrets. Release mode is therefore set up only when a repository ruleset lets just maintainers create or update tags matching the pattern. `install.mjs workflow` refuses to render release mode until it finds one.
+A pushed tag runs the workflow file from the tagged commit, so a check inside the workflow cannot stop a hostile tag. Anyone who can push a tag matching the pattern could run their own copy of the Klaus workflow with the repo's secrets. Release mode is therefore set up only when a repository ruleset lets just maintainers create or update tags matching the pattern, and that is checked, not assumed: every one of the ruleset's bypass actors must be a repository admin, or an app, team or person the user approved by name. `install.mjs workflow` refuses to render release mode until the check passes, and refuses again on any later render if the ruleset has gained an actor that is not on the approved list in klaus.config.json.
 
-1. **Look for one.** This needs `gh` signed in with admin rights on the repo. `install.mjs ruleset --repo <repo> --tag-pattern <pattern>` reads `gh api repos/{owner}/{repo}/rulesets`, and reads each active tag ruleset in full. It says either that a ruleset already protects the tags (go on to 8.6), or what it would create. It creates nothing without `--create`. If it says the rulesets could not be read (no admin rights, or a plan without rulesets), say so, do not render release mode, and offer the schedule or an admin.
-2. **Find who makes release tags today.** Look in `.github/workflows` for `git tag`, `git push --tags`, `gh release create` or a release action, and ask. The ruleset refuses everyone not on its list, including that workflow. Repository admins are always on the list. Add a GitHub App by id with `--bypass-app <id>` (`gh api /apps/<slug> --jq .id` finds it) or a team with `--bypass-team <id>`. Whether a workflow's default `GITHUB_TOKEN` can be put on the list is unverified, so a workflow that cuts the tags needs an App token, or the schedule.
-3. **Show the plan and ask.** Show what the command printed: why it is needed, who can still push release tags, who is blocked, and the ruleset itself. Ask: create it, use the schedule instead, or leave release mode off.
-4. **Create it only after a yes.** Run the same command with `--create` and the same bypass flags. It checks again first and creates nothing if a ruleset now exists. Show the id it prints.
-5. **On no,** set `trigger.mode` to `schedule` (ask for the cron) or to a one-off run, and say plainly that release mode was left off because the tags are unprotected.
+1. **Look.** This needs `gh` signed in with admin rights on the repo. `install.mjs ruleset --repo <repo> --tag-pattern <pattern>` reads `gh api repos/{owner}/{repo}/rulesets`, then reads every active tag ruleset in full, because a person who can bypass any one of them can get past what it limits. The outcomes:
+   - **Protected.** Every bypass actor is an admin or approved. Go on to 8.6, and record the approvals (step 6).
+   - **A ruleset lets someone else bypass it.** The command lists each such actor: its type and id, its bypass mode, the ruleset's name and its page on GitHub. Release mode stays off. Go to step 2.
+   - **No ruleset limits both creating and updating the tags.** The command shows the one it would create. Go to step 3.
+   - **The rulesets could not be read** (no admin rights, a bypass list that was not returned, or a plan without rulesets). Say so, do not render release mode, and offer the schedule or an admin.
+2. **Show each other bypass actor, and ask.** Say what each one can do: push release tags, and so run the workflow with the secrets. The person removes it from the ruleset in GitHub, or approves it by name. To approve, run the command again with `--approve <Type>:<id>:<name>`, where the name is what the person types for that actor, read off the ruleset's page. Never approve for them and never guess a name. Everyone with a role other than admin is one actor: approving a write role approves everyone who has it, so say that. Repeat until the command says the tags are protected.
+3. **Find who makes release tags today.** Look in `.github/workflows` for `git tag`, `git push --tags`, `gh release create` or a release action, and ask. The ruleset refuses everyone not on its list, including that workflow. Repository admins are always on the list. Add a GitHub App with `--bypass-app <id>:<name>` (`gh api /apps/<slug> --jq .id` finds the id) or a team with `--bypass-team <id>:<name>`; adding one is also approving it. Whether a workflow's default `GITHUB_TOKEN` can be put on the list is unverified, so a workflow that cuts the tags needs an App token, or the schedule.
+4. **Show the plan and ask.** Show what the command printed: why it is needed, who can still push release tags, who is blocked, and the ruleset itself. Ask: create it, use the schedule instead, or leave release mode off.
+5. **Create it only after a yes.** Run the same command with `--create` and the same bypass flags. It checks again first, and creates nothing if a ruleset now exists. Show the id it prints.
+6. **Record the approvals.** When any actor besides admins is on the list (approved with `--approve`, or added with `--bypass-app` or `--bypass-team`), the command prints a line starting `Record this in klaus.config.json`. Put exactly that list under `trigger.approvedTagBypass` when you write the config in 8.7. Admins are never listed. With only admins, leave it out.
+7. **On no,** set `trigger.mode` to `schedule` (ask for the cron) or to a one-off run, and say plainly that release mode was left off because the tags are unprotected.
 
 ### 8.6 Create the Vercel project
 
@@ -246,7 +252,9 @@ All answers are in. Now write to the repo, in this order:
    }
    ```
 
-2. **The scripts:** `node <klaus-src>/install/install.mjs copy --repo <repo>`. It copies Klaus to `scripts/klaus/` and writes `scripts/klaus/VERSION.txt`, one line with the Klaus version, the process-pack version and a hash of the files. Show that line.
+   In release mode, `trigger` also holds `"approvedTagBypass": [{ "type": "Integration", "id": 123, "name": "release-bot" }]` from 8.5, or nothing when only admins can bypass the ruleset.
+
+2. **The scripts:** `node <klaus-src>/install/install.mjs copy --repo <repo>`. It copies Klaus to `scripts/klaus/` and writes `scripts/klaus/VERSION.txt`, one line with the Klaus version, the process-pack version and a hash of the files. Show that line. It refuses, even with `--force`, when `scripts/klaus`, any folder on the way to it, or any file in it is a symbolic link, because writing through a link changes a file outside the repo. Ask the person to remove the link. The same holds for the workflow file and `.github/workflows`.
 3. **Check the config:** `node scripts/klaus/frame/cli.mjs validate` must print that the file is valid. Fix what it names and run it again. Its errors never repeat a secret.
 4. **The workflow**, unless the trigger is a one-off:
 
@@ -263,7 +271,7 @@ All answers are in. Now write to the repo, in this order:
 
 Show these as a short list. Do not run them.
 
-- **What the workflow refuses.** It builds only commits on the default branch. A tag whose commit is not on it is ignored, with a warning, and a pushed tag like that fails the run. The Vercel token is on the Run Klaus step alone, and the Storybook build inside it starts without the token.
+- **What the workflow refuses.** It builds only commits on the default branch. A tag whose commit is not on it is ignored, with a warning, and a pushed tag like that fails the run. State from an earlier run is restored only from a successful run of this workflow on the default branch or at a commit on it, and only if its files have the shape Klaus writes; otherwise the run starts from the newest release. The Vercel token is on the Run Klaus step alone, and the Storybook build inside it starts without the token.
 - **Push.** The workflow runs only once it is on the default branch of the GitHub repo. Push the commit and open a pull request the way the repo does for other changes.
 - **State.** Each run keeps Klaus's state in the `klaus-state` artifact for up to 90 days (the repo's artifact retention may be shorter). If no release runs for longer than that, the next run starts again from the newest release.
 - **Secrets** to add in the repo's settings, by name: the ones the command printed. Their values come from the person's own secret store.
