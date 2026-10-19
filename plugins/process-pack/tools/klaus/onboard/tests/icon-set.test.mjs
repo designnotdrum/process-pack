@@ -45,11 +45,12 @@ test('estimate succeeds on a repo whose inventory has an icon set, and counts th
   assert.equal(sample.git('status', '--porcelain').trim(), '')
 })
 
-test('the plan id is the same after a change that leaves the icons as they were', () => {
+test('the plan id is the same after a change outside the icons, and after hidden files and folders appear in the icon folder', () => {
   const before = planId()
   fs.appendFileSync(path.join(sample.repo, 'README.md'), 'a note outside the icon folder\n')
   fs.writeFileSync(path.join(icons, '.DS_Store'), 'a hidden file that Finder adds')
-  fs.writeFileSync(path.join(icons, 'CheckIcon.tsx'), fs.readFileSync(path.join(icons, 'CheckIcon.tsx')))
+  fs.mkdirSync(path.join(icons, '.cache'))
+  fs.writeFileSync(path.join(icons, '.cache', 'StaleIcon.tsx'), 'export function StaleIcon() {\n  return null\n}\n')
   assert.equal(planId(), before)
 })
 
