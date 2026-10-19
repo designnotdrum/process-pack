@@ -14,7 +14,7 @@ import { resolveConfig } from "../frame/config.mjs";
 import { checkState } from "../ci/check-state.mjs";
 import { copyKlaus, listFiles, SOURCE_ROOT, versionLine } from "./copy.mjs";
 import { estimateOutputs, formatCosts } from "./costs.mjs";
-import { assess, checkRuleset, createRuleset, explainRuleset, parseActor, protects, rulesetBody, RULESET_NAME } from "./ruleset.mjs";
+import { assertReleasePattern, assess, checkRuleset, createRuleset, explainRuleset, parseActor, PATTERN_DOCS, protects, rulesetBody, RULESET_NAME } from "./ruleset.mjs";
 import { lintWorkflow, renderWorkflow, requireTagRuleset, writeWorkflow } from "./workflow.mjs";
 
 const tempDir = () => mkdtempSync(path.join(tmpdir(), "klaus-install-"));
@@ -520,10 +520,9 @@ test("a ruleset with only admins as bypass actors protects the tags, and one wit
 test("only a ruleset of one exact shape is accepted", () => {
   const exact = (patch) => ({ ...TAG_RULESET, ...patch });
   const include = (...entries) => ({ ref_name: { include: entries, exclude: [] } });
-  // The shapes that count: the release pattern, or all tags, written either way.
+  // The shapes that count: the release pattern, or all tags as ~ALL.
   assert.equal(protects(TAG_RULESET, "v*"), true);
   assert.equal(protects(exact({ conditions: include("~ALL") }), "v*"), true);
-  assert.equal(protects(exact({ conditions: include("refs/tags/*") }), "v*"), true);
   assert.equal(protects(exact({ conditions: include("refs/tags/v*", "~ALL") }), "v*"), true);
   assert.equal(protects(exact({ rules: [{ type: "creation" }, { type: "update" }, { type: "deletion" }, { type: "non_fast_forward" }] }), "v*"), true, "extra rules only add to it");
   assert.equal(protects(exact({ conditions: { ref_name: { include: ["refs/tags/v*"] } } }), "v*"), true, "no exclude list is an empty one");
@@ -534,11 +533,12 @@ test("only a ruleset of one exact shape is accepted", () => {
     assert.equal(protects(exact({ conditions: { ref_name: { include: ["~ALL"], exclude: excluded } } }), "v*"), false, `all tags, exclude ${excluded}`);
   }
   // Any other include is refused: narrower, different, wider than all tags can say, or mixed with something else.
-  for (const other of [["refs/tags/v1*"], ["refs/tags/release-*"], ["refs/tags/**"], ["refs/heads/*"], ["refs/tags/v*", "refs/tags/release-*"], ["~DEFAULT_BRANCH"], []]) {
+  // refs/tags/* is not all tags: in a ruleset * stops at /, so a tag like release/evil is outside it.
+  for (const other of [["refs/tags/*"], ["refs/tags/*", "~ALL"], ["refs/tags/v1*"], ["refs/tags/release-*"], ["refs/tags/**"], ["refs/heads/*"], ["refs/tags/v*", "refs/tags/release-*"], ["~DEFAULT_BRANCH"], []]) {
     assert.equal(protects(exact({ conditions: { ref_name: { include: other, exclude: [] } } }), "v*"), false, `include ${other}`);
   }
   assert.equal(protects(exact({ conditions: {} }), "v*"), false);
-  // A wider include is accepted only when everything else is exact too.
+  // ~ALL is accepted only when everything else is exact too.
   const all = { conditions: include("~ALL") };
   assert.equal(protects(exact({ ...all, rules: [{ type: "creation" }, { type: "update" }] }), "v*"), false, "no deletion rule");
   assert.equal(protects(exact({ ...all, enforcement: "evaluate" }), "v*"), false);
@@ -572,7 +572,7 @@ test("a ruleset of another shape neither counts nor blocks", () => {
 });
 
 test("the ruleset Klaus creates passes its own check, for the pattern it renders", () => {
-  for (const tagPattern of ["v*", "release-*", "v[0-9]*"]) {
+  for (const tagPattern of ["v*", "release-*", "v1.*", "v*-rc*"]) {
     const created = { ...rulesetBody({ tagPattern, apps: [{ id: 123, name: "release-bot" }] }), id: 99 };
     assert.equal(assess({ rulesets: [created], tagPattern }).status, "unapproved", "an app is a bypass actor until someone approves it");
     assert.equal(assess({ rulesets: [created], tagPattern, approved: [APPROVED_BOT] }).status, "protected");
@@ -586,6 +586,43 @@ test("a ruleset whose bypass list was not returned is not known to protect anyth
   const result = assess({ rulesets: [hidden], tagPattern: "v*" });
   assert.equal(result.status, "unknown");
   assert.match(result.reason, /Sign in to gh as a repository admin/);
+});
+
+const BAD_PATTERNS = ["release/**", "release/*", "release/v*", "v**", "**", "v?", "v+", "v[0-9]*", "!v*", "v{1,2}*", "v\\1*", "v 1", "", "refs/tags/v*"];
+const GOOD_PATTERNS = ["v*", "release-*", "v1.*", "v*-rc*", "*", "v1.2.3", "RELEASE_*"];
+
+test("only a release pattern that means the same in a workflow's tag filter and in a ruleset is accepted", () => {
+  for (const pattern of GOOD_PATTERNS) assert.doesNotThrow(() => assertReleasePattern(pattern), pattern);
+  for (const pattern of BAD_PATTERNS) {
+    assert.throws(() => assertReleasePattern(pattern), (error) => error.message.includes("cannot be protected by a tag ruleset") && /for example v\*/.test(error.message) && error.message.includes(PATTERN_DOCS.workflow) && error.message.includes(PATTERN_DOCS.ruleset), pattern);
+  }
+  assert.throws(() => assertReleasePattern(undefined), /cannot be protected/);
+  assert.match(PATTERN_DOCS.workflow, /^https:\/\/docs\.github\.com\/en\/actions\/.*#filter-pattern-cheat-sheet$/);
+  assert.match(PATTERN_DOCS.ruleset, /^https:\/\/docs\.github\.com\/en\/repositories\/.*#using-fnmatch-syntax$/);
+});
+
+test("a release pattern with a slash or ** is refused when the workflow is rendered, before any ruleset is read", () => {
+  for (const tagPattern of ["release/**", "release/*", "release/v*", "v**", "v?"]) {
+    const config = { ...CONFIG, trigger: { mode: "release", tagPattern } };
+    assert.throws(() => render(config), /cannot be protected by a tag ruleset/, tagPattern);
+    // The same through the writer: gh is never called, and nothing is written.
+    const repo = sampleRepo();
+    write(path.join(repo, "klaus.config.json"), JSON.stringify(config));
+    assert.throws(() => writeWorkflow({ repo, install: "pnpm install --frozen-lockfile", storybookBuild: "pnpm build-storybook", checkTags: () => assert.fail("a ruleset was read for a pattern that cannot be protected") }), /for example v\*/, tagPattern);
+    assert.equal(existsSync(path.join(repo, ".github/workflows/klaus.yml")), false);
+    assert.throws(() => requireTagRuleset({ repo, config: resolveConfig(config), checkTags: () => assert.fail("a ruleset was read") }), /cannot be protected/);
+  }
+  for (const tagPattern of ["v*", "release-*", "v1.*"]) assert.doesNotThrow(() => render({ ...CONFIG, trigger: { mode: "release", tagPattern } }), tagPattern);
+  // A schedule has no push filter and needs no ruleset, so its pattern is only a list of tags to look at.
+  assert.doesNotThrow(() => render({ ...CONFIG, trigger: { mode: "schedule", cron: "0 6 * * 1", tagPattern: "release/*" } }));
+});
+
+test("no ruleset is read, created or shown for a release pattern that cannot be protected", () => {
+  const fake = fakeGh({ list: [] });
+  assert.throws(() => checkRuleset({ repo: tempDir(), tagPattern: "release/**", run: fake.run }), /cannot be protected/);
+  assert.throws(() => rulesetBody({ tagPattern: "release/**" }), /cannot be protected/);
+  assert.throws(() => assess({ rulesets: [], tagPattern: "release/**" }), /cannot be protected/);
+  assert.equal(fake.calls.length, 0);
 });
 
 /** A fake `gh` for checkRuleset and createRuleset. It answers the two rulesets endpoints from the table. */
@@ -721,6 +758,12 @@ esac
     encoding: "utf8",
     env: { ...process.env, PATH: `${stub}:${process.env.PATH}`, GH_LIST: JSON.stringify(list), GH_FULL: JSON.stringify(full ?? null) },
   });
+
+  const badPattern = spawnSync(process.execPath, [path.join(SOURCE_ROOT, "install/install.mjs"), "ruleset", "--repo", repo, "--tag-pattern", "release/**", "--create"], { encoding: "utf8", env: { ...process.env, PATH: `${stub}:${process.env.PATH}`, GH_LIST: "[]", GH_FULL: "null" } });
+  assert.equal(badPattern.status, 2);
+  assert.match(badPattern.stderr, /cannot be protected by a tag ruleset/);
+  assert.match(badPattern.stderr, /for example v\*/);
+  assert.equal(existsSync(log), false, "gh was not called");
 
   const shown = run([]);
   assert.equal(shown.status, 0, shown.stderr);
