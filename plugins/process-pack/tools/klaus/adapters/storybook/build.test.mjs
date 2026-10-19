@@ -57,6 +57,24 @@ test("builds into the output folder from the Storybook folder, with telemetry of
   assert.equal(calls[0].options.cwd, path.join(root, "packages/ui"));
 });
 
+test("passes the environment it is given to the build, and none when it is given none", async () => {
+  const root = repo([]);
+  mkdirSync(path.join(root, "packages/ui/node_modules/.bin"), { recursive: true });
+  writeFileSync(path.join(root, "packages/ui/node_modules/.bin/storybook"), "");
+  const outDir = path.join(repo([]), "out");
+  const calls = [];
+  const exec = async (file, args, options) => {
+    calls.push(options);
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(path.join(outDir, "index.html"), "<html></html>");
+    return { stdout: "", stderr: "" };
+  };
+  await buildStorybook({ exec, root, storybookDir: "packages/ui", outDir, env: { PATH: "/usr/bin" } });
+  await buildStorybook({ exec, root, storybookDir: "packages/ui", outDir });
+  assert.deepEqual(calls[0].env, { PATH: "/usr/bin" });
+  assert.equal("env" in calls[1], false);
+});
+
 test("says what to do when storybook is not installed, and when the build writes nothing", async () => {
   const root = repo(["packages/ui"]);
   await assert.rejects(buildStorybook({ exec: async () => ({}), root, storybookDir: "packages/ui", outDir: "/tmp/none" }), /not installed in packages\/ui or above it/);

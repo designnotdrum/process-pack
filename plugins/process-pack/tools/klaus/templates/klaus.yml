@@ -9,6 +9,17 @@
 # machine that holds that sign-in, from the klaus-figma artifact of a run:
 #   node scripts/klaus/adapters/figma/relay/relay.mjs --run <run id> --repo <owner/name>
 #
+# Code that is not on the default branch must not get the deploy token. Three things
+# keep it away, and they are in this file in this order:
+#   1. The first step refuses a commit that is not an ancestor of the default branch.
+#   2. The version picker ignores release tags whose commit is not on the default branch,
+#      and removes them from this runner's clone, so nothing after it can pick one.
+#   3. Only the Run Klaus step has the Vercel token (and any other secret). Install and
+#      build steps do not, and the Storybook build inside Run Klaus is started without it.
+# A scheduled run uses this file from the default branch, so 1 and 2 hold there. A pushed
+# tag runs the file from the tagged commit, so a hostile tag can leave the check out. What
+# protects release mode is a tag ruleset (see the push trigger below).
+#
 # Which trigger starts a run follows klaus.config.json (trigger.mode). The
 # renderer keeps one of the two trigger blocks. The manual trigger always stays.
 # A run that does not match trigger.mode exits without doing anything, so a block
@@ -22,6 +33,12 @@ name: Klaus
 
 on:
   # klaus:begin release
+  # A pushed tag runs THIS file as it is in the tagged commit, so nothing written here can
+  # stop a hostile tag: whoever can push a tag matching the pattern below can run their own
+  # copy of this workflow with the secrets. What protects release mode is a repository
+  # ruleset that lets only maintainers create or update tags matching the pattern.
+  # design-onboard checks for one with `gh api repos/{owner}/{repo}/rulesets` and creates
+  # it, after a yes, before it renders this trigger. Without that ruleset, use the schedule.
   push:
     tags:
       - "v*" # klaus:value tag-pattern
@@ -55,6 +72,27 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
           persist-credentials: false
+
+      # The first step, before anything from the repo runs. The commit checked out must be
+      # on the default branch (fetch-depth 0 above fetched its history).
+      - name: Refuse a commit that is not on the default branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          default="$DEFAULT_BRANCH"
+          if [ -z "$default" ]; then default=$(gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch); fi
+          if ! git rev-parse --verify --quiet "refs/remotes/origin/$default^{commit}" > /dev/null; then
+            echo "::error::origin/$default was not fetched, so this run cannot tell whether the commit is on it."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor HEAD "refs/remotes/origin/$default"; then
+            echo "::error::$(git rev-parse --short HEAD) is not on $default, so Klaus will not build it. Merge it first."
+            exit 1
+          fi
+          echo "KLAUS_DEFAULT_BRANCH=$default" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -111,7 +149,11 @@ jobs:
       # build the inventory, pick versions from the diff. The run ends on the
       # newest of them, which is the release Klaus writes. A release that is
       # already versioned is not picked twice.
+      # Only a tag whose commit is on the default branch is a release. Others are
+      # ignored and removed from this runner's clone, so the newest tag that passes
+      # is the one built, and the Klaus run below never sees the rest.
       - name: Build the inventory and pick versions, one release at a time
+        id: pick
         env:
           EVENT: ${{ github.event_name }}
           TAG: ${{ github.ref_name }}
@@ -133,10 +175,37 @@ jobs:
           # Releases in the order Klaus counts them: creation date, then version for tags made
           # together. Git makes the last --sort the main key.
           # Keep this in step with listReleases in install/costs.mjs and frame/cli.mjs.
-          releases=$(git tag --list "$TAG_PATTERN" --sort=version:refname --sort=creatordate)
-          if [ "$EVENT" = push ]; then target="$TAG"; else target=$(printf '%s\n' "$releases" | tail -n 1); fi
+          all=$(git tag --list "$TAG_PATTERN" --sort=version:refname --sort=creatordate)
+          releases=""
+          refused=""
+          for tag in $all; do
+            if git merge-base --is-ancestor "refs/tags/$tag^{commit}" "refs/remotes/origin/$KLAUS_DEFAULT_BRANCH"; then
+              releases+="$tag"$'\n'
+            else
+              refused+="$tag "
+              git tag -d "$tag" > /dev/null
+            fi
+          done
+          releases=${releases%$'\n'}
+          if [ -n "$refused" ]; then
+            echo "::warning::Ignoring tags whose commit is not on $KLAUS_DEFAULT_BRANCH: $refused"
+          fi
+          if [ "$EVENT" = push ]; then
+            if ! printf '%s\n' "$releases" | grep -Fxq "$TAG"; then
+              echo "::error::Refusing $TAG: its commit is not on $KLAUS_DEFAULT_BRANCH, or the tag does not match $TAG_PATTERN."
+              exit 1
+            fi
+            target="$TAG"
+          else
+            target=$(printf '%s\n' "$releases" | tail -n 1)
+          fi
           if [ -z "$target" ]; then
-            echo "No tag matches $TAG_PATTERN yet, so there is no release to write."
+            if [ -z "$all" ]; then
+              echo "::notice::No tag matches $TAG_PATTERN yet, so there is no release to write."
+            else
+              echo "::notice::No tag matching $TAG_PATTERN is on $KLAUS_DEFAULT_BRANCH, so there is no release to write. Ignored: $refused"
+            fi
+            echo "proceed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -169,6 +238,7 @@ jobs:
           done
           # Nothing to pick: this release was versioned by an earlier run, so use that inventory.
           if [ -z "$covered" ] && [ -f "$prev" ]; then cp "$prev" inventory.json; fi
+          echo "proceed=true" >> "$GITHUB_OUTPUT"
       # klaus:begin captures
       # The version picker compares this release's captures with the stored screenshots.
       # Put the step that writes the captures file before the step above.
@@ -177,13 +247,19 @@ jobs:
       # klaus:begin figma-build
       # The Figma output reads computed styles from a static Storybook build in a browser.
       - name: Build Storybook for the Figma output
+        if: steps.pick.outputs.proceed == 'true'
         run: "pnpm --filter @repo/ui build-storybook -o storybook-static" # klaus:value storybook-build
 
       - name: Install the browser the Figma output reads Storybook with
+        if: steps.pick.outputs.proceed == 'true'
         run: "pnpm exec playwright install --with-deps chromium" # klaus:value playwright
       # klaus:end figma-build
 
+      # The only step with secrets. It builds Storybook, deploys it, and writes the Figma data.
+      # The Storybook adapter starts its build without the secrets, and gives the token to
+      # the Vercel calls alone.
       - name: Run Klaus
+        if: steps.pick.outputs.proceed == 'true'
         env:
           EVENT: ${{ github.event_name }}
           TAG: ${{ github.ref_name }}
