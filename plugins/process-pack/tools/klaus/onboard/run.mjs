@@ -214,8 +214,22 @@ export async function earlierRuns({ repo, plan, onboarding, captures, base = cur
   return { listed, ...found, refreshFiles: { base, changes, redrawn } }
 }
 
-/** A refresh's changes that do not depend on the drawing, one line each, to hold a run to its estimate. */
-const fixedChanges = (changes) => changes.filter((c) => !c.volatile).map((c) => `${c.rel} ${c.change}`)
+/**
+ * Refuses a refresh the estimate did not list. The plan id does not cover what is on the default
+ * branch, so --approve covers a refresh only when the estimate listed the same changes. The decisions
+ * list and its pictures are left out: the estimate cannot draw them, and says the run draws them again.
+ */
+function holdRefreshToEstimate({ estimate, approve, changes }) {
+  const approved = estimate.earlier?.refreshFiles?.changes
+  if (!approved) throw new UserError(`The estimate lists no refresh of the first pull request, so --approve ${approve} does not approve one. Run onboard.mjs estimate again and read it.`)
+  const lines = (list) => list.filter((c) => !c.volatile).map((c) => `${c.rel} ${c.change}`)
+  const now = lines(changes)
+  const then = lines(approved)
+  if (now.join('\n') === then.join('\n')) return
+  const added = now.filter((c) => !then.includes(c))
+  const gone = then.filter((c) => !now.includes(c))
+  throw new UserError(`The files a refresh would change are not the ones the estimate lists.${added.length ? ` Now: ${added.join('; ')}.` : ''}${gone.length ? ` No longer: ${gone.join('; ')}.` : ''} Run onboard.mjs estimate again and read it.`)
+}
 
 const sumOf = (list, field) => list.reduce((total, item) => total + (item[field] ?? 0), 0)
 
@@ -253,18 +267,7 @@ export async function runOnboarding(options) {
   const earlier = await earlierRuns({ repo, plan, onboarding, captures, base, refresh: options.refresh === true })
   if (earlier.refusal) throw new UserError(earlier.refusal)
   const { listed, start } = earlier
-  // The plan id does not cover what is on the default branch, so a refresh is approved only when the estimate listed the same one.
-  if (earlier.refresh) {
-    const approved = estimate.earlier?.refreshFiles?.changes
-    if (!approved) throw new UserError(`The estimate lists no refresh of the first pull request, so --approve ${approve} does not approve one. Run onboard.mjs estimate again and read it.`)
-    const now = fixedChanges(earlier.refreshFiles.changes)
-    const then = fixedChanges(approved)
-    if (now.join('\n') !== then.join('\n')) {
-      const added = now.filter((c) => !then.includes(c))
-      const gone = then.filter((c) => !now.includes(c))
-      throw new UserError(`The files a refresh would change are not the ones the estimate lists.${added.length ? ` Now: ${added.join('; ')}.` : ''}${gone.length ? ` No longer: ${gone.join('; ')}.` : ''} Run onboard.mjs estimate again and read it.`)
-    }
-  }
+  if (earlier.refresh) holdRefreshToEstimate({ estimate, approve, changes: earlier.refreshFiles.changes })
   if (earlier.note) log(earlier.note)
   const state = { plan, estimate, base, prs: [], merged: earlier.merged.map((step) => ({ step, ...mergedPullRequest(repo, step) })), refresh: earlier.refresh ? { of: mergedPullRequest(repo, 1), changes: [] } : null, replaced: {}, docsDir: docs, writerLabel: writerLabel(onboarding), checkerLabel: checkerLabel(onboarding), writerCalls: [], writerExecuted: 0, writerReused: 0, writerTokens: 0, checkerRuns: [], checksNotReached: [], purposes: { items: [] }, stories: null, rows: [], notes: [], startedAt: new Date().toISOString() }
   if (start > 3) {
@@ -355,7 +358,10 @@ export async function runOnboarding(options) {
       const baseline = await pickVersions({ root: repo, inventory: plan.inventory, baseline: true, captures: caps, ts: plan.ts })
       const listPaths = []
       if (state.refresh) {
+        // The pictures are drawn now, so an old one that the new decisions list does not show is removed. Pictures are left out of the approval check.
         const refresh = refreshCommit({ repo, files: listFiles(plan, baseline.inventory, docs), docs })
+        // The list the commit writes is made again here, without the dry run, so it is held to the estimate again before anything is written.
+        holdRefreshToEstimate({ estimate, approve, changes: refresh.changes })
         state.refresh.changes = refresh.changes
         for (const file of refresh.files) put(file.rel, file.text, listPaths)
         for (const rel of refresh.remove) {

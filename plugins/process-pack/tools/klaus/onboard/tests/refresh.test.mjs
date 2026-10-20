@@ -177,7 +177,7 @@ test('a merged first pull request that the plan no longer writes is refused with
   assert.deepEqual(created.slice(3).map((c) => [c.number, c.base, c.head]), [[4, 'main', REFRESH], [5, REFRESH, BRANCHES[1]], [6, BRANCHES[1], BRANCHES[2]]])
   assert.equal(created[3].title, 'Klaus onboarding 1 of 3 (refresh): the list of components at 1.0.0, and the duplicates')
   const body = calls.filter((c) => c.action === 'edit' && c.number === 4).at(-1).body
-  assert.match(body, /This pull request refreshes #1, the first onboarding pull request, which is merged\./)
+  assert.match(body, /This pull request refreshes #1, which is merged\./)
   assert.ok(body.includes(`- \`${OLD_TICKET}\`: removed, no pair needs it now.`), body)
   assert.ok(body.includes(`- \`${TICKET}\`: added.`), body)
   assert.match(body, /1\. #4: the list of components at 1\.0\.0, and the duplicates\. A refresh of #1, which is merged\./)

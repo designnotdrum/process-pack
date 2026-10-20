@@ -41,15 +41,21 @@ function stack(state, step) {
 /** The merged first pull request a refresh brings up to date, as a link when gh could say which. */
 const refreshedOf = (state) => (state.refresh.of?.number ? `#${state.refresh.of.number}` : 'the first onboarding pull request')
 
+/** How the refresh section names each kind of change. A changed file also shows the first place it differs, which came from the repo. */
+const REFRESH_CHANGE = Object.freeze({
+  added: () => 'added',
+  changed: (c) => `changed, ${code(c.why)}`,
+  removed: () => 'removed, no pair needs it now',
+})
+
 /** The section that opens a refresh of the first pull request: why it exists, and each file it changes. */
 function refreshes(state) {
   if (!state.refresh) return []
-  const of = state.refresh.of?.number ? `#${state.refresh.of.number}, the first onboarding pull request,` : 'the first onboarding pull request,'
-  const line = (c) => `- ${code(c.rel)}: ${c.change === 'changed' ? `changed, ${code(c.why)}` : c.change === 'removed' ? 'removed, no pair needs it now' : 'added'}.`
+  const line = (c) => `- ${code(c.rel)}: ${REFRESH_CHANGE[c.change](c)}.`
   return [
     '## A refresh',
     '',
-    `This pull request refreshes ${of} which is merged. The files on ${code(state.base)} are not what this plan writes now: Klaus, or the repo, changed after it merged. The run was given \`--refresh\`, so it made this pull request from ${code(state.base)} instead of refusing. It holds only the files that change, as this plan writes them:`,
+    `This pull request refreshes ${refreshedOf(state)}, which is merged. The files on ${code(state.base)} are not what this plan writes now: Klaus, or the repo, changed after it merged. The run was given \`--refresh\`, so it made this pull request from ${code(state.base)} instead of refusing. It holds only the files that change, as this plan writes them:`,
     '',
     ...state.refresh.changes.map(line),
     '',

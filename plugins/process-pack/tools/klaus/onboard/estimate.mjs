@@ -196,7 +196,8 @@ function renderEarlier(estimate) {
  */
 function renderRefresh(estimate) {
   const { base, changes, redrawn } = estimate.earlier.refreshFiles
-  const why = (c) => (c.why ? `, ${c.why}` : '')
+  // An added file has nothing to compare. A changed one shows the first place it differs, and a removed one why it goes.
+  const why = (c) => (c.change === 'added' ? '' : `, ${c.why}`)
   return [
     `    With --refresh the run does not refuse. It makes the first pull request again as a refresh: a pull request cut from ${base}, titled with "(refresh)", that holds only the files below as this plan writes them now. The second and third are stacked on it.`,
     `    A refresh would change ${plural(changes.length, 'file')}${changes.length > 0 ? ':' : '.'}`,
