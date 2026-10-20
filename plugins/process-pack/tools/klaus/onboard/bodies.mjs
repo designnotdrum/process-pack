@@ -77,11 +77,11 @@ const MAX_REWRITES_SHOWN = 40
 const MAX_LINE_SHOWN = 200
 
 /**
- * A line of the repo as an inline code span. A line that holds backticks gets a longer fence and a
- * space inside each end, which Markdown does not show, so the text reads as it is. A line longer
+ * A line of the repo as an inline code span. A line that holds backticks, or starts and ends with a
+ * space, gets a space inside each end, which Markdown does not show, so the text reads as it is. A line longer
  * than MAX_LINE_SHOWN is cut, and the notice that says so is outside the span.
  */
-function exactLine(text) {
+export function exactLine(text) {
   if (text === null) return null
   if (text === '') return '(an empty line)'
   if (text.trim() === '') return '(a line of only spaces or tabs)'
@@ -90,7 +90,9 @@ function exactLine(text) {
   const cut = clean.length > MAX_LINE_SHOWN ? ` (cut here, ${clean.length - MAX_LINE_SHOWN} more characters)` : ''
   const longest = Math.max(0, ...(shown.match(/`+/g) ?? []).map((run) => run.length))
   const fence = '`'.repeat(longest + 1)
-  return `${longest === 0 ? `${fence}${shown}${fence}` : `${fence} ${shown} ${fence}`}${cut}`
+  // Markdown drops one space from each end of a span whose text starts and ends with a space. The padding is what it drops.
+  const padded = longest > 0 || (shown.startsWith(' ') && shown.endsWith(' '))
+  return `${padded ? `${fence} ${shown} ${fence}` : `${fence}${shown}${fence}`}${cut}`
 }
 
 export const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`

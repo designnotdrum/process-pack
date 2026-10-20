@@ -370,7 +370,6 @@ export async function runOnboarding(options) {
       const files = countByFile(rewrites).length
       log(`The repo's commit hook rewrote ${plural(rewrites.length, 'line')} in ${plural(files, 'file')} in the commit for pull request ${step}. Klaus did not undo them, and the pull request names them.`)
     }
-    return sha
   }
 
   let actual
