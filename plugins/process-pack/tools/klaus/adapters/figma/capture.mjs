@@ -12,7 +12,7 @@ import fs from "node:fs";
 import http from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { findIcons, listCustomProperties, readStory } from "./capture-browser.mjs";
+import { findIcons, listCustomProperties, markComponent, readStory, storyFacts } from "./capture-browser.mjs";
 
 /** Root children that draw nothing. A story's root can start with one, so they are skipped. */
 const NOT_DRAWN = ["STYLE", "SCRIPT", "LINK", "META", "TEMPLATE", "NOSCRIPT"];
@@ -213,7 +213,57 @@ export async function openStorybook({ root, directory, globals }) {
   }
 }
 
-const READ = { maxDepth: 3, maxNodes: 60 };
+/**
+ * How much of a story the reader reads: every level and every element, up to a bound. A calendar
+ * month draws about 120 elements eight levels down, and two months about 240. Past 600 the data
+ * no longer fits one relay call next to the runtime, so a story that draws more is cut there with a
+ * warning.
+ */
+export const READ = Object.freeze({ maxDepth: 40, maxNodes: 600 });
+
+/** Turns transitions and animations off until the next page load, so an overlay opens at once. */
+const FREEZE = "*,*::before,*::after{transition:none!important;animation:none!important}";
+
+/**
+ * Opens a closed overlay the component drew, such as a popover, a select or a dialog, and marks the
+ * component's parts for readStory (markComponent). A popup trigger is clicked and a tooltip's is
+ * hovered. Returns a warning when a trigger did not open.
+ */
+export async function openComponent(page, name) {
+  const { trigger: how } = await page.evaluate(markComponent);
+  if (!how) return null;
+  let warning = null;
+  try {
+    await page.addStyleTag({ content: FREEZE });
+    const trigger = page.locator("[data-klaus-trigger]").first();
+    if (how === "hover") await trigger.hover({ timeout: 5000 });
+    else await trigger.click({ timeout: 5000 });
+    // Open when the trigger says so. A trigger React drew again has lost its mark, so then any
+    // element that says it is open will do.
+    await page.waitForFunction(
+      () => {
+        const isOpen = (element) => element.getAttribute("aria-expanded") === "true" || /open/.test(element.dataset.state ?? "");
+        const trigger = document.querySelector("[data-klaus-trigger]");
+        return trigger ? isOpen(trigger) : [...document.querySelectorAll("[aria-expanded], [data-state]")].some(isOpen);
+      },
+      null,
+      { timeout: 2000 },
+    );
+    // A pointer left on the trigger would draw its hover colours. A tooltip needs it there.
+    if (how === "click") await page.mouse.move(0, 0);
+    // An overlay moves focus into its content, which would draw a field focused and its text
+    // selected. The component is drawn at rest.
+    await page.evaluate(() => document.activeElement?.blur?.());
+    // An overlay is placed in the frames after it opens.
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+    await page.evaluate(() => document.fonts.ready);
+  } catch (error) {
+    warning = `${name}: its trigger did not open (${String(error.message).split("\n")[0]}), so it is drawn closed.`;
+  }
+  // The open content is drawn now, so the parts are found again.
+  await page.evaluate(markComponent);
+  return warning;
+}
 
 /**
  * Reads one component: every combination of its variant props, drawn by one story.
@@ -292,17 +342,32 @@ export async function captureComponent(storybook, request) {
 
   await storybook.show(story, argsFor(combos[0]));
   const propertyNames = await page.evaluate(listCustomProperties);
+  // The story's own args. The label replaces text children only: children given as markup, such as
+  // a sidebar's menu, stay. An overlay opens from its open arg when the component takes one.
+  const facts = await page.evaluate(storyFacts);
+  if (facts.childrenIsMarkup) delete base.children;
+  const openArg = ["defaultOpen", "open"].find((arg) => facts.args.some((a) => a.name === arg && (a.type === null || a.type === "boolean")));
+  if (openArg) base[openArg] = true;
 
   const cells = [];
   let tokens = [];
   const classLists = [];
+  const openWarnings = new Set();
+  let truncated = false;
   for (const combination of combos) {
     await storybook.show(story, argsFor(combination));
+    const opened = await openComponent(page, name);
+    if (opened) openWarnings.add(opened);
     const read = await page.evaluate(readStory, { candidates: propertyNames, withTokens: cells.length === 0, ...READ });
     if (read.error) throw new Error(`${name}: ${read.error}`);
     if (read.tokens) tokens = read.tokens;
+    truncated ||= read.truncated;
     classLists.push(read.classes);
     cells.push({ key: Object.fromEntries(allAxes.map((axis, i) => [axis.name, combination[i]])), tree: read.tree });
+  }
+  warnings.push(...openWarnings);
+  if (truncated) {
+    warnings.push(`${name} draws more than ${READ.maxNodes} elements or ${READ.maxDepth} levels, so the reader stopped there and the drawing is cut short.`);
   }
 
   let icon = null;

@@ -241,6 +241,7 @@ function makeIcon(U, n, parent) {
       if (x.fills.length > 0) x.fills = [paint];
     });
   }
+  if (n.o !== undefined) icon.opacity = n.o;
   if (n.hid) icon.visible = false;
   return icon;
 }
@@ -286,7 +287,9 @@ async function fillBox(U, tree, f) {
   for (const child of tree[1]) {
     const node = await makeNode(U, child, f);
     const c = U.nodes[child[0]];
-    if (!n.L && c.x !== undefined) {
+    // A child the browser positions absolutely stays out of its auto layout parent's flow.
+    if (n.L && c.ap) node.layoutPositioning = "ABSOLUTE";
+    if ((!n.L || c.ap) && c.x !== undefined) {
       node.x = c.x;
       node.y = c.y;
     }

@@ -32,7 +32,130 @@ export function listCustomProperties() {
 }
 
 /**
- * Reads the first element the story drew as a tree of boxes, text and icons.
+ * What the story declares: the names of its args with their types, and whether its children arg is
+ * markup rather than text. Storybook's preview keeps the rendered story on window.__STORYBOOK_PREVIEW__.
+ * A build without it gives no args, and the label rule keeps its old meaning.
+ */
+export function storyFacts() {
+  const story = window.__STORYBOOK_PREVIEW__?.currentRender?.story;
+  const argTypes = story?.argTypes ?? {};
+  const children = story?.initialArgs?.children;
+  return {
+    args: Object.keys(argTypes).map((name) => ({ name, type: argTypes[name]?.type?.name ?? null })),
+    childrenIsMarkup: children !== undefined && children !== null && typeof children !== "string" && typeof children !== "number",
+  };
+}
+
+/**
+ * Finds the elements the story's component drew and marks them with data-klaus-part, in order, for
+ * readStory. It also marks a closed overlay trigger among them with data-klaus-trigger.
+ *
+ * The component is the story's own (Storybook's `component`), found in React's fiber tree, so a
+ * story decorator's wrapper is not read, and an overlay's content in a portal outside
+ * #storybook-root is. Without React or without a component, the parts are the first element the
+ * story drew, plus positioned elements outside the story root that are not Storybook's own.
+ *
+ * A modal draws a backdrop over the whole window. The parts are then what is above the last
+ * backdrop: the backdrop and the trigger under it are left out.
+ *
+ * A part is a trigger when it is itself a closed popup trigger (aria-haspopup or a combobox, with
+ * aria-expanded false), which is clicked, or a closed element that has no aria-expanded, such as a
+ * tooltip's, which is hovered. A popup trigger deeper inside a part, such as a select in a form,
+ * is left closed.
+ *
+ * @returns {{ via: "component" | "root", parts: number, trigger: "click" | "hover" | null }}
+ */
+export function markComponent() {
+  const notDrawn = ["STYLE", "SCRIPT", "LINK", "META", "TEMPLATE", "NOSCRIPT"];
+  for (const old of document.querySelectorAll("[data-klaus-part], [data-klaus-trigger]")) {
+    old.removeAttribute("data-klaus-part");
+    old.removeAttribute("data-klaus-trigger");
+  }
+  const host = document.querySelector("#storybook-root");
+  if (!host) return { via: "root", parts: 0, trigger: null };
+
+  /** The drawn elements an element stands for: itself, or its children when it has no area of its own. */
+  function expand(element, out, depth = 0) {
+    if (!element.isConnected || notDrawn.includes(element.tagName) || depth > 20) return out;
+    const style = getComputedStyle(element);
+    if (style.display === "none" || style.visibility === "hidden") return out;
+    const rect = element.getBoundingClientRect();
+    if (style.display === "contents" || rect.width === 0 || rect.height === 0) {
+      for (const child of element.children) expand(child, out, depth + 1);
+      return out;
+    }
+    // Drawn for screen readers only, such as a live region of one clipped pixel.
+    if (rect.width <= 1 && rect.height <= 1 && style.overflowX !== "visible") return out;
+    out.push(element);
+    return out;
+  }
+
+  /** The elements React drew for the story's component, in order, through portals too. */
+  function fromReact() {
+    const component = window.__STORYBOOK_PREVIEW__?.currentRender?.story?.component;
+    const key = Object.keys(host).find((name) => name.startsWith("__reactContainer$"));
+    // The container keeps the fiber of the first render; the root's current tree is the drawn one.
+    const current = key ? host[key]?.stateNode?.current : null;
+    if (!component || !current) return null;
+    let match = null;
+    const stack = [current];
+    for (let steps = 0; stack.length > 0 && steps < 200000; steps++) {
+      const fiber = stack.pop();
+      if (fiber.elementType === component || fiber.type === component) {
+        match = fiber;
+        break;
+      }
+      if (fiber.sibling) stack.push(fiber.sibling);
+      if (fiber.child) stack.push(fiber.child);
+    }
+    if (!match) return null;
+    const elements = [];
+    // A portal's fiber (tag 4) is not an element. Its children are, wherever they are in the document.
+    const walk = (fiber) => {
+      for (let child = fiber.child; child; child = child.sibling) {
+        if (child.tag !== 4 && child.stateNode?.nodeType === 1) elements.push(child.stateNode);
+        else walk(child);
+      }
+    };
+    walk(match);
+    return elements;
+  }
+
+  function fromRoot() {
+    const first = [...host.children].find((element) => !notDrawn.includes(element.tagName) && element.getClientRects().length > 0);
+    const storybooks = (element) => element === host || element.id.startsWith("storybook-") || [...element.classList].some((name) => name.startsWith("sb-"));
+    const outside = [...document.body.children]
+      .filter((element) => !storybooks(element))
+      .flatMap((element) => expand(element, []))
+      .filter((element) => ["fixed", "absolute"].includes(getComputedStyle(element).position));
+    return first ? [first, ...outside] : outside;
+  }
+
+  const found = fromReact();
+  const via = found && found.length > 0 ? "component" : "root";
+  let parts = (via === "component" ? found : fromRoot()).flatMap((element) => expand(element, []));
+
+  const clickable = '[aria-expanded="false"]:is([aria-haspopup]:not([aria-haspopup="false"]), [role="combobox"])';
+  const hoverable = ':is(button, a, [role="button"])[data-state="closed"]:not([aria-expanded])';
+  const click = parts.find((element) => element.matches(clickable));
+  const hover = click ? null : parts.find((element) => element.matches(hoverable));
+  (click ?? hover)?.setAttribute("data-klaus-trigger", "");
+
+  const backdrop = (element) => {
+    const rect = element.getBoundingClientRect();
+    return getComputedStyle(element).position === "fixed" && rect.width >= innerWidth - 1 && rect.height >= innerHeight - 1 && element.children.length === 0 && element.textContent.trim() === "";
+  };
+  const last = parts.findLastIndex(backdrop);
+  if (last >= 0 && last < parts.length - 1) parts = parts.slice(last + 1);
+  else parts = parts.filter((element) => !backdrop(element));
+
+  parts.forEach((element, i) => element.setAttribute("data-klaus-part", String(i)));
+  return { via, parts: parts.length, trigger: click ? "click" : hover ? "hover" : null };
+}
+
+/**
+ * Reads what the story drew as a tree of boxes, text and icons: the parts markComponent marked, or
+ * the first element the story drew when nothing is marked.
  *
  * Which token a colour comes from is found by changing each candidate token on
  * the page and seeing which colours move. This works when two tokens hold the
@@ -65,8 +188,11 @@ export function readStory(arg) {
     const host = document.querySelector(rootSelector);
     // A story's root can start with a <style> or <script>; the component is the first child that draws.
     const notDrawn = ["STYLE", "SCRIPT", "LINK", "META", "TEMPLATE", "NOSCRIPT"];
-    const rootElement = host ? (useHost ? host : [...host.children].find((el) => !notDrawn.includes(el.tagName))) : null;
-    if (!rootElement) return { error: `Nothing was drawn inside ${rootSelector}.` };
+    // markComponent marks the component's parts, which can sit outside the story root.
+    const marked = useHost ? [] : [...document.querySelectorAll("[data-klaus-part]")].sort((a, b) => Number(a.dataset.klausPart) - Number(b.dataset.klausPart));
+    const firstChild = host ? (useHost ? host : [...host.children].find((el) => !notDrawn.includes(el.tagName))) : null;
+    const parts = marked.length > 0 ? marked : firstChild ? [firstChild] : [];
+    if (parts.length === 0) return { error: `Nothing was drawn inside ${rootSelector}.` };
 
     const canvas = document.createElement("canvas");
     canvas.width = 1;
@@ -113,16 +239,17 @@ export function readStory(arg) {
       if (computed[3] === 0) continue;
       tokens.push({ name, kind, syntax, rgba: computed });
     }
-    // What the story drew.
+    // What the story drew. Each watched entry is [element, pseudo-element or null], whose colours are traced to tokens.
     const watched = [];
+    const watch = (element, pseudo = null) => watched.push([element, pseudo]) - 1;
     let count = 0;
+    let truncated = false;
 
     function textBox(textNode, parentElement, parentStyle) {
       const range = document.createRange();
       range.selectNodeContents(textNode);
       const rect = range.getBoundingClientRect();
       if (rect.width === 0 && rect.height === 0) return null;
-      watched.push(parentElement);
       const lineHeight = parentStyle.lineHeight === "normal" ? number(parentStyle.fontSize) * 1.2 : number(parentStyle.lineHeight);
       return {
         kind: "text",
@@ -139,7 +266,50 @@ export function readStory(arg) {
         decoration: parentStyle.textDecorationLine,
         transform: parentStyle.textTransform,
         color: colorOf(parentStyle.color),
-        watchIndex: watched.length - 1,
+        watchIndex: watch(parentElement),
+      };
+    }
+
+    /**
+     * The text the browser draws inside an input or a text area: its value, or its placeholder in the
+     * placeholder's colour. An input's one line sits in the middle of its content box, so the line is
+     * as high as that box.
+     */
+    function fieldText(element, style, rect) {
+      const type = (element.getAttribute("type") ?? "text").toLowerCase();
+      if (element.tagName === "INPUT" && ["hidden", "checkbox", "radio", "range", "color", "file", "image"].includes(type)) return null;
+      const value = element.value ?? "";
+      const shown = value !== "" ? (type === "password" ? "•".repeat(value.length) : value) : (element.placeholder ?? "");
+      if (shown.trim() === "") return null;
+      const pseudo = value === "" ? "::placeholder" : null;
+      const ink = pseudo ? getComputedStyle(element, pseudo) : style;
+      const sides = (a, b) => number(style[`padding${a}`]) + number(style[`border${a}Width`]) + number(style[`padding${b}`]) + number(style[`border${b}Width`]);
+      const left = rect.x + number(style.paddingLeft) + number(style.borderLeftWidth);
+      const top = rect.y + number(style.paddingTop) + number(style.borderTopWidth);
+      const boxW = Math.max(0, rect.width - sides("Left", "Right"));
+      const boxH = Math.max(0, rect.height - sides("Top", "Bottom"));
+      context.font = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      const full = context.measureText(shown).width;
+      const single = element.tagName === "INPUT";
+      const lineHeight = single ? boxH : style.lineHeight === "normal" ? number(style.fontSize) * 1.2 : number(style.lineHeight);
+      // A text area wraps its text across its width.
+      const lines = single ? 1 : Math.max(1, Math.ceil(full / Math.max(boxW, 1)));
+      return {
+        kind: "text",
+        text: shown.replace(/\s+/g, " ").trim(),
+        x: round(left),
+        y: round(top),
+        w: round(single ? Math.min(boxW, full) : boxW),
+        h: round(single ? boxH : Math.min(boxH, lines * lineHeight)),
+        family: style.fontFamily,
+        weight: number(style.fontWeight),
+        size: number(style.fontSize),
+        lineHeight: round(lineHeight),
+        letterSpacing: style.letterSpacing === "normal" ? 0 : round(number(style.letterSpacing)),
+        decoration: ink.textDecorationLine,
+        transform: style.textTransform,
+        color: colorOf(ink.color),
+        watchIndex: watch(element, pseudo),
       };
     }
 
@@ -157,6 +327,37 @@ export function readStory(arg) {
         y: round(rect.y),
         w: round(rect.width),
         h: round(rect.height),
+        position: style.position,
+        opacity: number(style.opacity),
+      };
+    }
+
+    /** A box for a rectangle that draws nothing itself, such as the frame around an overlay and its trigger. */
+    function emptyBox(x, y, w, h, children) {
+      return {
+        kind: "box",
+        tag: "div",
+        x: round(x),
+        y: round(y),
+        w: round(w),
+        h: round(h),
+        display: "block",
+        position: "static",
+        direction: "row",
+        alignItems: "normal",
+        justifyContent: "normal",
+        gap: [0, 0],
+        padding: [0, 0, 0, 0],
+        margin: [0, 0, 0, 0],
+        borderWidth: [0, 0, 0, 0],
+        borderStyle: "none",
+        borderColor: [0, 0, 0, 0],
+        radius: [0, 0, 0, 0],
+        background: [0, 0, 0, 0],
+        backgroundImage: false,
+        opacity: 1,
+        clip: false,
+        children,
       };
     }
 
@@ -164,7 +365,6 @@ export function readStory(arg) {
       count += 1;
       const style = getComputedStyle(element);
       const rect = element.getBoundingClientRect();
-      watched.push(element);
       const node = {
         kind: "box",
         tag: element.tagName.toLowerCase(),
@@ -173,11 +373,13 @@ export function readStory(arg) {
         w: round(rect.width),
         h: round(rect.height),
         display: style.display,
+        position: style.position,
         direction: style.flexDirection,
         alignItems: style.alignItems,
         justifyContent: style.justifyContent,
         gap: [round(number(style.rowGap)), round(number(style.columnGap))],
         padding: [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft].map((v) => round(number(v))),
+        margin: [style.marginTop, style.marginRight, style.marginBottom, style.marginLeft].map((v) => round(number(v))),
         borderWidth: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth].map((v) => round(number(v))),
         borderStyle: style.borderTopStyle,
         borderColor: colorOf(style.borderTopColor),
@@ -186,31 +388,72 @@ export function readStory(arg) {
         backgroundImage: style.backgroundImage !== "none",
         opacity: number(style.opacity),
         clip: style.overflowX !== "visible" || style.overflowY !== "visible",
-        watchIndex: watched.length - 1,
+        watchIndex: watch(element),
         children: [],
       };
+      if (element.tagName === "INPUT" || element.tagName === "TEXTAREA") {
+        const words = fieldText(element, style, rect);
+        if (words) node.children.push(words);
+        return node;
+      }
+      readChildren(node, element, style, depth);
+      return node;
+    }
+
+    /** Reads an element's children into node. A child drawn as display: contents adds its own children in its place. */
+    function readChildren(node, element, style, depth) {
       for (const child of element.childNodes) {
-        if (count >= maxNodes) break;
+        if (count >= maxNodes) {
+          truncated = true;
+          return;
+        }
         if (child.nodeType === Node.TEXT_NODE) {
           if (child.data.trim() === "") continue;
+          count += 1;
           const leaf = textBox(child, element, style);
           if (leaf) node.children.push(leaf);
           continue;
         }
-        if (child.nodeType !== Node.ELEMENT_NODE) continue;
+        if (child.nodeType !== Node.ELEMENT_NODE || notDrawn.includes(child.tagName)) continue;
         const childStyle = getComputedStyle(child);
         if (childStyle.display === "none" || childStyle.visibility === "hidden") continue;
+        if (childStyle.display === "contents") {
+          readChildren(node, child, childStyle, depth);
+          continue;
+        }
         if (child.tagName.toLowerCase() === "svg") {
           count += 1;
           node.children.push(iconBox(child, childStyle));
           continue;
         }
+        // Drawn for screen readers only: one clipped pixel, such as an sr-only label.
+        const rect = child.getBoundingClientRect();
+        if (rect.width <= 1 && rect.height <= 1 && childStyle.overflowX !== "visible") continue;
         if (depth < maxDepth) node.children.push(box(child, depth + 1));
+        else truncated = true;
       }
-      return node;
     }
 
-    const tree = box(rootElement, 1);
+    // One part is the component's own box. Several, such as a trigger and its open overlay, sit in a
+    // box that draws nothing and holds them all.
+    let tree;
+    if (parts.length === 1) tree = box(parts[0], 1);
+    else {
+      const read = parts.map((part) => box(part, 2));
+      // What a part draws can reach past its own box, as a panel moved down from its positioned
+      // wrapper does. Only a box that clips keeps its children inside it.
+      const rects = [];
+      const extent = (node) => {
+        rects.push(node);
+        if (node.kind === "box" && !node.clip) node.children.forEach(extent);
+      };
+      read.forEach(extent);
+      const left = Math.min(...rects.map((n) => n.x));
+      const top = Math.min(...rects.map((n) => n.y));
+      const right = Math.max(...rects.map((n) => n.x + n.w));
+      const bottom = Math.max(...rects.map((n) => n.y + n.h));
+      tree = emptyBox(left, top, right - left, bottom - top, read);
+    }
 
     // Which token each colour comes from.
     const properties = [
@@ -218,19 +461,20 @@ export function readStory(arg) {
       ["border", "borderTopColor"],
       ["color", "color"],
     ];
-    const before = watched.map((element) => {
-      const style = getComputedStyle(element);
+    const styleOf = ([element, pseudo]) => getComputedStyle(element, pseudo);
+    const before = watched.map((entry) => {
+      const style = styleOf(entry);
       return properties.map(([, property]) => style[property]);
     });
     const found = watched.map(() => ({}));
     const sentinel = { hsl: "123 87% 45%", rgb: "12 200 34", plain: "rgb(12, 200, 34)" };
-    const holders = [document.documentElement, ...watched];
+    const holders = [document.documentElement, ...new Set(watched.map(([element]) => element))];
     for (const token of tokens) {
       // Put back what the page had set itself, so one capture does not change the next.
       const saved = holders.map((holder) => [holder, holder.style.getPropertyValue(token.name), holder.style.getPropertyPriority(token.name)]);
       for (const holder of holders) holder.style.setProperty(token.name, sentinel[token.kind], "important");
-      watched.forEach((element, index) => {
-        const style = getComputedStyle(element);
+      watched.forEach((entry, index) => {
+        const style = styleOf(entry);
         properties.forEach(([key, property], column) => {
           if (style[property] !== before[index][column]) (found[index][key] ??= []).push(token.name);
         });
@@ -257,7 +501,7 @@ export function readStory(arg) {
     };
     attach(tree);
 
-    return { tree, classes: [...rootElement.classList], tokens: withTokens ? tokens : undefined };
+    return { tree, classes: [...parts[0].classList], truncated, tokens: withTokens ? tokens : undefined };
   }
 }
 

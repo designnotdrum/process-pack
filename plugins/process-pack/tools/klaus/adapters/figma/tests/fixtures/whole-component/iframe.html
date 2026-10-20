@@ -1,0 +1,167 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      A stand-in for a static Storybook build, for the reader's browser tests (whole-component.test.mjs).
+      It draws each story with plain DOM code. The React stories also leave what the reader looks for
+      in React's internals: a fiber tree on #storybook-root, and the story's component, argTypes and
+      initial args on window.__STORYBOOK_PREVIEW__, as Storybook's React renderer does.
+    -->
+    <style>
+      body { margin: 0; font-family: sans-serif; font-size: 14px; line-height: 20px; color: rgb(17, 17, 17); }
+      #storybook-root { padding: 16px; }
+      button { font: inherit; color: inherit; background: rgb(255, 255, 255); border: 1px solid rgb(204, 204, 204); padding: 8px 16px; margin: 0; }
+      input::placeholder { color: rgb(136, 136, 136); }
+      input:focus { outline: none; border-color: rgb(0, 0, 255) !important; }
+    </style>
+  </head>
+  <body>
+    <div id="storybook-root"></div>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const id = params.get("id");
+      const args = {};
+      for (const pair of (params.get("args") || "").split(";").filter(Boolean)) {
+        const at = pair.indexOf(":");
+        const value = pair.slice(at + 1);
+        args[pair.slice(0, at)] = value === "!true" ? true : value === "!false" ? false : value.replace(/\+/g, " ");
+      }
+      const root = document.getElementById("storybook-root");
+
+      /** An element with inline styles and children. */
+      function h(tag, style, ...children) {
+        const element = document.createElement(tag);
+        if (style) element.style.cssText = style;
+        for (const child of children) element.append(child);
+        return element;
+      }
+
+      // The parts of React's fiber tree that the reader walks.
+      const fiber = (props) => Object.assign({ tag: 0, child: null, sibling: null, return: null, elementType: null, type: null, stateNode: null }, props);
+      function link(parent, children) {
+        children.forEach((child, i) => {
+          child.return = parent;
+          if (i > 0) children[i - 1].sibling = child;
+        });
+        parent.child = children[0] || null;
+        return parent;
+      }
+      const host = (element, children = []) => link(fiber({ tag: 5, stateNode: element, elementType: element.tagName.toLowerCase() }), children);
+      const portal = (children) => link(fiber({ tag: 4, stateNode: { containerInfo: document.body } }), children);
+      const component = (type, children) => link(fiber({ tag: 0, elementType: type, type }), children);
+      const fiberRoot = {};
+      /** Puts a new current tree on the root, as a React commit does. The container keeps its first fiber. */
+      function commit(children, story) {
+        fiberRoot.current = link(fiber({ tag: 3, stateNode: fiberRoot }), [component(function StorybookWrapper() {}, children)]);
+        if (!root.__reactContainer$fixture) root.__reactContainer$fixture = fiber({ tag: 3, stateNode: fiberRoot });
+        window.__STORYBOOK_PREVIEW__ = { currentRender: { story } };
+      }
+
+      const stories = {
+        // A month of 42 day buttons, eight levels down, under a navigation bar placed over the caption.
+        "fixture-calendar--default"() {
+          const weeks = [];
+          for (let week = 0; week < 6; week++) {
+            const days = [];
+            for (let day = 0; day < 7; day++) {
+              const date = new Date(2026, 8, 28 + week * 7 + day).getDate();
+              days.push(h("td", "padding: 0", h("button", "width: 32px; height: 32px; padding: 0; border: 0", String(date))));
+            }
+            weeks.push(h("tr", "", ...days));
+          }
+          const nav = h("nav", "position: absolute; top: 0; left: 0; right: 0; height: 28px; display: flex; justify-content: space-between", h("button", "padding: 0 8px", "<"), h("button", "padding: 0 8px", ">"));
+          const month = h("div", "", h("div", "height: 28px; text-align: center", "October 2026"), h("table", "border-collapse: collapse", h("tbody", "", ...weeks)));
+          root.append(h("div", "display: inline-block; padding: 12px; border: 1px solid rgb(204, 204, 204)", h("div", "position: relative; display: flex; flex-direction: column", nav, month)));
+        },
+
+        // Far more elements than a component draws.
+        "fixture-crowded--default"() {
+          const cells = [];
+          for (let i = 0; i < 3000; i++) cells.push(h("div", "width: 4px; height: 4px; background: rgb(200, 0, 0)"));
+          root.append(h("div", "display: flex; flex-wrap: wrap; width: 400px", ...cells));
+        },
+
+        // Text the browser draws from an input's value or placeholder.
+        "fixture-field--default"() {
+          const input = (attributes) => Object.assign(h("input", "display: flex; height: 36px; width: 200px; box-sizing: border-box; padding: 4px 12px; border: 1px solid rgb(204, 204, 204); font: inherit; color: rgb(17, 17, 17)"), attributes);
+          root.append(h("div", "display: flex; flex-direction: column; gap: 8px; width: 200px", input({ placeholder: "Enter text..." }), input({ value: "Pedro Duarte" })));
+        },
+
+        // Drawn closed. A click on the trigger opens content in a portal outside the story root.
+        "fixture-popover--default"() {
+          function Popover() {}
+          const trigger = h("button", "", "Open popover");
+          Object.assign(trigger.dataset, { state: "closed" });
+          trigger.setAttribute("aria-haspopup", "dialog");
+          trigger.setAttribute("aria-expanded", "false");
+          // Content a closed overlay keeps out of the document, as Radix Select does.
+          const detached = h("div", "", "Not drawn");
+          const story = { component: Popover, argTypes: {}, initialArgs: {} };
+          root.append(trigger);
+          commit([component(Popover, [host(trigger), portal([host(detached)])])], story);
+          trigger.addEventListener("click", () => {
+            const box = trigger.getBoundingClientRect();
+            // The panel sits 4px below its positioned wrapper, as Radix's popper content does with translate-y-1.
+            const content = h(
+              "div",
+              `position: fixed; left: ${box.left}px; top: ${box.bottom + 8}px; width: 274px`,
+              h(
+                "div",
+                "transform: translateY(4px); padding: 16px; background: rgb(255, 255, 255); border: 1px solid rgb(204, 204, 204)",
+                h("h4", "margin: 0", "Dimensions"),
+                h("p", "margin: 8px 0 0", "Set the dimensions for the layer."),
+                h("input", "display: block; margin-top: 8px; width: 200px; border: 1px solid rgb(204, 204, 204)"),
+              ),
+            );
+            document.body.append(content);
+            // An overlay moves focus into its content when it opens, as Radix does.
+            content.querySelector("input").focus();
+            trigger.setAttribute("aria-expanded", "true");
+            trigger.dataset.state = "open";
+            commit([component(Popover, [host(trigger), portal([host(content)])])], story);
+          });
+        },
+
+        // Opens only from its defaultOpen arg: the trigger has no click handler. Modal, with a backdrop.
+        "fixture-dialog--default"() {
+          function Dialog() {}
+          const trigger = h("button", "", "Open dialog");
+          trigger.setAttribute("aria-haspopup", "dialog");
+          trigger.setAttribute("aria-expanded", "false");
+          root.append(trigger);
+          const story = { component: Dialog, argTypes: { defaultOpen: { name: "defaultOpen", type: { name: "boolean" } } }, initialArgs: {} };
+          const parts = [host(trigger)];
+          if (args.defaultOpen === true) {
+            const backdrop = h("div", "position: fixed; inset: 0; background: rgba(0, 0, 0, 0.8)");
+            const content = h(
+              "div",
+              "position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 300px; padding: 24px; box-sizing: border-box; background: rgb(255, 255, 255)",
+              h("h2", "margin: 0; font-size: 18px", "Edit profile"),
+              h("p", "margin: 8px 0 0", "Make changes to your profile here."),
+            );
+            document.body.append(backdrop, content);
+            trigger.setAttribute("aria-expanded", "true");
+            parts.push(portal([host(backdrop), host(content)]));
+          }
+          commit([component(Dialog, parts)], story);
+        },
+
+        // A story decorator wraps the component in a padded box, beside some page content.
+        "fixture-panel--default"() {
+          function Decorator() {}
+          function Panel() {}
+          const label = typeof args.children === "string" ? args.children : "Panel body";
+          const panel = h("div", "padding: 12px; border: 1px solid rgb(204, 204, 204); width: 160px", label);
+          const main = h("div", "padding: 8px", "Main content");
+          const wrapper = h("div", "display: flex; gap: 24px; padding: 40px; background: rgb(238, 238, 238)", panel, main);
+          root.append(wrapper);
+          // The story's children arg is markup, which a URL cannot carry.
+          const story = { component: Panel, argTypes: { children: { name: "children" } }, initialArgs: { children: { $$typeof: "react.element" } } };
+          commit([component(Decorator, [host(wrapper, [component(Panel, [host(panel)]), host(main)])])], story);
+        },
+      };
+      stories[id]();
+    </script>
+  </body>
+</html>
