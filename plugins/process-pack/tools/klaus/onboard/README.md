@@ -4,7 +4,7 @@ Builds a repo's baseline in three pull requests, in order, each on a branch stac
 
 | Pull request | What it holds | Model |
 | --- | --- | --- |
-| 1. The list | `inventory.json` and `INVENTORY.md` with every entry at 1.0.0, and the duplicates: a list, a merge ticket for each same-looking pair, and a decisions list | none |
+| 1. The list | `inventory.json` and `INVENTORY.md` with every entry at 1.0.0, and the duplicates: a list, a ticket for each pair the data settles, and a decisions list of the questions it does not | none |
 | 2. The purposes | A purpose comment above each component that has none, then the inventory rebuilt from them | a writer and a checker |
 | 3. The stories | A story for each component that has none and shows no live data, and a view of the data-bound components with the screens they appear on | none |
 
@@ -129,10 +129,31 @@ Each written purpose is then checked once, against up to five places the compone
 
 ## Duplicates
 
-Two components are a likely pair when they do the same job: the same name in two files, or the same kind of name (the last word: `Button` and `PrimaryButton`) with at least half their prop names in common. The look is the share of class names the two write (in `className` and in `cva`, `cn`, `clsx` and the like), because the run has no screenshots. At three quarters or more in common the pair looks the same.
+Two components are a likely pair when they do the same job: the same name in two files, or the same kind of name (the last word: `Button` and `PrimaryButton`) with at least half their prop names in common. Props that nearly every component takes (`children`, `className`, `style`, `id`, `key`, `ref`, `asChild`) do not count, so two context providers that take only `children` are not a pair. A pair is set aside, and listed with the reason at the end of `duplicates.md`, when one component is built on the other (its file imports the other by name) or when the names differ, neither name holds all the words of the other (`InsightCard` and `HypothesisCard`, but not `Button` and `PrimaryButton`) and either the look differs or it could not be compared (a side writes no class names, as a component styled another way does). Nothing is asked about those: a question about two differently named components whose look cannot be shown is not one the owner can judge. Pairs with the same name, or a name inside the other's, are still asked about. A same-looking pair where one is built on the other is set aside too, not made a merge ticket. The look is the share of class names the two write (in `className` and in `cva`, `cn`, `clsx` and the like), because the run has no screenshots. At three quarters or more in common the pair looks the same.
 
-- **Same look:** a merge-into-one ticket in `docs/klaus/tickets/`, with a goal, what Klaus found, a done check, proof wanted and a size. The entry to keep is the shared one, then the more used, then the first by name.
-- **Different look, or a component that styles itself another way** (CSS modules, styled-components): on `docs/klaus/decisions.md` as "which one wins", with a box to tick for each choice and a default. DESIGN.md is changed first.
+The data settles what it can, without asking:
+
+- **One copy is used in no place:** a removal ticket in `docs/klaus/tickets/` that deletes it. The copy that is used stays, even when it is the app's and the unused one is the shared package's. When both are unused, the first stays and the second goes, and the ticket says the first is unused too. One ticket for each unused copy: a second pair against the same copy is folded into the first one's ticket.
+- **Same look, both used:** a merge-into-one ticket, with a goal, what Klaus found, a done check, proof wanted and a size. The entry to keep is the shared one, then the more used, then the first by name.
+
+Everything else is a question in `docs/klaus/decisions.md`: both copies are used and the look differs, or a component styles itself another way (CSS modules, styled-components), so its look cannot be compared. Each question is written to be read cold:
+
+- The heading is the question: "Replace the web app's own Switch with the shared UI package's Switch?". Each side is named by where it lives and how many places use it ("the shared UI package's Switch (3 places)"), taken from its folder: `packages/<name>` is "the shared <name> package" and `apps/<name>` is "the <name> app".
+- The default is stated, with its reason: yes when the names match (or one holds the other's words, `PrimaryButton` and `Button`) and the kept one is used in more places or is the shared one, otherwise no, keep both.
+- A picture of the two side by side, with one sentence on the visible difference measured from what was drawn. A side with no story is a labelled gap in the picture, and the item says so. Without a built Storybook, the item says that instead and gives a sentence read from the class names, marked as not from a picture.
+- Class names and file paths are in a collapsed block for whoever does the merge.
+
+Nothing in the lists makes a statement about accessibility: Klaus does not judge it.
+
+### The pictures
+
+`decisions-pictures.mjs` draws them from a static Storybook build, with the browser reader the Figma adapter uses. The build is the one `outputs.figma.options.storybookDir` names in `klaus.config.json`, else the `storybook-static` folder next to a `.storybook` folder. Build it first with `storybook build`; Klaus does not. A component's story is the one named for it (by the end of its title, or by its stories file) in a story file that imports the component, directly or through a barrel file, found with the repo's own TypeScript. A story that only imports the component, such as one that draws a whole screen, is not its story. The first such story (`Default`, `Primary`) is drawn in its default state.
+
+The left side of each picture is the one a "yes" would replace, the right side the one that stays. Each image is a PNG under `docs/klaus/decisions/`, written into the repo and linked by a relative path, so it shows on GitHub with no upload. The sentence under it is measured from what was drawn: colour, corners, border, shadow, text, and the height of a control. A tall box is as tall as its content, so its height is not compared.
+
+`onboard/write-decisions.mjs --repo <dir> [--storybook <dir>] [--out <dir>] [--ask-all]` writes the decisions list, the tickets, the pictures and `duplicates.md`, with the run's own functions and no model. With `--out` the repo is only read. With `--ask-all` the pairs that are set aside are asked about too.
+
+The run draws the pictures after it has the plan and before it makes the first pull request, and commits them in it, with the decisions list and the tickets (`onboard.mjs run --storybook <dir>` names the build). With no build, or no browser, the first pull request is still made, and each decision says why it has no picture. A later run that continues past a merged first pull request only needs `decisions.md` and the pictures to be there: they depend on a browser and a build, so they are not compared.
 
 The cut-offs (50% and 75%) are choices, not measurements, and every percentage is printed so a person can overrule them. Pixel comparison of real screenshots is a later improvement once the repo's visual check captures components.
 

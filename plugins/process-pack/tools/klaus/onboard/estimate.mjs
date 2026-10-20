@@ -7,6 +7,7 @@
  * dollar figure: Codex use is billed to the ChatGPT plan's quota, not per token.
  */
 import { checkerPrompt, isCheckable, readPrice } from './checker.mjs'
+import { countDuplicates } from './duplicates.mjs'
 import { checkerContext } from './source.mjs'
 import { writerPrompt } from './writer.mjs'
 
@@ -110,7 +111,7 @@ export async function buildEstimate({ plan, onboarding, fetchImpl }) {
     },
     stories: { write: count('write'), exists: count('exists'), dataBound: count('data-bound'), skipped: count('skipped') },
     storyCheck: plan.stories.check,
-    duplicates: { pairs: plan.duplicates.length, tickets: plan.duplicates.filter((p) => p.verdict === 'merge').length, decisions: plan.duplicates.filter((p) => p.verdict !== 'merge').length },
+    duplicates: (({ pairs, tickets, removals, decisions }) => ({ pairs, tickets, removals, decisions }))(countDuplicates(plan.duplicates)),
     price,
     rates: { writer: WRITER_RATES, checker: CHECKER_RATES },
     margins: MARGINS,
@@ -149,7 +150,7 @@ export function renderEstimate(estimate) {
   lines.push('    A purpose the writer gets wrong is rejected before the check and is not checked. The report counts those with the checker calls and says how many.')
   lines.push(`  Stories: ${stories.write} written with no model. ${stories.dataBound} listed with the screens they appear on instead, because they show live data. ${stories.exists} already had a story. ${stories.skipped} left for a person${storyCheck ? ` (${storyCheck.noStorybook} in folders no Storybook loads, ${storyCheck.needsValue} with a required prop Klaus cannot fill in, ${storyCheck.storybookMissing + storyCheck.didNotCompile} whose story did not compile)` : ''}.`)
   if (storyCheck) lines.push(`    Each story is type-checked with the repo's own TypeScript and the tsconfig of its package, and written only if a Storybook config in the repo loads its path (${plural(storyCheck.typeChecked, 'story', 'stories')} checked). Nothing is written to check them.`)
-  lines.push(`  Duplicates: ${plural(duplicates.pairs, 'likely pair')}. ${duplicates.tickets} ${duplicates.tickets === 1 ? 'becomes a merge ticket' : 'become merge tickets'} and ${duplicates.decisions} ${duplicates.decisions === 1 ? 'goes' : 'go'} on the decisions list, as files in the pull request. Nothing is filed in a tracker. No model.`)
+  lines.push(`  Duplicates: ${plural(duplicates.pairs, 'likely pair')}. ${duplicates.tickets} ${duplicates.tickets === 1 ? 'becomes a ticket' : 'become tickets'}${(duplicates.removals ?? 0) > 0 ? ` (${duplicates.removals} to delete a copy that nothing uses)` : ''} and ${duplicates.decisions} ${duplicates.decisions === 1 ? 'goes' : 'go'} on the decisions list, as files in the pull request. Nothing is filed in a tracker. No model.`)
   const sends = []
   if (writer.route !== 'external') sends.push('the source of the files in each folder goes to OpenAI through the Codex CLI')
   if (checker.route !== 'external') sends.push('each component\'s props and a few places it is used go to OpenRouter')

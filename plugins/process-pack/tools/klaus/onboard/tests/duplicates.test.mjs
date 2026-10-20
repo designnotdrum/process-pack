@@ -25,9 +25,13 @@ test('a kind of name is its last word', () => {
   assert.equal(headNoun('Dialog'), 'dialog')
 })
 
-test('the fixture has three pairs among the buttons and none involving Hero or ActivityFeed', () => {
-  assert.equal(pairs.length, 3)
+test('the fixture has two pairs among the buttons and none involving Hero or ActivityFeed', () => {
+  assert.equal(pairs.length, 2)
   assert.ok(pairs.every((p) => ['Button', 'LinkButton', 'PrimaryButton'].includes(p.keep.name) && ['Button', 'LinkButton', 'PrimaryButton'].includes(p.drop.name)))
+})
+
+test('LinkButton and PrimaryButton are set aside: neither name holds the other\'s words and the look differs', () => {
+  assert.deepEqual(pairs.dismissed.map((d) => [d.keep.name, d.drop.name, d.reason]), [['LinkButton', 'PrimaryButton', 'the names differ and the look differs, so they are different components']])
 })
 
 test('a pair with the same props and the same class names is a merge, and the more used one is kept', () => {
@@ -64,9 +68,10 @@ test('the list says what was compared, and the ticket has a goal, a done check, 
 
 test('the decisions list holds only pairs that need a ruling, each with a choice to tick', () => {
   const text = renderDecisions(pairs)
-  assert.equal((text.match(/^## \d+\./gm) ?? []).length, 2)
+  assert.equal((text.match(/^## \d+\./gm) ?? []).length, 1)
   assert.doesNotMatch(text, /PrimaryButton or Button/)
-  assert.equal((text.match(/- Decision: \[ \]/g) ?? []).length, 2)
+  assert.equal((text.match(/^- \[ \] Yes, replace it$/gm) ?? []).length, 1)
+  assert.equal((text.match(/^- \[ \] No, keep both, because:$/gm) ?? []).length, 1)
 })
 
 test('nothing the run writes uses an em dash', () => {
@@ -76,7 +81,7 @@ test('nothing the run writes uses an em dash', () => {
 
 test('an empty result still reads as a result', () => {
   assert.match(renderDuplicatesList([]), /No likely duplicates were found/)
-  assert.match(renderDecisions([]), /No pairs need a decision/)
+  assert.match(renderDecisions([]), /There is nothing to decide\. No pairs need a decision\./)
 })
 
 test('the reason an entry is kept follows the order it was picked in', () => {

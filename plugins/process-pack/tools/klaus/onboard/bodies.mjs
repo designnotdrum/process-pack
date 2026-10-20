@@ -3,6 +3,7 @@
  * came from the repo or from a model is shown as code or cleaned, never as free markdown.
  */
 import { summarize } from '../inventory/inventory.mjs'
+import { whatHappens } from './duplicates.mjs'
 import { renderComparison } from './estimate.mjs'
 
 const MAX_ROWS = 60
@@ -44,6 +45,15 @@ function replaces(state, step) {
   return [`It replaces ${which}, which an earlier run of this plan opened. The run closed ${old.length === 1 ? 'it' : 'them'} and made this branch again from the plan.`, '']
 }
 
+/** How many of the decisions have a picture, for the summary. */
+const pictureWords = (plan) => {
+  const drawn = [...(plan.decisionPictures?.values() ?? [])].filter((p) => p.file).length
+  return drawn > 0 ? `, and ${drawn} with a picture` : ''
+}
+
+/** What the list says when no pair is left: none were found, or every one found was set aside. */
+const noPairs = (duplicates, docsDir) => (duplicates.dismissed?.length > 0 ? `No pair needs a ticket or a question. ${duplicates.dismissed.length} ${duplicates.dismissed.length === 1 ? 'was' : 'were'} set aside as different components, and ${code(`${docsDir}/duplicates.md`)} lists ${duplicates.dismissed.length === 1 ? 'it' : 'them'} with the reason.` : 'None were found.')
+
 export function listBody(state) {
   const { plan, estimate } = state
   const lines = [
@@ -56,8 +66,8 @@ export function listBody(state) {
     '',
     '- `inventory.json` and `INVENTORY.md` at the repo root.',
     `- ${code(`${state.docsDir}/duplicates.md`)} and ${code(`${state.docsDir}/duplicates.json`)}: the likely duplicate pairs and what was compared.`,
-    `- ${code(`${state.docsDir}/tickets/`)}: ${estimate.duplicates.tickets} merge-into-one ticket${estimate.duplicates.tickets === 1 ? '' : 's'}, as files. Nothing was filed in a tracker.`,
-    `- ${code(`${state.docsDir}/decisions.md`)}: ${estimate.duplicates.decisions} pair${estimate.duplicates.decisions === 1 ? '' : 's'} for the owner to rule on.`,
+    `- ${code(`${state.docsDir}/tickets/`)}: ${estimate.duplicates.tickets} ticket${estimate.duplicates.tickets === 1 ? '' : 's'}, as files: ${estimate.duplicates.tickets - (estimate.duplicates.removals ?? 0)} to merge one copy into another and ${estimate.duplicates.removals ?? 0} to delete a copy that nothing uses. Nothing was filed in a tracker.`,
+    `- ${code(`${state.docsDir}/decisions.md`)}: ${estimate.duplicates.decisions} question${estimate.duplicates.decisions === 1 ? '' : 's'} for the owner, each with the default stated${pictureWords(plan)}.`,
     '',
     '## The list',
     '',
@@ -65,7 +75,7 @@ export function listBody(state) {
     '',
     '## Likely duplicates',
     '',
-    plan.duplicates.length === 0 ? 'None were found.' : table(['Keep', 'Merge into it', 'Props in common', 'Class names in common', 'What happens'], plan.duplicates.map((p) => [code(p.keep.name), code(p.drop.name), p.propsSimilarity === null ? 'none' : `${Math.round(p.propsSimilarity * 100)}%`, p.lookSimilarity === null ? 'not comparable' : `${Math.round(p.lookSimilarity * 100)}%`, p.verdict === 'merge' ? 'merge ticket' : 'decisions list'])),
+    plan.duplicates.length === 0 ? noPairs(plan.duplicates, state.docsDir) : table(['Keep', 'The other copy', 'Props in common', 'Class names in common', 'What happens'], plan.duplicates.map((p) => [code(p.keep.name), code(p.drop.name), p.propsSimilarity === null ? 'none' : `${Math.round(p.propsSimilarity * 100)}%`, p.lookSimilarity === null ? 'not comparable' : `${Math.round(p.lookSimilarity * 100)}%`, whatHappens(p)])),
     '',
     'The look is compared by the class names each component writes. The run has no screenshots. A pair at 75% or more looks the same.',
     '',

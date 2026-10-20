@@ -31,7 +31,8 @@ import { renderMarkdown } from '../inventory/markdown.mjs'
 import { pickVersions, readCaptures } from '../version/version.mjs'
 import { listBody, purposesBody, renderPurposesView, renderStoriesView, renderSummary, storiesBody } from './bodies.mjs'
 import { readOnboardingConfig } from './config.mjs'
-import { renderDecisions, renderDuplicatesList, renderTicket, ticketFileName } from './duplicates.mjs'
+import { attachDecisionPictures, decisionFiles, mergedPictureFiles } from './decisions-pictures.mjs'
+import { renderDuplicatesList } from './duplicates.mjs'
 import { compareToEstimate, comparisonNotes } from './estimate.mjs'
 import { changedFiles, closePullRequest, commit, createPullRequest, currentBranch, editPullRequest, git, gitDir, listPullRequests, pushBranch, remoteTip, resetPaths, run as runProgram, topLevel } from './git.mjs'
 import { checkCommitHooks } from './hook-check.mjs'
@@ -70,14 +71,18 @@ const inventoryFiles = (inventory) => [
   { rel: 'INVENTORY.md', text: renderMarkdown(inventory) },
 ]
 
-/** The files of the first pull request: the list at 1.0.0 and the duplicates. None needs a model. */
+/**
+ * The files of the first pull request: the list at 1.0.0 and the duplicates. None needs a model.
+ * The decisions list, the tickets and the pictures come from decisions-pictures.mjs, with the
+ * pictures the run drew (`plan.decisionPictures`). Before they are drawn, as when the run finds out
+ * what an earlier run merged, the decisions list says it has none.
+ */
 function listFiles(plan, inventory, docs) {
   return [
     ...inventoryFiles(inventory),
     { rel: `${docs}/duplicates.md`, text: renderDuplicatesList(plan.duplicates) },
     { rel: `${docs}/duplicates.json`, text: `${JSON.stringify(plan.duplicates, null, 2)}\n` },
-    { rel: `${docs}/decisions.md`, text: renderDecisions(plan.duplicates) },
-    ...plan.duplicates.filter((p) => p.verdict === 'merge').map((pair, index) => ({ rel: `${docs}/tickets/${ticketFileName(pair, index + 1)}`, text: renderTicket(pair) })),
+    ...decisionFiles({ pairs: plan.duplicates, pictures: plan.decisionPictures, docs }),
   ]
 }
 
@@ -168,7 +173,9 @@ function checkModelRoutes({ onboarding, env, codex, writer, checker }) {
 export async function earlierRuns({ repo, plan, onboarding, captures, base = currentBranch(repo) }) {
   const caps = captures ? readCaptures(path.resolve(repo, captures)) : undefined
   const listed = (await pickVersions({ root: repo, inventory: plan.inventory, baseline: true, captures: caps, ts: plan.ts, dryRun: true })).inventory
-  return { listed, ...findMerged({ repo, base, docs: onboarding.docsDir, listFiles: listFiles(plan, listed, onboarding.docsDir) }) }
+  // The pictures are not drawn here, so the ones the merged decisions list shows are the ones that have to be there.
+  const expected = [...listFiles(plan, listed, onboarding.docsDir), ...mergedPictureFiles({ repo, docs: onboarding.docsDir })]
+  return { listed, ...findMerged({ repo, base, docs: onboarding.docsDir, listFiles: expected }) }
 }
 
 const sumOf = (list, field) => list.reduce((total, item) => total + (item[field] ?? 0), 0)
@@ -178,6 +185,8 @@ const sumOf = (list, field) => list.reduce((total, item) => total + (item[field]
  * @param {string} options.repo
  * @param {string} options.approve The plan id the estimate printed.
  * @param {string} [options.captures] Dieter's captures for the baseline.
+ * @param {string} [options.storybookDir] The static Storybook build the decisions' pictures are drawn from, relative to the repo. Found when not given.
+ * @param {Function} [options.openStorybook] Opens that build in a browser. The Figma adapter's reader by default; a test gives its own.
  * @param {string} [options.writerBranch] Branch holding an external writer's edits.
  * @param {string} [options.checksFile] An external checker's verdicts.
  * @param {string[]} [options.commitTrailers]
@@ -210,6 +219,8 @@ export async function runOnboarding(options) {
     log('Nothing to do: the three pull requests are merged.')
     return { done: true, state, report: null }
   }
+  // ---- the pictures for the decisions, drawn from the repo's static Storybook build. Only the first pull request holds them.
+  if (start <= 1) plan.decisionPictures = await attachDecisionPictures({ plan, storybookDir: options.storybookDir, open: options.openStorybook, log })
   const modelWork = start <= 2
   mkdirPlain(repo, work)
   const store = createResultStore({ repo, work, planId: plan.id })

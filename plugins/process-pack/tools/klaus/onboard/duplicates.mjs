@@ -4,11 +4,21 @@
  * Two components are a likely pair when they do the same job (the same kind of name, such as
  * Button and PrimaryButton, or the same name in two folders) and take similar props. Whether they
  * also look the same is read from the class names each one writes, because the onboarding run
- * has no screenshots to compare. Same-looking pairs become merge-into-one tickets. Pairs that look
- * different, and pairs whose look cannot be compared, go on the owner's decisions list.
+ * has no screenshots to compare. The data settles what it can without asking: a pair where one copy
+ * is used in no place becomes a removal ticket, and a same-looking pair becomes a merge-into-one
+ * ticket. Only the rest, pairs that look different or whose look cannot be compared, go on the
+ * owner's decisions list (decisions.mjs).
  */
+import fs from 'node:fs'
 import path from 'node:path'
-import { classTokens, parseSource } from './source.mjs'
+import { toPosix, walk } from '../inventory/files.mjs'
+import { createTsconfigLoader } from '../inventory/tsconfig.mjs'
+import { declaringFile, reExportedFiles } from './barrels.mjs'
+import { describeClassDifference, READABLE_CLASS_COUNT } from './decisions-look.mjs'
+import { isVariantName, keepReason, removalFileName, renderDecisions, renderRemovalTicket, sidesOf } from './decisions.mjs'
+import { classTokens, importsOf, parseSource } from './source.mjs'
+
+export { keepReason, renderDecisions }
 
 /**
  * Where the lines are drawn. They are choices, not measurements: a pair needs at least half its
@@ -17,6 +27,12 @@ import { classTokens, parseSource } from './source.mjs'
  * close each pair is.
  */
 export const THRESHOLDS = Object.freeze({ props: 0.5, renamedCopy: 0.8, sameLook: 0.75 })
+
+/**
+ * Props nearly every component takes. Two components with different names are the same job only
+ * on the evidence of other props: all the context providers in an app take only children.
+ */
+export const GENERIC_PROPS = new Set(['children', 'className', 'style', 'id', 'key', 'ref', 'asChild'])
 
 const words = (name) => name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').toLowerCase().split(' ').filter(Boolean)
 const stem = (word) => (word.length > 3 && word.endsWith('s') && !word.endsWith('ss') ? word.slice(0, -1) : word)
@@ -33,6 +49,20 @@ function jaccard(a, b) {
 
 const round = (n) => (n === null ? null : Math.round(n * 100) / 100)
 const usedCount = (entry) => entry.usedIn.length
+/**
+ * Why a pair is set aside as two different components, or null: one is built on the other (`built`
+ * says which), or the names differ without one holding the other's words. Then the look either
+ * differs, or could not be compared (a side writes no class names). A question about two
+ * differently named components whose look cannot be shown is not one the owner can judge, so it is
+ * not asked.
+ */
+function setAsideReason(pair, built, differentNames, lookKnown) {
+  const sides = sidesOf(pair)
+  if (built) return built.on === pair.keep ? `${sides.keep.text} is built on ${sides.drop.then}` : `${sides.drop.text} is built on ${sides.keep.then}`
+  if (!differentNames) return null
+  return lookKnown ? 'the names differ and the look differs, so they are different components' : 'different names, and the look could not be compared'
+}
+const specific = (props) => new Set([...props].filter((p) => !GENERIC_PROPS.has(p)))
 
 /** The entry to keep: shared before app, then the more used, then by name. */
 function keepFirst(a, b) {
@@ -41,13 +71,6 @@ function keepFirst(a, b) {
 }
 
 const idOf = (entry) => `${entry.file}#${entry.name}`
-
-/** Why the kept entry was picked, in the order keepFirst decides. */
-export function keepReason(keep, drop) {
-  if (keep.kind === 'shared' && drop.kind !== 'shared') return 'it is shared'
-  if (usedCount(keep) > usedCount(drop)) return 'it is used in more places'
-  return 'it comes first by name'
-}
 
 /**
  * @typedef {object} DuplicatePair
@@ -62,14 +85,18 @@ export function keepReason(keep, drop) {
  * @property {number | null} lookSimilarity Share of class names in common, null when one writes none.
  * @property {string[]} classesOnlyKeep
  * @property {string[]} classesOnlyDrop
- * @property {'merge' | 'decide' | 'decide-look-unknown'} verdict
+ * @property {'merge' | 'decide' | 'decide-look-unknown'} verdict 'merge' means the data settles it and the pair becomes a ticket, of the kind `ticket` says.
+ * @property {'merge' | 'remove' | null} ticket A merge ticket moves the other copy's users over; a removal ticket deletes a copy that nothing uses.
+ * @property {string[]} removes The ids (file#name) a removal ticket deletes.
+ * @property {string[]} alsoSimilarTo Other components that were listed against the same unused copy and are folded into its ticket.
+ * @property {string | null} lookNote One sentence on how the two differ, read from the class names.
  */
 
 /**
- * @param {{ ts: object, root: string, inventory: object }} options
+ * @param {{ ts: object, root: string, inventory: object, setAside?: boolean }} options `setAside: false` asks about every pair the data does not settle, including ones built on each other or with different names.
  * @returns {DuplicatePair[]}
  */
-export function findDuplicates({ ts, root, inventory }) {
+export function findDuplicates({ ts, root, inventory, setAside: setAsideOn = true }) {
   const entries = inventory.entries.filter((e) => e.kind !== 'icon-set')
   const tokens = new Map()
   const tokensOf = (entry) => {
@@ -77,8 +104,48 @@ export function findDuplicates({ ts, root, inventory }) {
     return tokens.get(entry.file)
   }
   const propNames = (entry) => new Set(entry.props.map((p) => p.name))
+  const tsconfigs = createTsconfigLoader(ts, root)
+  const imported = new Map()
+  /** The packages in this repo, by name, with the folder each is in. TypeScript resolves an import of one to its built files, not to the source. */
+  const workspaces = new Map(
+    walk(root, (name) => name === 'package.json').flatMap((file) => {
+      try {
+        const name = JSON.parse(fs.readFileSync(file, 'utf8')).name
+        return typeof name === 'string' ? [[name, toPosix(path.relative(root, path.dirname(file)))]] : []
+      } catch {
+        return []
+      }
+    }),
+  )
+  const isIn = (file, folder) => folder === '' || file.startsWith(`${folder}/`)
+  const packageOf = (spec) => (spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0])
+  /**
+   * True when the file of `entry` imports `other`, so `entry` is built on `other`. An import is
+   * followed to the file it names, through barrel files, and counts when that is the file `other` is
+   * in, whatever the import calls it. An import that does not resolve to a source file in this repo,
+   * as an import of a package here usually resolves to its built files, counts when it is of a
+   * package in this repo, takes a name that `other` has and `other` is in that package. A namespace
+   * import counts when the file uses `Namespace.Name` and the barrel reaches `other`.
+   */
+  const builtOn = (entry, other) => {
+    const file = path.join(root, entry.file)
+    if (!imported.has(entry.file)) imported.set(entry.file, importsOf(ts, parseSource(ts, file)))
+    const target = toPosix(path.join(root, other.file))
+    const text = fs.readFileSync(file, 'utf8')
+    return imported.get(entry.file).some((item) => {
+      const resolved = ts.resolveModuleName(item.module, file, tsconfigs.optionsFor(file), ts.sys).resolvedModule?.resolvedFileName
+      const module = resolved && toPosix(resolved)
+      if (!module || module.endsWith('.d.ts') || module.includes('/node_modules/') || !module.startsWith(`${toPosix(root)}/`)) {
+        const folder = workspaces.get(packageOf(item.module))
+        return folder !== undefined && isIn(other.file, folder) && (item.defaultName === other.name || item.names.some((n) => n.imported === other.name))
+      }
+      if (item.namespace && text.includes(`${item.namespace}.${other.name}`) && (module === target || reExportedFiles({ ts, tsconfigs, file: module }).includes(target))) return true
+      return module === target || [...item.names.map((n) => n.imported), ...(item.defaultName ? ['default'] : [])].some((name) => declaringFile({ ts, tsconfigs, file: module, name }) === target)
+    })
+  }
 
   const pairs = []
+  const dismissed = []
   for (let i = 0; i < entries.length; i++) {
     for (let j = i + 1; j < entries.length; j++) {
       const a = entries[i]
@@ -91,12 +158,18 @@ export function findDuplicates({ ts, root, inventory }) {
       const propsSimilarity = jaccard(pa, pb)
       const sharedProps = [...pa].filter((p) => pb.has(p)).sort()
       const lookSimilarity = jaccard(tokensOf(a), tokensOf(b))
-      const sameJob = sameName || (sameRole && (propsSimilarity ?? 0) >= THRESHOLDS.props) || (sharedProps.length >= 3 && (propsSimilarity ?? 0) >= THRESHOLDS.renamedCopy)
+      // Different names are the same job only on the evidence of props other than the generic ones.
+      const [sa, sb] = [specific(pa), specific(pb)]
+      const specificShared = [...sa].filter((p) => sb.has(p)).length
+      const specificSimilarity = jaccard(sa, sb) ?? 0
+      const sameJob = sameName || (sameRole && specificShared >= 1 && specificSimilarity >= THRESHOLDS.props) || (specificShared >= 3 && specificSimilarity >= THRESHOLDS.renamedCopy)
       // Two components with no props at all are compared on look alone, and only when they share a kind of name.
       const bare = sameRole && pa.size === 0 && pb.size === 0 && (lookSimilarity ?? 0) >= THRESHOLDS.sameLook
       if (!sameJob && !bare) continue
 
-      const [keep, drop] = [a, b].sort(keepFirst)
+      let [keep, drop] = [a, b].sort(keepFirst)
+      // The copy that is used stays, even when the other one is the shared one.
+      if (usedCount(keep) === 0 && usedCount(drop) > 0) [keep, drop] = [drop, keep]
       const reasons = []
       if (sameName) reasons.push(`both are named ${a.name}`)
       else if (sameRole) reasons.push(`both are a ${headNoun(a.name)}`)
@@ -105,8 +178,19 @@ export function findDuplicates({ ts, root, inventory }) {
       const dropProps = propNames(drop)
       const keepTokens = tokensOf(keep)
       const dropTokens = tokensOf(drop)
-      const verdict = lookSimilarity === null ? 'decide-look-unknown' : lookSimilarity >= THRESHOLDS.sameLook ? 'merge' : 'decide'
-      pairs.push({
+      const unused = usedCount(keep) === 0 || usedCount(drop) === 0
+      const ticket = unused ? 'remove' : lookSimilarity !== null && lookSimilarity >= THRESHOLDS.sameLook ? 'merge' : null
+      // The data can also say a pair is no pair: one is built on the other, or the names differ and so does the look. Those are set aside, with the reason, not asked about.
+      // A copy that is unused is a removal whatever it is built on. A same-looking pair is a merge ticket only when neither is built on the other.
+      const built = ticket === 'remove' || !setAsideOn ? null : builtOn(keep, drop) ? { on: keep } : builtOn(drop, keep) ? { on: drop } : null
+      const differentNames = !ticket && !isVariantName(a.name, b.name)
+      const reason = setAsideOn ? setAsideReason({ keep, drop }, built, differentNames, lookSimilarity !== null) : null
+      if (reason) {
+        dismissed.push({ id: `${idOf(keep)} + ${idOf(drop)}`, keep, drop, reason })
+        continue
+      }
+      const verdict = ticket ? 'merge' : lookSimilarity === null ? 'decide-look-unknown' : 'decide'
+      const pair = {
         id: `${idOf(keep)} + ${idOf(drop)}`,
         keep,
         drop,
@@ -119,11 +203,51 @@ export function findDuplicates({ ts, root, inventory }) {
         classesOnlyKeep: [...keepTokens].filter((t) => !dropTokens.has(t)).sort(),
         classesOnlyDrop: [...dropTokens].filter((t) => !keepTokens.has(t)).sort(),
         verdict,
-      })
+        ticket,
+        // The copy that nothing uses goes, and it is always the drop side: a used copy is kept first, and when both are unused the second goes and the first stays.
+        removes: ticket === 'remove' ? [idOf(drop)] : [],
+        alsoSimilarTo: [],
+        lookNote: null,
+      }
+      if (!ticket && lookSimilarity !== null && keepTokens.size <= READABLE_CLASS_COUNT && dropTokens.size <= READABLE_CLASS_COUNT) {
+        const sides = sidesOf(pair)
+        pair.lookNote = describeClassDifference([...dropTokens].sort(), [...keepTokens].sort(), sides.drop.text, sides.keep.text)
+      }
+      pairs.push(pair)
     }
   }
   const score = (p) => (p.keep.name === p.drop.name ? 1 : 0) + (p.propsSimilarity ?? 0) + (p.lookSimilarity ?? 0)
-  return pairs.sort((x, y) => score(y) - score(x) || (x.id < y.id ? -1 : 1))
+  const ranked = pairs.sort((x, y) => score(y) - score(x) || (x.id < y.id ? -1 : 1))
+  // One ticket for each unused copy. A second pair against a copy that is already going is folded into the first one's ticket.
+  const claimed = new Map()
+  const listed = ranked.filter((pair) => {
+    if (pair.ticket !== 'remove') return true
+    const [id] = pair.removes
+    const owner = claimed.get(id)
+    if (!owner) {
+      claimed.set(id, pair)
+      return true
+    }
+    const partner = pair.keep.name
+    if (partner !== owner.keep.name && !owner.alsoSimilarTo.includes(partner)) owner.alsoSimilarTo.push(partner)
+    return false
+  })
+  // The pairs that were set aside travel with the list as a property of the array, so the files written from it can say what was left out. JSON of the array does not hold it.
+  listed.dismissed = dismissed.sort((x, y) => (x.id < y.id ? -1 : 1))
+  return listed
+}
+
+/** What happens to a pair: a ticket of one of two kinds, or a question for the owner. */
+export function whatHappens(pair) {
+  if (pair.verdict !== 'merge') return 'decisions list'
+  return pair.ticket === 'remove' ? 'removal ticket' : 'merge ticket'
+}
+
+/** How many pairs go each way. `tickets` counts both kinds, because the run writes a file for every pair the data settles. */
+export function countDuplicates(pairs) {
+  const removals = pairs.filter((p) => whatHappens(p) === 'removal ticket').length
+  const merges = pairs.filter((p) => whatHappens(p) === 'merge ticket').length
+  return { pairs: pairs.length, tickets: merges + removals, merges, removals, decisions: pairs.length - merges - removals }
 }
 
 const code = (text) => `\`${String(text).replace(/`/g, "'")}\``
@@ -132,14 +256,15 @@ const percent = (n) => (n === null ? 'not comparable' : `${Math.round(n * 100)}%
 const places = (entry) => `${usedCount(entry)} ${usedCount(entry) === 1 ? 'place' : 'places'}`
 
 const VERDICT_TEXT = {
-  merge: 'same look: a merge ticket',
-  decide: 'different look: on the decisions list',
-  'decide-look-unknown': 'look not comparable: on the decisions list',
+  'merge ticket': 'same look: a merge ticket',
+  'removal ticket': 'one copy is used nowhere: a removal ticket',
 }
+
+const whatText = (pair) => VERDICT_TEXT[whatHappens(pair)] ?? (pair.verdict === 'decide' ? 'different look: on the decisions list' : 'look not comparable: on the decisions list')
 
 /** A slug for a ticket file name. */
 const slug = (text) => text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
-export const ticketFileName = (pair, number) => `${String(number).padStart(2, '0')}-merge-${slug(pair.drop.name)}-into-${slug(pair.keep.name)}.md`
+export const ticketFileName = (pair, number) => (pair.ticket === 'remove' ? removalFileName(pair, number) : `${String(number).padStart(2, '0')}-merge-${slug(pair.drop.name)}-into-${slug(pair.keep.name)}.md`)
 
 /** The list of every pair, with what was compared. */
 export function renderDuplicatesList(pairs) {
@@ -148,20 +273,32 @@ export function renderDuplicatesList(pairs) {
     '',
     'Written by the Klaus onboarding run. Nothing here has been changed in the code.',
     '',
-    `A pair is listed when the two components do the same job: the same name in two files, or the same kind of name (Button and PrimaryButton) with at least ${Math.round(THRESHOLDS.props * 100)}% of their prop names in common. The look is compared by the class names each component writes, because the run has no screenshots. At ${Math.round(THRESHOLDS.sameLook * 100)}% or more in common, the pair looks the same. These cut-offs are choices, so the percentages are printed and a person can overrule them.`,
+    `A pair is listed when the two components do the same job: the same name in two files, or the same kind of name (Button and PrimaryButton) with at least ${Math.round(THRESHOLDS.props * 100)}% of their prop names in common. Props that nearly every component takes (${[...GENERIC_PROPS].join(', ')}) do not count toward that, so two components that share only those are not a pair. A pair is also set aside, and listed at the end with the reason, when one component is built on the other (its file imports the other by name), or when the names differ, neither name holds all the words of the other (InsightCard and HypothesisCard, but not Button and PrimaryButton) and either the look differs or it could not be compared. Pairs with the same name, or a name inside the other's, are still asked about. The look is compared by the class names each component writes, because the run has no screenshots. At ${Math.round(THRESHOLDS.sameLook * 100)}% or more in common, the pair looks the same. These cut-offs are choices, so the percentages are printed and a person can overrule them.`,
+    '',
+    'What happens to a pair: if one copy is used in no place, it becomes a removal ticket. If the two look the same, it becomes a merge ticket. Otherwise it is a question for the owner, in decisions.md.',
     '',
   ]
-  if (pairs.length === 0) return [...lines, 'No likely duplicates were found.', ''].join('\n')
-  lines.push('| Keep | Merge into it | Props in common | Class names in common | What happens |', '| --- | --- | --- | --- | --- |')
-  for (const p of pairs) {
-    lines.push(`| ${code(p.keep.name)} (${p.keep.file}) | ${code(p.drop.name)} (${p.drop.file}) | ${percent(p.propsSimilarity)} | ${percent(p.lookSimilarity)} | ${VERDICT_TEXT[p.verdict]} |`)
+  const away = pairs.dismissed ?? []
+  if (pairs.length === 0 && away.length === 0) return [...lines, 'No likely duplicates were found.', ''].join('\n')
+  if (pairs.length === 0) lines.push('No pair needs a ticket or a question. What was found is set aside, below.', '')
+  else {
+    lines.push('| Keep | The other copy | Props in common | Class names in common | What happens |', '| --- | --- | --- | --- | --- |')
+    for (const p of pairs) {
+      lines.push(`| ${code(p.keep.name)} (${p.keep.file}) | ${code(p.drop.name)} (${p.drop.file}) | ${percent(p.propsSimilarity)} | ${percent(p.lookSimilarity)} | ${whatText(p)} |`)
+    }
+    lines.push('', 'The entry to keep is the one that is used, then the shared one, then the one used in more places, then the first by name.', '')
   }
-  lines.push('', 'The entry to keep is the shared one, then the one used in more places, then the first by name.', '')
+  if (away.length > 0) {
+    lines.push('## Set aside: not asked about', '', 'These pairs matched by name and props, and the code says they are different components. No ticket and no question were made for them.', '', '| One | The other | Why it was set aside |', '| --- | --- | --- |')
+    for (const d of away) lines.push(`| ${code(d.keep.name)} (${d.keep.file}) | ${code(d.drop.name)} (${d.drop.file}) | ${d.reason} |`)
+    lines.push('')
+  }
   return lines.join('\n')
 }
 
-/** One merge-into-one refactor ticket, as a file. The shape follows the repo's ticket rules: goal, done check, proof, size. */
+/** One ticket as a file: a removal ticket when a copy is unused, else the merge-into-one refactor ticket. The shape follows the repo's ticket rules: goal, done check, proof, size. */
 export function renderTicket(pair) {
+  if (pair.ticket === 'remove') return renderRemovalTicket(pair)
   const { keep, drop } = pair
   return [
     `# Merge ${drop.name} into ${keep.name}`,
@@ -195,31 +332,4 @@ export function renderTicket(pair) {
     `The pull request shows the rebuilt inventory with ${code(drop.name)} gone, and before and after captures of the screens that use it, or the visual check's result for them.`,
     '',
   ].join('\n')
-}
-
-/** The owner's decisions list: pairs that look different, or whose look cannot be compared. */
-export function renderDecisions(pairs) {
-  const decide = pairs.filter((p) => p.verdict !== 'merge')
-  const lines = [
-    '# Decisions for the owner: which component wins',
-    '',
-    'Written by the Klaus onboarding run. Each pair below does the same job and looks different, or its look could not be compared. For each, say which one wins. Change DESIGN.md first so it names the winner, and then the merge becomes a ticket like the ones in the tickets folder.',
-    '',
-  ]
-  if (decide.length === 0) return [...lines, 'No pairs need a decision.', ''].join('\n')
-  decide.forEach((p, index) => {
-    lines.push(
-      `## ${index + 1}. ${p.keep.name} or ${p.drop.name}`,
-      '',
-      `- ${code(p.keep.name)}: ${code(p.keep.file)}, used in ${places(p.keep)}.`,
-      `- ${code(p.drop.name)}: ${code(p.drop.file)}, used in ${places(p.drop)}.`,
-      `- Why they are a pair: ${p.reasons.join(' and ')}.`,
-      p.verdict === 'decide-look-unknown' ? '- Look: not comparable, because one of them does not style itself with class names. Open both in the app and compare.' : `- Look: ${percent(p.lookSimilarity)} of the class names are shared. Only ${code(p.keep.name)} writes ${list(p.classesOnlyKeep.slice(0, 10))}. Only ${code(p.drop.name)} writes ${list(p.classesOnlyDrop.slice(0, 10))}.`,
-      `- Props only ${code(p.keep.name)} has: ${list(p.onlyKeep)}. Props only ${code(p.drop.name)} has: ${list(p.onlyDrop)}.`,
-      `- If you do not choose: keep ${code(p.keep.name)}, because ${keepReason(p.keep, p.drop)}.`,
-      `- Decision: [ ] keep ${p.keep.name}  [ ] keep ${p.drop.name}  [ ] keep both, and say why they differ`,
-      '',
-    )
-  })
-  return lines.join('\n')
 }

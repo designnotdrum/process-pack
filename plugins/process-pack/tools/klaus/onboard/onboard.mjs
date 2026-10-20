@@ -17,6 +17,9 @@
  *       that is not merged, and closes and replaces an open one it makes again.
  *         --captures <file>           Dieter's captures for the baseline versions, as version.mjs reads them.
  *         --codex <path>              The Codex executable. Default: found on PATH.
+ *         --storybook <dir>           The static Storybook build, relative to the repo, that the pictures in the
+ *                                     decisions list are drawn from. Default: the one in klaus.config.json, else the
+ *                                     storybook-static folder next to a .storybook folder. With none, they are not drawn.
          --writer-branch <ref>       With an external writer: the branch that holds its edits. Without it the run
                                      writes the briefs and stops, having changed nothing.
          --checks-file <file>        With an external checker: its verdicts, as in briefs/checks.template.json.
@@ -50,6 +53,7 @@ const OPTIONS = {
   json: { type: 'boolean' },
   captures: { type: 'string' },
   codex: { type: 'string' },
+  storybook: { type: 'string' },
   'writer-branch': { type: 'string' },
   'checks-file': { type: 'string' },
   'commit-trailer': { type: 'string', multiple: true },
@@ -81,6 +85,7 @@ async function runCommand(values, { fetchImpl } = {}) {
     approve: values.approve,
     captures: values.captures,
     codex: values.codex,
+    storybookDir: values.storybook,
     writerBranch: values['writer-branch'],
     checksFile: values['checks-file'],
     commitTrailers: values['commit-trailer'] ?? [],
