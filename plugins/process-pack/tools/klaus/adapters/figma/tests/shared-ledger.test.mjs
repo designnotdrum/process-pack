@@ -4,7 +4,7 @@
  * These runs are the Meridian case of issue #76: 10 components, room for 4 a night.
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { ciRun, inventoryOf, newRepo, sharedRecord } from "./ci-fixture.mjs";
@@ -26,7 +26,7 @@ test("CI plans the next units once the variable marks the first ones sent", asyn
   const second = await ciRun(root, { inventory, state: first.state, env: { KLAUS_FIGMA_LEDGER: sharedRecord(FIRST) } });
   assert.deepEqual(sorted(second.output.written), sorted(NEXT), "the next four by usage");
   assert.equal(second.output.planned, 6, "a sent unit is not planned");
-  assert.deepEqual(sharedWarnings(second.output), []);
+  assert.equal(sharedWarnings(second.output).length, 1, "CI's ledger never records sent, so the four are named (see below)");
 });
 
 test("CI plans the same units again when the variable is absent, and says why", async () => {
@@ -78,4 +78,42 @@ test("CI's own ledger keeps what CI generated; the variable's marks are read on 
   await ciRun(root, { inventory, state: first.state, env: { KLAUS_FIGMA_LEDGER: sharedRecord(FIRST) } });
   const ledger = JSON.parse(readFileSync(path.join(root, ".klaus/figma/ledger.json"), "utf8"));
   for (const name of [...FIRST, ...NEXT]) assert.deepEqual(ledger.components[name], { "1.0.0": "generated" }, name);
+});
+
+// ---------------------------------------------------------------------------------------------
+// A forged record is visible: every version only the variable marks sent is named in the report.
+// ---------------------------------------------------------------------------------------------
+
+test("a version the record alone marks sent is named in a warning, counted in the details, and said in the summary", async () => {
+  const root = newRepo();
+  const first = await ciRun(root, { inventory });
+  // CI's own ledger has the first four as generated. The record says they were sent.
+  const second = await ciRun(root, { inventory, state: first.state, env: { KLAUS_FIGMA_LEDGER: sharedRecord(FIRST) } });
+
+  const [warning] = sharedWarnings(second.output);
+  assert.match(warning, /^KLAUS_FIGMA_LEDGER alone marks 4 versions sent, so this run did not plan them: /);
+  for (const name of FIRST) assert.ok(warning.includes(`${name} 1.0.0`), name);
+  const { sharedLedger } = second.output.adapter.details;
+  assert.equal(sharedLedger.variable, "KLAUS_FIGMA_LEDGER");
+  assert.equal(sharedLedger.read, "read");
+  assert.deepEqual(sharedLedger.sentOnlyInVariable, { count: 4, versions: FIRST.map((name) => `${name} 1.0.0`).sort() });
+  assert.match(second.output.adapter.summary, /KLAUS_FIGMA_LEDGER alone marks 4 versions sent, so they were not planned\./);
+
+  // A dry run says the same, so the mark shows before anything is written.
+  const dry = await ciRun(root, { inventory, state: second.state, env: { KLAUS_FIGMA_LEDGER: sharedRecord(FIRST) }, dryRun: true });
+  assert.equal(dry.output.adapter.details.sharedLedger.sentOnlyInVariable.count, 4);
+  assert.match(dry.output.adapter.summary, /KLAUS_FIGMA_LEDGER alone marks 4 versions sent/);
+});
+
+test("a record that agrees with CI's own ledger adds no warning and no count", async () => {
+  const root = newRepo();
+  mkdirSync(path.join(root, ".klaus/figma"), { recursive: true });
+  const own = { version: 2, components: Object.fromEntries(FIRST.map((name) => [name, { "1.0.0": "sent" }])), screens: {} };
+  writeFileSync(path.join(root, ".klaus/figma/ledger.json"), JSON.stringify(own));
+  const run = await ciRun(root, { inventory, env: { KLAUS_FIGMA_LEDGER: sharedRecord(FIRST) }, dryRun: true });
+
+  assert.equal(run.output.planned, 6);
+  assert.deepEqual(sharedWarnings(run.output), []);
+  assert.deepEqual(run.output.adapter.details.sharedLedger.sentOnlyInVariable, { count: 0, versions: [] });
+  assert.doesNotMatch(run.output.adapter.summary, /KLAUS_FIGMA_LEDGER/);
 });

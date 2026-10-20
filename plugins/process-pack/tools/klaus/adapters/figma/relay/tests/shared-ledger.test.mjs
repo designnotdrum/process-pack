@@ -32,7 +32,7 @@ test("after a send the relay publishes its sent marks to the variable, with gh v
   assert.equal(sharedOf(run).bytes, Buffer.byteLength(run.variable));
 });
 
-test("a unit the variable marks sent is not sent again, and the variable's marks are kept when it is written", async () => {
+test("a unit the variable marks sent is not sent again, and the variable's marks are kept when it is written back", async () => {
   const { root, folder } = await generatedRepo();
   const other = { Button: { "1.0.0": "sent" }, Dialog: { "2.0.0": "sent" } };
   const run = await relay(root, [folder], { variable: record(other) });
@@ -42,8 +42,7 @@ test("a unit the variable marks sent is not sent again, and the variable's marks
   const units = outputOf(run.report).adapter.details.units.map((u) => [u.id, u.status]);
   assert.deepEqual(units, [["Button", "already sent"], ["Card", "sent"]]);
   assert.deepEqual(JSON.parse(run.variable).components, { Button: { "1.0.0": "sent" }, Card: { "1.0.0": "sent" }, Dialog: { "2.0.0": "sent" } });
-  assert.deepEqual(ledgerOf(root).components.Button, { "1.0.0": "sent" }, "the local ledger learns the shared marks when it is written");
-  assert.equal(warningsOf(run).some((w) => /KLAUS_FIGMA_LEDGER/.test(w)), false, "a good variable is no warning");
+  assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "generated" }, Card: { "1.0.0": "sent" } }, "the local ledger keeps its own marks only");
   assert.equal(sharedOf(run).read, "read");
 });
 
@@ -173,7 +172,7 @@ test("after reconcile the relay publishes the versions it marked sent", async ()
   const run = await relay(root, ["--reconcile"], { names: ["Button 1.0.0"], variable: record({ Card: { "1.0.0": "sent" } }) });
 
   assert.equal(run.code, 0, run.stderr);
-  assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "sent", "1.1.0": "generated" }, Card: { "1.0.0": "sent" } });
+  assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "sent", "1.1.0": "generated" } }, "the variable's Card mark is not copied into the local ledger");
   assert.deepEqual(JSON.parse(run.variable).components, { Button: { "1.0.0": "sent" }, Card: { "1.0.0": "sent" } }, "generated versions are not published");
   assert.equal(sharedOf(run).published, true);
 });
@@ -195,6 +194,56 @@ test("reconcile publishing that fails is a warning, and the local marks stay", a
   assert.equal(run.code, 0, run.stderr);
   assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "sent" } });
   assert.ok(warningsOf(run).some((w) => /could not be published.*HTTP 404/s.test(w)));
+});
+
+// ---------------------------------------------------------------------------------------------
+// A forged record is visible: every version only the variable marks sent is named in the report.
+// ---------------------------------------------------------------------------------------------
+
+test("a unit the record alone marks sent is named in the relay's warning, details and summary, on every run", async () => {
+  const { root, folder } = await generatedRepo();
+  const variable = record({ Button: { "1.0.0": "sent" } });
+  const run = await relay(root, [folder], { variable });
+
+  assert.equal(run.code, 0, run.stderr);
+  const warning = warningsOf(run).find((w) => w.startsWith("KLAUS_FIGMA_LEDGER alone marks"));
+  assert.equal(warning, "KLAUS_FIGMA_LEDGER alone marks 1 version sent, so the relay did not send it: Button 1.0.0. This checkout's ledger does not say it was sent. If the relay did not send it, correct or delete KLAUS_FIGMA_LEDGER.");
+  assert.deepEqual(sharedOf(run).sentOnlyInVariable, { count: 1, versions: ["Button 1.0.0"] });
+  assert.match(outputOf(run.report).adapter.summary, /KLAUS_FIGMA_LEDGER alone marks 1 version sent\./);
+  assert.match(run.stdout, /KLAUS_FIGMA_LEDGER alone marks 1 version sent/);
+
+  // The mark is not copied into the local ledger, so the next run names it again.
+  const again = await relay(root, [folder, "--dry-run"], { variable: run.variable });
+  assert.deepEqual(sharedOf(again).sentOnlyInVariable, { count: 1, versions: ["Button 1.0.0"] });
+});
+
+test("a record that agrees with the relay's own ledger adds no warning and no count", async () => {
+  const { root, folder } = await generatedRepo();
+  writeFileSync(path.join(root, ".klaus/figma/ledger.json"), JSON.stringify({ version: 2, components: { Button: { "1.0.0": "sent" }, Card: { "1.0.0": "generated" } }, screens: {} }));
+  const run = await relay(root, [folder], { variable: record({ Button: { "1.0.0": "sent" } }) });
+
+  assert.equal(run.code, 0, run.stderr);
+  assert.equal(run.calls.length, 1);
+  assert.equal(warningsOf(run).some((w) => w.includes("KLAUS_FIGMA_LEDGER")), false);
+  assert.deepEqual(sharedOf(run).sentOnlyInVariable, { count: 0, versions: [] });
+  assert.doesNotMatch(outputOf(run.report).adapter.summary, /KLAUS_FIGMA_LEDGER/);
+});
+
+test("reconcile names the versions it did not look for because the record alone marks them sent", async () => {
+  const root = reconcileRepo({ components: { Button: { "1.0.0": "generated", "1.1.0": "generated" } } });
+  const run = await relay(root, ["--reconcile"], { names: [], variable: record({ Button: { "1.0.0": "sent" } }) });
+
+  assert.equal(run.code, 0, run.stderr);
+  assert.deepEqual(outputOf(run.report).adapter.details.missing, ["Button 1.1.0"]);
+  const warning = warningsOf(run).find((w) => w.startsWith("KLAUS_FIGMA_LEDGER alone marks"));
+  assert.match(warning, /^KLAUS_FIGMA_LEDGER alone marks 1 version sent, so reconcile did not look for it: Button 1\.0\.0\./);
+  assert.deepEqual(sharedOf(run).sentOnlyInVariable, { count: 1, versions: ["Button 1.0.0"] });
+  assert.match(outputOf(run.report).adapter.summary, /KLAUS_FIGMA_LEDGER alone marks 1 version sent\./);
+
+  const agreeing = reconcileRepo({ components: { Button: { "1.0.0": "sent", "1.1.0": "generated" } } });
+  const quiet = await relay(agreeing, ["--reconcile"], { names: [], variable: record({ Button: { "1.0.0": "sent" } }) });
+  assert.deepEqual(sharedOf(quiet).sentOnlyInVariable, { count: 0, versions: [] });
+  assert.equal(warningsOf(quiet).some((w) => w.includes("KLAUS_FIGMA_LEDGER")), false);
 });
 
 // ---------------------------------------------------------------------------------------------

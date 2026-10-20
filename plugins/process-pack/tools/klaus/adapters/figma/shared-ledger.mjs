@@ -10,6 +10,11 @@
  * it plans. Neither copies CI's generated marks into it: CI cannot write a variable.
  *
  * A record names its Figma file, so a run against another file neither uses nor overwrites it.
+ *
+ * Anyone who can write a repository variable can write this record, so it is never trusted
+ * silently. A version the record marks sent that the run's own ledger does not is named in the
+ * run's report, with a warning, by the generator and by the relay. Neither copies the record's
+ * marks into its own ledger, so such a version is named again on every run that looks at it.
  * A missing or malformed record means nothing is known to be sent, with a warning. It never stops a run.
  *
  * Merging: a version sent or changed in either ledger counts as that. When one says sent and the
@@ -17,7 +22,7 @@
  * from its own code, after a person deleted the set; nothing takes a sent version back to changed,
  * because the relay never sends a sent version again.
  */
-import { CHANGED, LEDGER_VERSION, SENT } from "./ledger.mjs";
+import { CHANGED, entryLabel, entryStatus, LEDGER_VERSION, SENT } from "./ledger.mjs";
 
 export const SHARED_LEDGER_VARIABLE = "KLAUS_FIGMA_LEDGER";
 
@@ -118,4 +123,38 @@ export function mergeMarks(into, from) {
 /** The variable's text for a ledger: its sent and changed marks, with the Figma file they are in. */
 export function sharedLedgerText(ledger, fileKey) {
   return JSON.stringify({ version: LEDGER_VERSION, fileKey, components: marksOf(ledger.components), screens: marksOf(ledger.screens) });
+}
+
+/**
+ * The labels of the units the shared record alone marks sent: sent in shared, not sent in own.
+ * @param {object} own  The run's own ledger, before the record was merged into it.
+ * @param {object | null} shared  The record's ledger, or null when there is none to use.
+ * @param {Array<object>} entries  The units the run looked at, as ledger entries.
+ * @returns {string[]}  Sorted, each once.
+ */
+export function sentOnlyInShared(own, shared, entries) {
+  if (!shared) return [];
+  const labels = entries.filter((entry) => entryStatus(shared, entry) === SENT && entryStatus(own, entry) !== SENT).map(entryLabel);
+  return [...new Set(labels)].sort();
+}
+
+/**
+ * The warning that names them.
+ * @param {string[]} labels
+ * @param {string} skipped  What the run did not do, missing its object: "the relay did not send".
+ */
+export function sentOnlyWarning(labels, skipped) {
+  const one = labels.length === 1;
+  const them = one ? "it" : "them";
+  return `${SHARED_LEDGER_VARIABLE} alone marks ${labels.length} version${one ? "" : "s"} sent, so ${skipped} ${them}: ${labels.join(", ")}. This checkout's ledger does not say ${one ? "it was" : "they were"} sent. If the relay did not send ${them}, correct or delete ${SHARED_LEDGER_VARIABLE}.`;
+}
+
+/**
+ * The sentence a report's summary carries, or "" when there is nothing to say.
+ * @param {number} count
+ * @param {[string, string]} [after]  Text after "sent", for one version and for several.
+ */
+export function sentOnlySentence(count, [ifOne, ifMany] = ["", ""]) {
+  if (count === 0) return "";
+  return ` ${SHARED_LEDGER_VARIABLE} alone marks ${count} version${count === 1 ? "" : "s"} sent${count === 1 ? ifOne : ifMany}.`;
 }

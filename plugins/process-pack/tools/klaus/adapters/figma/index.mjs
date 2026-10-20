@@ -17,7 +17,8 @@
  * The relay runs on another machine and keeps its own ledger. It publishes its sent and changed
  * marks to the KLAUS_FIGMA_LEDGER variable, which the workflow passes to this adapter in the
  * environment. plan merges them into the ledger it reads, so a unit the relay sent is not planned
- * again (shared-ledger.mjs). They are not written into this checkout's ledger.
+ * again (shared-ledger.mjs). They are not written into this checkout's ledger, and every version the
+ * plan leaves out only because the variable marks it sent is named in the report, with a warning.
  *
  * A first load (ctx.firstLoad, from the workflow's figma_first_load input) is the whole release for
  * the Klaus plugin: the frame lifts the spending cap, and the manifest says firstLoad, so the relay
@@ -33,7 +34,7 @@ import { packUnits } from "./batch.mjs";
 import { captureComponent, captureScreen, openStorybook, readStoryIndex, storyCandidates } from "./capture.mjs";
 import { anyVersionSent, componentSent, entryOf, GENERATED, readLedger, recordEntry, screenSent } from "./ledger.mjs";
 import { screenRoutes, uploadFor } from "./screens.mjs";
-import { mergeMarks, parseSharedLedger, SHARED_LEDGER_VARIABLE } from "./shared-ledger.mjs";
+import { mergeMarks, parseSharedLedger, SHARED_LEDGER_VARIABLE, sentOnlyInShared, sentOnlySentence, sentOnlyWarning } from "./shared-ledger.mjs";
 import { RUNTIME_CODE } from "./codegen.mjs";
 import {
   CALL_BASE_TOKENS,
@@ -62,6 +63,9 @@ const MAX_VARIANTS = 256;
 
 /** The run's output folder, handed from write to report. */
 const runs = new WeakMap();
+
+/** How the plan read KLAUS_FIGMA_LEDGER, handed from plan to report. */
+const plans = new WeakMap();
 
 const rootOf = (ctx) => ctx.root ?? process.cwd();
 const releaseOf = (ctx) => ctx.release ?? new Date().toISOString().slice(0, 10);
@@ -105,20 +109,25 @@ export function createAdapter(browser = {}, { env } = {}) {
       const options = readOptions(ctx.settings);
       const root = rootOf(ctx);
       const release = releaseOf(ctx);
-      const ledger = readLedger(ledgerFile(root, options));
+      const own = readLedger(ledgerFile(root, options));
       // What the relay sent, from wherever it ran. Merged for planning only.
       const shared = parseSharedLedger(sharedText(), fileKeyOf(ctx.settings.target));
-      if (shared.ledger) mergeMarks(ledger, shared.ledger);
+      const ledger = shared.ledger ? mergeMarks(readLedger(ledgerFile(root, options)), shared.ledger) : own;
       const stories = readStories(root, options);
       const retry = new Set(ctx.unwrittenFromLastRun);
       const items = [];
+      // The units the plan leaves out as sent. Those only the variable marks sent are named in the report.
+      const skipped = [];
 
       // A component is new to Figma until the relay has sent one of its versions.
       const picked = selectComponents(ctx.inventory, ctx.selection, { isNew: (c) => !anyVersionSent(ledger, c.name) });
       for (const entry of picked) {
         if (entry.kind === "icon-set") continue;
         const version = entry.version || DEFAULT_VERSION;
-        if (componentSent(ledger, entry.name, version) && !retry.has(entry.name)) continue;
+        if (componentSent(ledger, entry.name, version) && !retry.has(entry.name)) {
+          skipped.push({ kind: "component", name: entry.name, version });
+          continue;
+        }
         // A component with no story cannot be drawn. Leave it out of the plan instead of failing every run.
         if (stories && storyCandidates(stories, entry.name, options.stories[entry.name]).length === 0) continue;
         items.push({
@@ -135,10 +144,17 @@ export function createAdapter(browser = {}, { env } = {}) {
 
       for (const route of screenRoutes(ctx.selection.screens, ctx.inventory)) {
         const id = `screen:${route}`;
-        if (screenSent(ledger, route, release) && !retry.has(id)) continue;
+        if (screenSent(ledger, route, release) && !retry.has(id)) {
+          skipped.push({ kind: "screen", route, release });
+          continue;
+        }
         items.push({ id, kind: "screen", route, release, page: SCREENS_PAGE, editable: options.editableScreens });
       }
-      return { items, warnings: shared.warning ? [shared.warning] : [] };
+      const sentOnlyInVariable = sentOnlyInShared(own, shared.ledger, skipped);
+      plans.set(ctx, { variable: SHARED_LEDGER_VARIABLE, read: shared.status, sentOnlyInVariable: { count: sentOnlyInVariable.length, versions: sentOnlyInVariable } });
+      const warnings = shared.warning ? [shared.warning] : [];
+      if (sentOnlyInVariable.length > 0) warnings.push(sentOnlyWarning(sentOnlyInVariable, "this run did not plan"));
+      return { items, warnings };
     },
 
     estimate(plan, ctx) {
@@ -292,22 +308,27 @@ export function createAdapter(browser = {}, { env } = {}) {
       const run = runs.get(ctx);
       const key = fileKeyOf(ctx.settings.target);
       const links = key ? [{ label: "Figma file", url: `https://www.figma.com/design/${key}` }] : [];
+      // KLAUS_FIGMA_LEDGER: how it read, and the versions only it marks sent, so a forged record shows.
+      const sharedLedger = plans.get(ctx) ?? null;
+      const variableNote = sentOnlySentence(sharedLedger?.sentOnlyInVariable.count ?? 0, [", so it was not planned", ", so they were not planned"]);
       if (outcome.dryRun || !run) {
-        return { summary: `Figma: ${outcome.dryRun ? "a dry run, so no code was generated" : "nothing was written"}.`, links };
+        const summary = `Figma: ${outcome.dryRun ? "a dry run, so no code was generated" : "nothing was written"}.${variableNote}`;
+        // No manifest, so the only details are how the plan read the variable, when it ran.
+        return sharedLedger ? { summary, links, details: { sharedLedger } } : { summary, links };
       }
       const { manifest, directory } = run;
       const parts = [`${manifest.files.reduce((n, f) => n + f.units.length, 0)} in ${manifest.files.length} data file${manifest.files.length === 1 ? "" : "s"}`];
       if (manifest.uploads.length > 0) parts.push(`${manifest.uploads.length} screenshot${manifest.uploads.length === 1 ? "" : "s"} to upload`);
-      const details = { directory, manifest: `${directory}/manifest.json`, files: manifest.files, uploads: manifest.uploads.length, warnings: manifest.warnings };
+      const details = { directory, manifest: `${directory}/manifest.json`, files: manifest.files, uploads: manifest.uploads.length, warnings: manifest.warnings, sharedLedger };
       if (manifest.firstLoad) {
         return {
-          summary: `Figma first load for the Klaus plugin in ${directory}: ${parts.join(" and ")}, with no spending cap. Apply the klaus-figma artifact with the plugin, then run the relay with --reconcile --run <this run's id>. The relay does not send a first load.`,
+          summary: `Figma first load for the Klaus plugin in ${directory}: ${parts.join(" and ")}, with no spending cap. Apply the klaus-figma artifact with the plugin, then run the relay with --reconcile --run <this run's id>. The relay does not send a first load.${variableNote}`,
           links,
           details: { ...details, firstLoad: true },
         };
       }
       return {
-        summary: `Figma data is ready for the relay in ${directory}: ${parts.join(" and ")}.`,
+        summary: `Figma data is ready for the relay in ${directory}: ${parts.join(" and ")}.${variableNote}`,
         links,
         details,
       };

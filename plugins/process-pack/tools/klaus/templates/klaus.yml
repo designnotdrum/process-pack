@@ -15,6 +15,7 @@
 # Figma generator, so CI plans only what the relay has not sent. Anyone with write access to the
 # repository can write a repository variable (a collaborator, for a personal account's repository);
 # a workflow's GITHUB_TOKEN cannot. A missing or malformed variable is a warning, never a stop.
+# Every version the variable alone marks sent is named in the run report, so a wrong mark shows.
 #
 # The first setup of the Figma output, in this order:
 #   1. Run this workflow by hand with figma_first_load on. It writes data for every planned

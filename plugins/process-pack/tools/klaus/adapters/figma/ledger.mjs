@@ -32,8 +32,9 @@
  *
  * The relay usually runs on another machine than CI, so each keeps its own file.
  * The relay publishes its sent and changed marks to the KLAUS_FIGMA_LEDGER
- * variable, and CI and every relay machine merge that into the file they read
- * (shared-ledger.mjs). CI does not copy the marks into its own file.
+ * variable, and CI and every relay machine merge that into the ledger they read
+ * (shared-ledger.mjs). Neither copies the variable's marks into its own file, so
+ * a version only the variable marks sent is named in every run's report.
  */
 import { existsSync } from "node:fs";
 import { readJsonFile } from "../../frame/json-file.mjs";
@@ -179,3 +180,6 @@ export function entryStatus(ledger, entry) {
 
 /** True when the relay has sent the unit a manifest names. */
 export const entrySent = (ledger, entry) => entryStatus(ledger, entry) === SENT;
+
+/** How a report names a unit: `Button 1.1.0`, or `/settings v3.0.0` for a screen. */
+export const entryLabel = (entry) => (entry.kind === "component" ? `${entry.name} ${entry.version}` : `${entry.route} ${entry.release}`);
