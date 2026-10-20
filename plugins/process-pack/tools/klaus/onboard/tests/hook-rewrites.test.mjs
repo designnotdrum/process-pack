@@ -15,8 +15,9 @@ const checker = async () => ({ ok: true, status: 200, json: async () => ({ choic
 /**
  * A pre-commit hook that rewrites code, as `oxlint --fix` run by lint-staged does. HOOK_MODE picks
  * what it does. `rewrite` changes one line of PrimaryButton.tsx, outside any comment, and stages the
- * file again. `remove` deletes that line. `many` adds a code span to the end of every line of every component file. `none` changes nothing. A hook run is logged, so a test can tell the hook was not skipped.
+ * file again. `remove` deletes that line. `long` appends a 250 character comment to it. `many` adds a code span to the end of every line of every component file. `none` changes nothing. A hook run is logged, so a test can tell the hook was not skipped.
  */
+const LONG = 'y'.repeat(250)
 const HOOK = `#!/bin/sh
 echo hook >> "$HOOK_RUNS_LOG"
 case "$HOOK_MODE" in
@@ -29,6 +30,12 @@ case "$HOOK_MODE" in
     file=packages/ui/src/PrimaryButton.tsx
     if git diff --cached --name-only | grep -q -x "$file"; then
       sed '/^      disabled={disabled}$/d' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+      git add "$file"
+    fi ;;
+  long)
+    file=packages/ui/src/PrimaryButton.tsx
+    if git diff --cached --name-only | grep -q -x "$file"; then
+      sed 's|^      disabled={disabled}$|      disabled={disabled} // ${LONG}|' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
       git add "$file"
     fi ;;
   rewrite)
@@ -156,4 +163,12 @@ test('a line the hook removes is placed by the line it followed, since it is not
   const body = bodies(2).final
   assert.ok(body.includes('- `packages/ui/src/PrimaryButton.tsx`, removed after line 17:\n  - before: `      disabled={disabled}`\n  - after: (the line was removed)'), body)
   assert.deepEqual(report.hookRewrites.map((r) => r.count), [0, 1, 0])
+})
+
+test('a line longer than the limit is cut, and the notice that says so is outside the code span', async () => {
+  process.env.HOOK_MODE = 'long'
+  await run()
+  const line = `      disabled={disabled} // ${LONG}`
+  assert.ok(line.length > 200)
+  assert.ok(bodies(2).final.includes(`  - after: \`${line.slice(0, 200)}\` (cut here, ${line.length - 200} more characters)\n`), bodies(2).final)
 })

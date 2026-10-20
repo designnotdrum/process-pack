@@ -356,6 +356,8 @@ export async function runOnboarding(options) {
   /**
    * Commits a step's files, then names the lines the repo's commit hook rewrote in the commit:
    * the hook may change the staged files, and the pull request has to say what Klaus did not write.
+   * Every text file goes through `put`, so it is compared. The paths that are not compared are the
+   * files a refresh removes and the pictures, which are not text.
    */
   const commitStep = (step, commitOptions) => {
     const written = new Map(commitOptions.paths.filter((p) => wroteText.has(p)).map((p) => [p, wroteText.get(p)]))

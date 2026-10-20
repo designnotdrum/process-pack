@@ -76,16 +76,21 @@ const MAX_REWRITES_SHOWN = 40
 /** The longest line shown whole. A longer one is cut, and says so. */
 const MAX_LINE_SHOWN = 200
 
-/** A line of the repo as an inline code span that keeps its text exactly, even when it holds backticks. */
+/**
+ * A line of the repo as an inline code span. A line that holds backticks gets a longer fence and a
+ * space inside each end, which Markdown does not show, so the text reads as it is. A line longer
+ * than MAX_LINE_SHOWN is cut, and the notice that says so is outside the span.
+ */
 function exactLine(text) {
   if (text === null) return null
   if (text === '') return '(an empty line)'
   if (text.trim() === '') return '(a line of only spaces or tabs)'
   const clean = text.replace(/\r/g, '')
-  const shown = clean.length > MAX_LINE_SHOWN ? `${clean.slice(0, MAX_LINE_SHOWN)} (cut here, ${clean.length - MAX_LINE_SHOWN} more characters)` : clean
+  const shown = clean.slice(0, MAX_LINE_SHOWN)
+  const cut = clean.length > MAX_LINE_SHOWN ? ` (cut here, ${clean.length - MAX_LINE_SHOWN} more characters)` : ''
   const longest = Math.max(0, ...(shown.match(/`+/g) ?? []).map((run) => run.length))
   const fence = '`'.repeat(longest + 1)
-  return longest === 0 ? `${fence}${shown}${fence}` : `${fence} ${shown} ${fence}`
+  return `${longest === 0 ? `${fence}${shown}${fence}` : `${fence} ${shown} ${fence}`}${cut}`
 }
 
 export const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`

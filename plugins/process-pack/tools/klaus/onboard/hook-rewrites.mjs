@@ -20,6 +20,13 @@ import { git } from './git.mjs'
 const MAX_EDITS = 400
 
 /**
+ * Whether the edit that reaches diagonal k in step d adds a line of `after` (from diagonal k + 1)
+ * and not removes a line of `before` (from diagonal k - 1). The search forward and the walk back
+ * have to choose the same way, so both ask here.
+ */
+const addsLine = (frontier, offset, k, d) => k === -d || (k !== d && frontier[offset + k - 1] < frontier[offset + k + 1])
+
+/**
  * The lines of `before` removed and the lines of `after` added, as the smallest set of edits
  * (Myers' algorithm) found within MAX_EDITS, or null when there are more.
  * Returns { removed: Set of indexes into before, added: Set of indexes into after }.
@@ -34,7 +41,7 @@ function smallestEdits(before, after) {
   for (let d = 0; d <= max; d++) {
     trace.push(frontier.slice())
     for (let k = -d; k <= d; k += 2) {
-      let x = k === -d || (k !== d && frontier[offset + k - 1] < frontier[offset + k + 1]) ? frontier[offset + k + 1] : frontier[offset + k - 1] + 1
+      let x = addsLine(frontier, offset, k, d) ? frontier[offset + k + 1] : frontier[offset + k - 1] + 1
       let y = x - k
       while (x < n && y < m && before[x] === after[y]) {
         x += 1
@@ -56,7 +63,7 @@ function collectEdits(trace, offset, n, m) {
   for (let d = trace.length - 1; d > 0; d--) {
     const before = trace[d]
     const k = x - y
-    const previousK = k === -d || (k !== d && before[offset + k - 1] < before[offset + k + 1]) ? k + 1 : k - 1
+    const previousK = addsLine(before, offset, k, d) ? k + 1 : k - 1
     const previousX = before[offset + previousK]
     const previousY = previousX - previousK
     while (x > previousX && y > previousY) {
