@@ -91,9 +91,9 @@ function paint(value, where, tokenCount) {
   number(value[4], `${where}[4]`, 0, 1);
 }
 
-const BOX_KEYS = ["k", "n", "w", "h", "x", "y", "L", "pa", "ca", "g", "fw", "fh", "p", "f", "sw", "sc", "r", "o", "clip"];
+const BOX_KEYS = ["k", "n", "w", "h", "x", "y", "L", "pa", "ca", "g", "fw", "fh", "p", "f", "sw", "sc", "r", "o", "clip", "ap"];
 const TEXT_KEYS = ["k", "v", "ff", "wt", "fs", "lh", "ls", "td", "tt", "c", "x", "y", "w", "wrap"];
-const ICON_KEYS = ["k", "s", "w", "h", "x", "y", "hid", "n", "c"];
+const ICON_KEYS = ["k", "s", "w", "h", "x", "y", "hid", "n", "c", "ap", "o"];
 
 function node(value, where, { tokenCount, svgCount }) {
   if (!isObject(value)) fail(where, "must be an object.");
@@ -121,6 +121,8 @@ function node(value, where, { tokenCount, svgCount }) {
     if (svgCount === 0) fail(`${where}.s`, "points at an SVG, and the unit has none.");
     whole(value.s, `${where}.s`, 0, svgCount - 1);
     if ("hid" in value) flag(value.hid, `${where}.hid`);
+    if ("ap" in value) flag(value.ap, `${where}.ap`);
+    if ("o" in value) number(value.o, `${where}.o`, 0, 1);
     if ("c" in value) paint(value.c, `${where}.c`, tokenCount);
     return;
   }
@@ -128,7 +130,7 @@ function node(value, where, { tokenCount, svgCount }) {
   if ("pa" in value) oneOf(value.pa, ["C", "E", "B"], `${where}.pa`);
   if ("ca" in value) oneOf(value.ca, ["C", "E", "T"], `${where}.ca`);
   if ("g" in value) number(value.g, `${where}.g`, -10000, 10000);
-  for (const key of ["fw", "fh", "clip"]) if (key in value) flag(value[key], `${where}.${key}`);
+  for (const key of ["fw", "fh", "clip", "ap"]) if (key in value) flag(value[key], `${where}.${key}`);
   if ("p" in value) {
     if (!Array.isArray(value.p) || value.p.length !== 4) fail(`${where}.p`, "must be a list of four.");
     value.p.forEach((v, i) => number(v, `${where}.p[${i}]`, 0));

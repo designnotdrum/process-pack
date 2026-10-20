@@ -12,12 +12,13 @@
  *         auto layout, pa and ca alignment (C centre, E end, B space between, T baseline),
  *         g gap, p padding [top, right, bottom, left], fw fh the width or height is fixed (a
  *         missing one hugs), r radius, f fill, sw stroke weight, sc stroke colour, o opacity,
- *         clip the box clips what it holds
+ *         clip the box clips what it holds, ap placed by its x y inside an auto layout parent,
+ *         as a box the browser positions absolutely is
  *   text  k "t"  v the words, ff family, wt weight, fs size, lh line height, ls letter spacing,
  *         c colour, td "U" underline, tt "U" upper case, x y w position and width when the parent
- *         is not an auto layout
+ *         is not an auto layout, wrap the text wraps at width w, in an auto layout too
  *   icon  k "v"  s position in the svg table, w h size, x y position, hid hidden, n name, c colour
- *         to draw its lines and fills in
+ *         to draw its lines and fills in, o opacity, ap as for a box
  *
  * A colour is [token, r, g, b, a]: token is a position in the unit's token list, or -1 when the
  * colour is not bound to a variable. r, g and b are 0 to 255, a is 0 to 1.
@@ -88,10 +89,14 @@ class Tokens {
 const PRIMARY_ALIGN = { center: "C", "flex-end": "E", end: "E", right: "E", "space-between": "B" };
 const COUNTER_ALIGN = { center: "C", "flex-end": "E", end: "E", baseline: "T" };
 
+/** A box or icon the browser positions out of the flow, over its siblings. */
+const outOfFlow = (node) => node.position === "absolute" || node.position === "fixed";
+
 /** A box with nothing drawn on it that only wraps one run of text. */
 function isBareWrapper(node) {
   return (
     node.kind === "box" &&
+    !outOfFlow(node) &&
     node.children.length === 1 &&
     node.children[0].kind === "text" &&
     node.background[3] === 0 &&
@@ -127,8 +132,9 @@ class Builder {
 
   place(node, parent) {
     if (!parent) return {};
-    const flowed = parent.flow && !this.absolute;
-    return flowed ? {} : { x: round(node.x - parent.x), y: round(node.y - parent.y) };
+    const at = { x: round(node.x - parent.x), y: round(node.y - parent.y) };
+    if (!parent.flow || this.absolute) return at;
+    return outOfFlow(node) ? { ...at, ap: 1 } : {};
   }
 
   text(node, parent) {
@@ -151,6 +157,10 @@ class Builder {
       // The browser reports the glyph box, which sits in the middle of the line box.
       Object.assign(entry, { x: round(node.x - parent.x), y: round(node.y - parent.y - (high - node.h) / 2), w: node.w });
       if (lines > 1) entry.wrap = 1;
+    } else if (flowed && lines > 1) {
+      // Text that wraps in an auto layout wraps at the width the browser wrapped it at: a column's
+      // content width, or the text's own width in a row.
+      Object.assign(entry, { w: parent.inner ?? node.w, wrap: 1 });
     }
     if (!entry.c) entry.c = [-1, 0, 0, 0, 1];
     return this.nodes.add(entry);
@@ -158,6 +168,7 @@ class Builder {
 
   icon(node, parent) {
     const entry = { k: "v", s: this.svgs.add(node.html), w: node.w, h: node.h, ...this.place(node, parent) };
+    if (node.opacity !== undefined && node.opacity < 1) entry.o = Math.round(node.opacity * 1000) / 1000;
     return this.nodes.add(entry);
   }
 
@@ -165,23 +176,26 @@ class Builder {
     const flex = /flex/.test(node.display) && !this.absolute;
     const column = node.direction.startsWith("column");
     const reverse = node.direction.endsWith("reverse");
-    const self = { x: node.x, y: node.y, flow: flex };
+    const inner = column ? round(node.w - node.padding[1] - node.padding[3] - node.borderWidth[1] - node.borderWidth[3]) : null;
+    const self = { x: node.x, y: node.y, flow: flex, inner };
     let children = node.children.map((child) => ({ child, tree: this.build(child, self) }));
     if (reverse) children = children.reverse();
 
     const entry = { k: "b", n: node.tag, w: node.w, h: node.h };
     Object.assign(entry, this.place(node, parent));
+    let padding = node.padding;
     if (flex) {
       entry.L = column ? "V" : "H";
       const primary = PRIMARY_ALIGN[node.justifyContent];
       const counter = COUNTER_ALIGN[node.alignItems];
       if (primary) entry.pa = primary;
       if (counter) entry.ca = counter;
-      const gap = column ? node.gap[0] : node.gap[1];
-      if (gap) entry.g = gap;
-      Object.assign(entry, this.sizing(node, column));
+      const laid = this.spacing(node, column, reverse);
+      if (laid.spacing) entry.g = laid.spacing;
+      Object.assign(entry, this.sizing(node, column, laid.spacing, laid.padding));
+      padding = laid.padding;
     }
-    if (node.padding.some((p) => p !== 0)) entry.p = node.padding;
+    if (padding.some((p) => p !== 0)) entry.p = padding;
 
     const fill = this.tokens.paint(node.background, node.bind?.background, "background");
     if (fill) entry.f = fill;
@@ -202,19 +216,41 @@ class Builder {
   }
 
   /**
+   * The spacing and padding of a flex box in Figma. Auto layout has no margins, so the margins
+   * between its children, such as Tailwind's space-y, join the gap when every pair is the same
+   * distance apart, and the first and last child's outer margins join the padding.
+   */
+  spacing(node, column, reverse) {
+    const gap = column ? node.gap[0] : node.gap[1];
+    const kids = node.children.filter((kid) => !outOfFlow(kid));
+    if (reverse) kids.reverse();
+    const margin = (kid) => kid.margin ?? [0, 0, 0, 0];
+    // Margin sides, as [top, right, bottom, left] positions: before and after a child on the main axis.
+    const [before, after] = column ? [0, 2] : [3, 1];
+    const between = kids.slice(1).map((kid, i) => round(gap + margin(kids[i])[after] + margin(kid)[before]));
+    const spacing = between.length > 0 && between.every((s) => Math.abs(s - between[0]) < 0.5) ? between[0] : gap;
+    const padding = node.padding.slice();
+    if (kids.length > 0) {
+      padding[before] = round(Math.max(0, padding[before] + margin(kids[0])[before]));
+      padding[after] = round(Math.max(0, padding[after] + margin(kids.at(-1))[after]));
+    }
+    return { spacing, padding };
+  }
+
+  /**
    * Which sides of a flex box are fixed. A side is fixed when the box is not the size of its content,
    * for example a button with a height of 40 around one line of text.
    */
-  sizing(node, column) {
-    const kids = node.children;
+  sizing(node, column, spacing, padding) {
+    const kids = node.children.filter((kid) => !outOfFlow(kid));
     if (kids.length === 0) return { fw: 1, fh: 1 };
-    const gap = (column ? node.gap[0] : node.gap[1]) * (kids.length - 1);
+    const gap = spacing * (kids.length - 1);
     const widths = kids.map((k) => k.w);
     const heights = kids.map((k) => (k.kind === "text" ? Math.max(1, Math.round(k.h / k.lineHeight)) * k.lineHeight : k.h));
     const contentW = (column ? Math.max(...widths) : widths.reduce((a, b) => a + b, 0) + gap);
     const contentH = (column ? heights.reduce((a, b) => a + b, 0) + gap : Math.max(...heights));
-    const padW = node.padding[1] + node.padding[3] + node.borderWidth[1] + node.borderWidth[3];
-    const padH = node.padding[0] + node.padding[2] + node.borderWidth[0] + node.borderWidth[2];
+    const padW = padding[1] + padding[3] + node.borderWidth[1] + node.borderWidth[3];
+    const padH = padding[0] + padding[2] + node.borderWidth[0] + node.borderWidth[2];
     const out = {};
     if (Math.abs(node.w - (contentW + padW)) > 1.5) out.fw = 1;
     if (Math.abs(node.h - (contentH + padH)) > 1.5) out.fh = 1;

@@ -88,6 +88,20 @@ The code touches three kinds of page, all found or created by name: the page a c
 
 Klaus cannot tell a page it made from a page a person made with the same name, because `use_figma` does not support plugin data. A person's own page named like a component, or named `Older versions` or `Screens`, is treated as Klaus's. Then a set on it named `<component> <version>` can move to `Older versions`, and on `Screens` an old frame named `<route> <release>` can be removed. In a file with pages of its own, set `page` to a page only Klaus uses.
 
+## What the reader reads
+
+The reader (`capture.mjs` and `capture-browser.mjs`) draws the whole component, not only its outer box.
+
+- **Every level and every element.** It reads up to 40 levels and 600 elements a variant (`READ` in `capture.mjs`). A calendar month is about 120 elements eight levels down. A story that draws more is cut at the bound, and the run warns `<component> draws more than 600 elements`. Past about 600 the data no longer fits one relay call next to the runtime.
+- **Text in fields.** An input or a text area is drawn with its value, or its placeholder in the placeholder's colour.
+- **The component's own box.** The reader finds the story's `component` in React's fiber tree and reads the elements it drew. A story decorator's wrapper, and anything the decorator draws beside the component, is left out, so padding and size are the component's. Without React, or for a story with no `component`, it reads the first element the story drew, as before.
+- **Overlays open.** When an element the component draws at its top level is a closed popup trigger (`aria-haspopup` or a combobox, with `aria-expanded="false"`), the reader clicks it. A closed `button` or link with `data-state="closed"` and no `aria-expanded`, such as a tooltip's trigger, is hovered. A story whose component takes a `defaultOpen` or `open` boolean arg gets it set to true first. The content the overlay draws in a portal outside `#storybook-root` is read as part of the component, with the trigger, inside one frame that holds both. Focus the overlay moved into its content is let go, so a field is drawn at rest. A popup trigger deeper inside the component, such as a select in a form, stays closed.
+- **Modals.** A modal draws a backdrop over the whole window. The reader reads what is above the last backdrop, so a dialog is drawn as its panel, without the backdrop and the trigger under it.
+- **The label.** The `label` setting replaces a story's `children` arg only when that arg is text. Children given as markup, such as a sidebar's menu, are drawn as the story draws them.
+- **Placement.** A child the browser positions absolutely, such as a calendar's navigation bar over its caption, keeps its position inside its auto layout parent (`ap` in the data). Margins between the children of a flex box, such as Tailwind's `space-y-*`, become the auto layout's spacing when every pair is the same distance apart. Text that wraps in an auto layout keeps the width the browser wrapped it at.
+
+What a component costs grows with what it draws. On Meridian's 82 components with a story, the relay's code for one component came to a median of 22,044 characters (20,565 before the reader read the whole component) and at most 32,250, for an open DropdownMenu. The manifest lists each file's length (`files[].chars`).
+
 ## What lands in Figma
 
 - One variable collection, `Tokens` by default, with one mode and one colour variable per token the components use. Each variable has the CSS variable as its WEB code syntax, for example `hsl(var(--primary))`. Which token a colour comes from is found by changing each token on the page and seeing which colours move, so two tokens with the same colour stay two variables.
@@ -134,3 +148,5 @@ node --test "plugins/process-pack/tools/klaus/adapters/figma/**/*.test.mjs"
 ```
 
 The tests run the generated code against a small stand-in for the Plugin API (`tests/fake-figma.mjs`). One test reads a real Storybook build in a real browser when `KLAUS_TEST_STORYBOOK` points at a build and `KLAUS_TEST_REPO` at a repo with Playwright installed. Without them it is skipped.
+
+`tests/whole-component.test.mjs` runs the reader in a real browser against a small stand-in for a Storybook build (`tests/fixtures/whole-component/`): a calendar month eight levels deep, a story past the element bound, inputs, a popover opened by a click, a dialog opened by its `defaultOpen` arg, and a decorated story. The stand-in draws plain DOM and leaves the parts of React's fiber tree and Storybook's preview that the reader looks at. Set `KLAUS_TEST_REPO` to a repo with Playwright installed to run them; without it they are skipped.

@@ -1,6 +1,8 @@
 /** From what the browser read to the data the generated code builds from. */
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { dataFor } from "../codegen.mjs";
+import { readData } from "../data-file.mjs";
 import { buildComponentUnit, describe, tokenName } from "../spec.mjs";
 import { buttonCapture, buttonUnit, newFigma, OPTIONS, run } from "./helpers.mjs";
 import { walk } from "./fake-figma.mjs";
@@ -192,4 +194,116 @@ test("a font missing from the file falls back to Inter and says so", async () =>
   let fonts = new Set();
   walk(figma.root, (n) => n.type === "TEXT" && fonts.add(n.fontName.family));
   assert.deepEqual([...fonts], ["Inter"]);
+});
+
+/** A captured box, as capture-browser.mjs readStory returns it. */
+function capturedBox(fields) {
+  return {
+    kind: "box",
+    tag: "div",
+    x: 0,
+    y: 0,
+    w: 10,
+    h: 10,
+    display: "block",
+    position: "static",
+    direction: "row",
+    alignItems: "normal",
+    justifyContent: "normal",
+    gap: [0, 0],
+    padding: [0, 0, 0, 0],
+    borderWidth: [0, 0, 0, 0],
+    borderStyle: "none",
+    borderColor: [0, 0, 0, 0],
+    radius: [0, 0, 0, 0],
+    background: [0, 0, 0, 0],
+    backgroundImage: false,
+    opacity: 1,
+    clip: false,
+    children: [],
+    ...fields,
+  };
+}
+
+/** A calendar's column: a navigation bar placed over the caption, then the month, in auto layout. */
+function calendarUnit() {
+  const nav = capturedBox({ tag: "nav", x: 12, y: 12, w: 224, h: 28, position: "absolute", display: "flex" });
+  const month = capturedBox({ tag: "div", x: 12, y: 12, w: 224, h: 260 });
+  const column = capturedBox({ x: 12, y: 12, w: 224, h: 260, display: "flex", direction: "column", children: [nav, month] });
+  const tree = capturedBox({ x: 0, y: 0, w: 250, h: 286, padding: [12, 12, 12, 12], borderWidth: [1, 1, 1, 1], children: [column] });
+  const capture = { axes: [], tokens: [], cells: [{ key: {}, tree }], icon: null, spinner: null, warnings: [] };
+  const item = { id: "Calendar", name: "Calendar", version: "1.0.0", page: "Calendar", description: "" };
+  return buildComponentUnit({ item, capture, options: OPTIONS });
+}
+
+test("a child placed absolutely inside an auto layout keeps its place and does not size its parent", () => {
+  const unit = calendarUnit();
+  const [, [[columnId, [[navId], [monthId]]]]] = unit.cells[0][1];
+  const column = unit.nodes[columnId];
+  assert.equal(column.L, "V");
+  assert.equal(column.fh, undefined, "the column hugs the month alone");
+  assert.deepEqual({ ...unit.nodes[navId] }, { k: "b", n: "nav", w: 224, h: 28, x: 0, y: 0, ap: 1, L: "H", fw: 1, fh: 1 });
+  assert.equal(unit.nodes[monthId].ap, undefined);
+  assert.equal(unit.nodes[monthId].x, undefined, "the month flows");
+  // The data file reader takes the new key.
+  readData(JSON.stringify(dataFor({ units: [unit], config: { collection: "Tokens", mode: "Light" }, header: "test" })));
+});
+
+test("the code places an absolute child by position inside its auto layout", async () => {
+  const figma = newFigma(["Calendar"]);
+  const result = await run(figma, [calendarUnit()]);
+  assert.equal(result.units[0].status, "written", JSON.stringify(result));
+  const component = figma.page("Calendar").children[0];
+  const column = component.children[0];
+  const [nav, month] = column.children;
+  assert.equal(column.layoutMode, "VERTICAL");
+  assert.equal(nav.layoutPositioning, "ABSOLUTE");
+  assert.deepEqual([nav.x, nav.y], [0, 0]);
+  assert.equal(month.layoutPositioning, undefined);
+});
+
+/** A captured run of text, as readStory returns it. */
+function capturedText(fields) {
+  return { kind: "text", text: "Words", x: 0, y: 0, w: 40, h: 20, family: "Inter", weight: 400, size: 14, lineHeight: 20, letterSpacing: 0, decoration: "none", transform: "none", color: [0, 0, 0, 1], ...fields };
+}
+
+/** A dialog's header: a title and a two-line description, 6px apart by the description's top margin. */
+function headerUnit() {
+  const title = capturedBox({ tag: "h2", x: 25, y: 25, w: 375, h: 18, children: [capturedText({ text: "Edit profile", x: 25, y: 25, w: 90, h: 18, lineHeight: 18 })] });
+  const description = capturedBox({ tag: "p", x: 25, y: 49, w: 375, h: 40, margin: [6, 0, 0, 0], children: [capturedText({ text: "Make changes to your profile here. Click save when you're done.", x: 25, y: 49, w: 360, h: 40 })] });
+  const header = capturedBox({ x: 25, y: 25, w: 375, h: 64, display: "flex", direction: "column", margin: [0, 0, 0, 0], children: [title, description] });
+  const capture = { axes: [], tokens: [], cells: [{ key: {}, tree: header }], icon: null, spinner: null, warnings: [] };
+  const item = { id: "Dialog", name: "Dialog", version: "1.0.0", page: "Dialog", description: "" };
+  return buildComponentUnit({ item, capture, options: OPTIONS });
+}
+
+test("text that wraps inside an auto layout keeps its width and wraps there too", () => {
+  const unit = headerUnit();
+  const [, [, [descriptionId]]] = unit.cells[0][1];
+  const description = unit.nodes[descriptionId];
+  assert.equal(description.wrap, 1);
+  assert.equal(description.w, 375, "the header's content width, where the browser wrapped it");
+  assert.equal(description.x, undefined, "it still flows");
+});
+
+test("margins between auto layout children become the spacing between them", () => {
+  const unit = headerUnit();
+  const header = unit.nodes[unit.cells[0][1][0]];
+  assert.equal(header.g, 6, "the description's 6px top margin");
+  assert.equal(header.fh, undefined, "18 + 6 + 40 is the header's height, so it hugs");
+});
+
+test("an icon keeps the opacity the browser drew it at", async () => {
+  const svg = { kind: "svg", html: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M0 0h16v16H0z"/></svg>', x: 150, y: 10, w: 16, h: 16, position: "static", opacity: 0.5 };
+  const trigger = capturedBox({ tag: "button", w: 180, h: 36, display: "flex", children: [capturedText({ text: "Select a fruit", x: 12, y: 8, w: 90 }), svg] });
+  const capture = { axes: [], tokens: [], cells: [{ key: {}, tree: trigger }], icon: null, spinner: null, warnings: [] };
+  const unit = buildComponentUnit({ item: { id: "Select", name: "Select", version: "1.0.0", page: "Select", description: "" }, capture, options: OPTIONS });
+  assert.equal(unit.nodes.find((n) => n.k === "v").o, 0.5);
+  readData(JSON.stringify(dataFor({ units: [unit], config: { collection: "Tokens", mode: "Light" }, header: "test" })));
+
+  const figma = newFigma(["Select"]);
+  const result = await run(figma, [unit]);
+  assert.equal(result.units[0].status, "written", JSON.stringify(result));
+  const icon = figma.page("Select").children[0].children.find((n) => n.name === "Icon");
+  assert.equal(icon.opacity, 0.5);
 });
