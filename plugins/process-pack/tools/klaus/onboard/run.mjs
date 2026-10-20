@@ -19,6 +19,10 @@
  * are cut again from the plan, an open pull request for one of them is closed and replaced by a new
  * one that says which it replaces, and the model's saved results are used again. A merged pull
  * request whose files are not what the plan writes stops the run, with the files that differ.
+ * With --refresh, a merged first pull request whose files differ is made again as a refresh
+ * instead: a branch of its own cut from the default branch, holding only the files that change,
+ * with the second and third stacked on it. The estimate lists those files, and the plan id it
+ * prints approves them.
  */
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -31,6 +35,7 @@ import { renderMarkdown } from '../inventory/markdown.mjs'
 import { pickVersions, readCaptures } from '../version/version.mjs'
 import { listBody, purposesBody, renderPurposesView, renderStoriesView, renderSummary, storiesBody } from './bodies.mjs'
 import { readOnboardingConfig } from './config.mjs'
+import { decisionPairs, decisionPictureName } from './decisions.mjs'
 import { attachDecisionPictures, decisionFiles, mergedPictureFiles } from './decisions-pictures.mjs'
 import { renderDuplicatesList } from './duplicates.mjs'
 import { compareToEstimate, comparisonNotes } from './estimate.mjs'
@@ -40,7 +45,7 @@ import { buildPlan } from './plan.mjs'
 import { mkdirPlain, removePlainFile, writePlainFile } from './plain-path.mjs'
 import { obtainPurposes, savedWork } from './purposes-stage.mjs'
 import { createResultStore } from './results.mjs'
-import { findMerged } from './stages.mjs'
+import { findMerged, refreshChanges } from './stages.mjs'
 import { renderStory } from './stories.mjs'
 import { applyPurposes } from './verify.mjs'
 
@@ -52,6 +57,9 @@ export const TITLES = Object.freeze([
   'Klaus onboarding 2 of 3: purpose comments, written and then checked',
   'Klaus onboarding 3 of 3: stories for components that have none',
 ])
+/** The branch and title of a refresh of the first pull request. A branch of its own, so the merged one's branch is never pushed over. */
+export const REFRESH_BRANCH = 'klaus/onboarding-1-list-refresh'
+export const REFRESH_TITLE = 'Klaus onboarding 1 of 3 (refresh): the list of components at 1.0.0, and the duplicates'
 
 /** Where the run keeps its own files, inside the git folder so the working tree stays clean. */
 export const workFolder = (repo) => path.join(gitDir(repo), 'klaus-onboarding')
@@ -126,12 +134,29 @@ function placeholderPurposeFiles(state, plan, inventory, docs) {
 }
 
 /**
+ * What a refresh of the first pull request commits on the default branch, which the repo is on:
+ * the files that are not there or differ, as the plan writes them, and the old tickets and
+ * pictures to remove. `changes` says which is which, for the estimate and the pull request.
+ */
+export function refreshCommit({ repo, files, docs, mayWrite }) {
+  const changes = refreshChanges({ repo, docs, files, mayWrite })
+  const changed = new Set(changes.filter((c) => c.change !== 'removed').map((c) => c.rel))
+  return { files: files.filter((f) => changed.has(f.rel)), remove: changes.filter((c) => c.change === 'removed').map((c) => c.rel), changes }
+}
+
+/**
  * The three commits as the commit hook check tries them, in order, from the plan and the list at
  * 1.0.0. The first and third hold what the real commits will. The second has a placeholder purpose.
+ * With `refresh`, the first is the refresh of the merged one: only its files that change, and the removals.
  */
-export function commitsToTry({ state, plan, inventory, docs }) {
+export function commitsToTry({ state, plan, inventory, docs, refresh = null }) {
+  let first = { label: 'pull request 1 (the list and the duplicates)', files: listFiles(plan, inventory, docs) }
+  if (refresh) {
+    const { files, remove } = refreshCommit({ repo: refresh.repo, files: first.files, docs })
+    first = { label: 'pull request 1 (the refresh of the list and the duplicates)', files, remove }
+  }
   return [
-    { label: 'pull request 1 (the list and the duplicates)', files: listFiles(plan, inventory, docs) },
+    first,
     { label: 'pull request 2 (the purpose comments, each written as a placeholder)', files: placeholderPurposeFiles(state, plan, inventory, docs) },
     { label: 'pull request 3 (the stories)', files: storyFiles(plan, inventory, docs).files },
   ]
@@ -169,14 +194,28 @@ function checkModelRoutes({ onboarding, env, codex, writer, checker }) {
 /**
  * Which pull requests an earlier run already merged, and so where a run starts (stages.mjs), with
  * the list at 1.0.0 it compared. Changes nothing. The estimate shows the answer, and the run acts on it.
+ *
+ * When the first pull request is merged with files that differ, `refreshFiles` says what a refresh
+ * would change. The pictures are not drawn yet, so when the plan has questions on the decisions list
+ * (`redrawn`), the list and its pictures are left out: the run draws them and knows only then.
  */
-export async function earlierRuns({ repo, plan, onboarding, captures, base = currentBranch(repo) }) {
+export async function earlierRuns({ repo, plan, onboarding, captures, base = currentBranch(repo), refresh = false }) {
   const caps = captures ? readCaptures(path.resolve(repo, captures)) : undefined
   const listed = (await pickVersions({ root: repo, inventory: plan.inventory, baseline: true, captures: caps, ts: plan.ts, dryRun: true })).inventory
+  const docs = onboarding.docsDir
+  const files = listFiles(plan, listed, docs)
   // The pictures are not drawn here, so the ones the merged decisions list shows are the ones that have to be there.
-  const expected = [...listFiles(plan, listed, onboarding.docsDir), ...mergedPictureFiles({ repo, docs: onboarding.docsDir })]
-  return { listed, ...findMerged({ repo, base, docs: onboarding.docsDir, listFiles: expected }) }
+  const found = findMerged({ repo, base, docs, listFiles: [...files, ...mergedPictureFiles({ repo, docs })], refresh })
+  if (!found.refreshable) return { listed, ...found }
+  const questions = decisionPairs(plan.duplicates)
+  const redrawn = questions.length > 0
+  const mayWrite = questions.map((pair, index) => `${docs}/decisions/${decisionPictureName(pair, index + 1)}`)
+  const { changes } = refreshCommit({ repo, docs, files: redrawn ? files.filter((f) => !f.volatile) : files, mayWrite: [...mayWrite, `${docs}/decisions.md`] })
+  return { listed, ...found, refreshFiles: { base, changes, redrawn } }
 }
+
+/** A refresh's changes that do not depend on the drawing, one line each, to hold a run to its estimate. */
+const fixedChanges = (changes) => changes.filter((c) => !c.volatile).map((c) => `${c.rel} ${c.change}`)
 
 const sumOf = (list, field) => list.reduce((total, item) => total + (item[field] ?? 0), 0)
 
@@ -191,6 +230,7 @@ const sumOf = (list, field) => list.reduce((total, item) => total + (item[field]
  * @param {string} [options.checksFile] An external checker's verdicts.
  * @param {string[]} [options.commitTrailers]
  * @param {string} [options.bodyFooter]
+ * @param {boolean} [options.refresh] Make a merged first pull request whose files differ again, as a refresh, instead of refusing.
  */
 export async function runOnboarding(options) {
   const { approve, captures, commitTrailers = [], bodyFooter = '', log = console.log, env = process.env, fetchImpl = fetch, codex = 'codex' } = options
@@ -210,11 +250,23 @@ export async function runOnboarding(options) {
   const docs = onboarding.docsDir
 
   // ---- what an earlier run of this plan already merged. A dry run copies no screenshot, so the tree stays clean.
-  const earlier = await earlierRuns({ repo, plan, onboarding, captures, base })
+  const earlier = await earlierRuns({ repo, plan, onboarding, captures, base, refresh: options.refresh === true })
   if (earlier.refusal) throw new UserError(earlier.refusal)
   const { listed, start } = earlier
+  // The plan id does not cover what is on the default branch, so a refresh is approved only when the estimate listed the same one.
+  if (earlier.refresh) {
+    const approved = estimate.earlier?.refreshFiles?.changes
+    if (!approved) throw new UserError(`The estimate lists no refresh of the first pull request, so --approve ${approve} does not approve one. Run onboard.mjs estimate again and read it.`)
+    const now = fixedChanges(earlier.refreshFiles.changes)
+    const then = fixedChanges(approved)
+    if (now.join('\n') !== then.join('\n')) {
+      const added = now.filter((c) => !then.includes(c))
+      const gone = then.filter((c) => !now.includes(c))
+      throw new UserError(`The files a refresh would change are not the ones the estimate lists.${added.length ? ` Now: ${added.join('; ')}.` : ''}${gone.length ? ` No longer: ${gone.join('; ')}.` : ''} Run onboard.mjs estimate again and read it.`)
+    }
+  }
   if (earlier.note) log(earlier.note)
-  const state = { plan, estimate, prs: [], merged: earlier.merged.map((step) => ({ step, ...mergedPullRequest(repo, step) })), replaced: {}, docsDir: docs, writerLabel: writerLabel(onboarding), checkerLabel: checkerLabel(onboarding), writerCalls: [], writerExecuted: 0, writerReused: 0, writerTokens: 0, checkerRuns: [], checksNotReached: [], purposes: { items: [] }, stories: null, rows: [], notes: [], startedAt: new Date().toISOString() }
+  const state = { plan, estimate, base, prs: [], merged: earlier.merged.map((step) => ({ step, ...mergedPullRequest(repo, step) })), refresh: earlier.refresh ? { of: mergedPullRequest(repo, 1), changes: [] } : null, replaced: {}, docsDir: docs, writerLabel: writerLabel(onboarding), checkerLabel: checkerLabel(onboarding), writerCalls: [], writerExecuted: 0, writerReused: 0, writerTokens: 0, checkerRuns: [], checksNotReached: [], purposes: { items: [] }, stories: null, rows: [], notes: [], startedAt: new Date().toISOString() }
   if (start > 3) {
     log('Nothing to do: the three pull requests are merged.')
     return { done: true, state, report: null }
@@ -240,7 +292,7 @@ export async function runOnboarding(options) {
 
   // ---- the commit hook, tried on the files of every commit still to make, before anything is spent
   log('Trying the repo\'s pre-commit hook on the files of each pull request, before any model call.')
-  checkCommitHooks({ repo, log, hookRun: options.hookRun, outputFile: path.join(work, 'hook-check.txt'), steps: commitsToTry({ state, plan, inventory: listed, docs }).slice(start - 1) })
+  checkCommitHooks({ repo, log, hookRun: options.hookRun, outputFile: path.join(work, 'hook-check.txt'), steps: commitsToTry({ state, plan, inventory: listed, docs, refresh: state.refresh ? { repo } : null }).slice(start - 1) })
 
   // ---- the model work, before any branch is made. Once the purposes are merged there is none.
   let items = new Map()
@@ -260,9 +312,11 @@ export async function runOnboarding(options) {
     fs.writeFileSync(file, `${text}\n\n${bodyFooter}`.trimEnd() + '\n')
     return file
   }
+  /** The step's branch. A refresh of the first pull request has its own, and the second is stacked on it. */
+  const branchOf = (step) => (step === 1 && state.refresh ? REFRESH_BRANCH : BRANCHES[step - 1])
   /** Cuts the step's branch from where HEAD is. A branch an earlier run made is moved, so its old commits stay in its reflog. */
   const cut = (step) => {
-    const branch = BRANCHES[step - 1]
+    const branch = branchOf(step)
     const old = git(repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], { allowFail: true })?.trim()
     git(repo, ['checkout', '-q', '-B', branch])
     if (old) log(`The branch ${branch} is made again from the plan. It was at ${old.slice(0, 10)}, which its reflog keeps.`)
@@ -272,7 +326,7 @@ export async function runOnboarding(options) {
    * earlier run, is closed first, and the new one says which it replaces.
    */
   const publish = (step, body) => {
-    const branch = BRANCHES[step - 1]
+    const branch = branchOf(step)
     const previous = listPullRequests(repo, branch, 'open')
     state.replaced[step] = previous
     const file = bodyFile(step, body())
@@ -281,8 +335,8 @@ export async function runOnboarding(options) {
       log(`Closed pull request #${pr.number}, which an earlier run opened for ${branch}.`)
     }
     pushBranch(repo, branch, remoteTip(repo, branch))
-    const baseBranch = step === start ? base : BRANCHES[step - 2]
-    const pr = createPullRequest(repo, { base: baseBranch, head: branch, title: TITLES[step - 1], bodyFile: file })
+    const baseBranch = step === start ? base : branchOf(step - 1)
+    const pr = createPullRequest(repo, { base: baseBranch, head: branch, title: branch === REFRESH_BRANCH ? REFRESH_TITLE : TITLES[step - 1], bodyFile: file })
     state.prs.push({ step, branch, ...pr })
     log(`Pull request ${step} of 3: ${pr.url}${previous.length ? `, in place of ${previous.map((p) => `#${p.number}`).join(', ')}` : ''}`)
   }
@@ -295,13 +349,25 @@ export async function runOnboarding(options) {
   let storyItems
   try {
     let inventoryNow = listed
-    // ---- 1. the list and the duplicates
+    // ---- 1. the list and the duplicates, or a refresh of the merged ones: only the files that change, cut from the default branch
     if (start <= 1) {
       cut(1)
       const baseline = await pickVersions({ root: repo, inventory: plan.inventory, baseline: true, captures: caps, ts: plan.ts })
       const listPaths = []
-      for (const file of listFiles(plan, baseline.inventory, docs)) put(file.rel, file.text, listPaths)
-      commit(repo, { message: 'Add the component inventory at 1.0.0 and the duplicates list\n\nWritten by the Klaus onboarding run. No model ran.', paths: listPaths, trailers: commitTrailers })
+      if (state.refresh) {
+        const refresh = refreshCommit({ repo, files: listFiles(plan, baseline.inventory, docs), docs })
+        state.refresh.changes = refresh.changes
+        for (const file of refresh.files) put(file.rel, file.text, listPaths)
+        for (const rel of refresh.remove) {
+          removePlainFile(repo, path.join(repo, rel))
+          listPaths.push(rel)
+        }
+        const of = state.refresh.of.number ? ` merged in #${state.refresh.of.number}` : ''
+        commit(repo, { message: `Refresh the component inventory at 1.0.0 and the duplicates list\n\nWritten by the Klaus onboarding run, run with --refresh. The files${of} are not what this plan writes now, so ${refresh.changes.length} ${refresh.changes.length === 1 ? 'file changes' : 'files change'}. No model ran.`, paths: listPaths, trailers: commitTrailers })
+      } else {
+        for (const file of listFiles(plan, baseline.inventory, docs)) put(file.rel, file.text, listPaths)
+        commit(repo, { message: 'Add the component inventory at 1.0.0 and the duplicates list\n\nWritten by the Klaus onboarding run. No model ran.', paths: listPaths, trailers: commitTrailers })
+      }
       inventoryNow = baseline.inventory
       publish(1, () => listBody(state))
     }
@@ -359,7 +425,8 @@ export async function runOnboarding(options) {
     }
     state.actual = actual
     state.rows = compareToEstimate(estimate, actual)
-    state.notes = [...(start > 1 ? [`The run continued at pull request ${start}: ${earlier.merged.map((s) => `pull request ${s}`).join(' and ')} ${earlier.merged.length === 1 ? 'was' : 'were'} already merged.${modelWork ? '' : ' It made no model call, so the model rows are not compared.'}`] : []), ...comparisonNotes(estimate, actual)]
+    const refreshNote = state.refresh ? [`The run refreshed the first pull request: ${state.refresh.of.number ? `#${state.refresh.of.number}` : 'it'} was merged with files this plan no longer writes, so pull request 1 is a refresh from ${base} that changes ${state.refresh.changes.length} ${state.refresh.changes.length === 1 ? 'file' : 'files'}, and the second and third are stacked on it.`] : []
+    state.notes = [...refreshNote, ...(start > 1 ? [`The run continued at pull request ${start}: ${earlier.merged.map((s) => `pull request ${s}`).join(' and ')} ${earlier.merged.length === 1 ? 'was' : 'were'} already merged.${modelWork ? '' : ' It made no model call, so the model rows are not compared.'}`] : []), ...comparisonNotes(estimate, actual)]
     commit(repo, { message: `Add ${actual.stories} stories and list the data-bound components with their screens\n\nWritten by the Klaus onboarding run. No model wrote these stories.`, paths: storyPaths, trailers: commitTrailers })
     publish(3, () => storiesBody(state))
 
@@ -376,7 +443,7 @@ export async function runOnboarding(options) {
     } catch (restoreError) {
       log(`The files of the commit that failed could not all be put back (${restoreError.message}). Check git status before the next run.`)
     }
-    const branches = BRANCHES.filter((b) => git(repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${b}`], { allowFail: true }) !== null)
+    const branches = [...(state.refresh ? [REFRESH_BRANCH] : []), ...BRANCHES].filter((b) => git(repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${b}`], { allowFail: true }) !== null)
     log(`Branches made so far: ${branches.join(', ') || 'none'}. Pull requests opened: ${state.prs.map((p) => p.url).join(', ') || 'none'}. To go on, run the same command again: it keeps a pull request that is merged, makes the others again, and closes and replaces any of them that is still open.`)
     if (fs.existsSync(store.dir)) log(`The model's results are kept in ${store.dir}. A run with the same plan uses them again instead of calling the model.`)
     throw error
@@ -391,6 +458,7 @@ export async function runOnboarding(options) {
     finishedAt: new Date().toISOString(),
     continuedAt: start,
     alreadyMerged: state.merged,
+    refreshed: state.refresh ? [{ step: 1, of: state.refresh.of, changes: state.refresh.changes.map(({ rel, change }) => ({ rel, change })) }] : [],
     pullRequests: state.prs,
     replaced: Object.entries(state.replaced).flatMap(([step, list]) => list.map((pr) => ({ step: Number(step), ...pr }))),
     actual,
@@ -406,11 +474,17 @@ export async function runOnboarding(options) {
   return { report, state }
 }
 
-/** The merged pull request of a step, for the links in the bodies, or nothing when gh cannot say. */
+/**
+ * The merged pull request of a step, for the links in the bodies, or nothing when gh cannot say.
+ * For the first, a merged refresh comes before the pull request it refreshed, since it is the later one.
+ */
 function mergedPullRequest(repo, step) {
   try {
-    const [pr] = listPullRequests(repo, BRANCHES[step - 1], 'merged')
-    return pr ? { number: pr.number, url: pr.url } : {}
+    for (const branch of step === 1 ? [REFRESH_BRANCH, BRANCHES[0]] : [BRANCHES[step - 1]]) {
+      const [pr] = listPullRequests(repo, branch, 'merged')
+      if (pr) return { number: pr.number, url: pr.url }
+    }
+    return {}
   } catch {
     return {}
   }

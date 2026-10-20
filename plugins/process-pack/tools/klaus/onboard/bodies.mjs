@@ -26,15 +26,34 @@ function stack(state, step) {
     return pr?.number ? `#${pr.number}` : `pull request ${n}`
   }
   const done = (n) => (merged(n) ? ' Merged.' : '')
+  const refreshed = state.refresh ? ` A refresh of ${refreshedOf(state)}, which is merged.` : ''
   return [
     '## The three pull requests',
     '',
-    `1. ${link(1)}: the list of components at 1.0.0, and the duplicates.${done(1)}`,
+    `1. ${link(1)}: the list of components at 1.0.0, and the duplicates.${done(1)}${refreshed}`,
     `2. ${link(2)}: the missing purposes, written and then checked against where each component is used.${done(2)}`,
     `3. ${link(3)}: stories for components that have none, and the screens that show the data-bound ones.${done(3)}`,
     '',
     `This is ${step} of 3. Each is stacked on the one before it. Merge them in order, and merge each without deleting its branch: GitHub closes a pull request whose base branch is deleted. After a merge, change the next pull request's base to the default branch.`,
   ].join('\n')
+}
+
+/** The merged first pull request a refresh brings up to date, as a link when gh could say which. */
+const refreshedOf = (state) => (state.refresh.of?.number ? `#${state.refresh.of.number}` : 'the first onboarding pull request')
+
+/** The section that opens a refresh of the first pull request: why it exists, and each file it changes. */
+function refreshes(state) {
+  if (!state.refresh) return []
+  const of = state.refresh.of?.number ? `#${state.refresh.of.number}, the first onboarding pull request,` : 'the first onboarding pull request,'
+  const line = (c) => `- ${code(c.rel)}: ${c.change === 'changed' ? `changed, ${code(c.why)}` : c.change === 'removed' ? 'removed, no pair needs it now' : 'added'}.`
+  return [
+    '## A refresh',
+    '',
+    `This pull request refreshes ${of} which is merged. The files on ${code(state.base)} are not what this plan writes now: Klaus, or the repo, changed after it merged. The run was given \`--refresh\`, so it made this pull request from ${code(state.base)} instead of refusing. It holds only the files that change, as this plan writes them:`,
+    '',
+    ...state.refresh.changes.map(line),
+    '',
+  ]
 }
 
 /** The line that opens a pull request made in place of one an earlier run opened. */
@@ -58,11 +77,12 @@ export function listBody(state) {
   const { plan, estimate } = state
   const lines = [
     ...replaces(state, 1),
+    ...refreshes(state),
     '## What this is',
     '',
     'The first of three pull requests that give this repo its Klaus baseline. This one is the list: every component the repo ships, read by a script from the TypeScript compiler and the imports. No model ran. Every entry starts at version 1.0.0.',
     '',
-    '## What changed',
+    state.refresh ? '## What the first pull request holds' : '## What changed',
     '',
     '- `inventory.json` and `INVENTORY.md` at the repo root.',
     `- ${code(`${state.docsDir}/duplicates.md`)} and ${code(`${state.docsDir}/duplicates.json`)}: the likely duplicate pairs and what was compared.`,

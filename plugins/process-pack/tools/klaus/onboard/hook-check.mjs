@@ -108,7 +108,8 @@ const tail = (text) => {
 /**
  * @param {object} options
  * @param {string} options.repo The repo's top folder, as a real path, with a clean tree.
- * @param {{ label: string, files: { rel: string, text: string }[] }[]} options.steps One for each commit, in order.
+ * @param {{ label: string, files: { rel: string, text: string }[], remove?: string[] }[]} options.steps One for each commit, in order.
+ *   `remove` lists the tracked files the commit deletes, as a refresh of the first pull request does.
  * @param {(message: string) => void} options.log
  * @param {boolean} [options.hookRun] See runPreCommitHook.
  * @param {string} [options.outputFile] Where a refusing hook's whole output is written, outside the working tree.
@@ -127,10 +128,12 @@ export function checkCommitHooks({ repo, steps, log, hookRun, outputFile }) {
         if (!fs.existsSync(file)) created.add(file)
         writePlainFile(repo, file, text)
       }
+      // A removed file is tracked, so putting the tree back at the end restores it from HEAD.
+      for (const rel of step.remove ?? []) removePlainFile(repo, path.join(repo, rel))
       // The commit before is unstaged and its files stay, as they would be in the branch this commit goes on.
       git(repo, ['reset', '-q'])
       try {
-        git(repo, ['add', '--', ...step.files.map((f) => f.rel)])
+        git(repo, ['add', '--', ...step.files.map((f) => f.rel), ...(step.remove ?? [])])
       } catch (error) {
         refused = { step, output: error.message, how: 'git add' }
         break
