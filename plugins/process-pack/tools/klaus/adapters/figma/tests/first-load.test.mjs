@@ -44,7 +44,9 @@ test("the report says it was a first load for the plugin", async () => {
 test("a first load leaves out the versions the variable marks sent, which are in Figma already", async () => {
   const root = newRepo();
   const sent = NAMES.slice(0, 4);
-  const { output } = await ciRun(root, { inventory, firstLoad: "figma", env: { KLAUS_FIGMA_LEDGER: sharedRecord(sent) } });
+  // A capped run generated the first four, and the relay sent them.
+  const capped = await ciRun(root, { inventory });
+  const { output } = await ciRun(root, { inventory, state: capped.state, firstLoad: "figma", env: { KLAUS_FIGMA_LEDGER: sharedRecord(sent) } });
   assert.equal(output.written.length, 76);
   assert.equal(manifestIn(root).units.some((id) => sent.includes(id)), false);
 });

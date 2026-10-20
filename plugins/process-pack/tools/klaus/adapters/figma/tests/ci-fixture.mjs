@@ -48,8 +48,8 @@ export const newRepo = () => mkdtempSync(path.join(tmpdir(), "klaus-figma-ci-"))
  * default spending cap, and env standing in for the step's environment.
  * @returns {Promise<{ report: object, state: object, output: object }>}
  */
-export async function ciRun(root, { inventory, state, env = {}, firstLoad, dryRun = false }) {
-  const config = resolveConfig({ outputs: { figma: { enabled: true, target: KEY } } });
+export async function ciRun(root, { inventory, state, env = {}, firstLoad, dryRun = false, selection }) {
+  const config = resolveConfig({ outputs: { figma: { enabled: true, target: KEY } }, ...(selection ? { selection } : {}) });
   const figma = createAdapter(browser, { env });
   const cwd = process.cwd();
   // The adapter works in the folder it runs in, as in CI.

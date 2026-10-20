@@ -12,9 +12,13 @@
  * A record names its Figma file, so a run against another file neither uses nor overwrites it.
  *
  * Anyone who can write a repository variable can write this record, so it is never trusted
- * silently. A version the record marks sent that the run's own ledger does not is named in the
- * run's report, with a warning, by the generator and by the relay. Neither copies the record's
- * marks into its own ledger, so such a version is named again on every run that looks at it.
+ * silently. It only confirms versions the reading side already lists: CI's own ledger, which lists
+ * every version CI generated, or the relay's own ledger and the release it is relaying or
+ * reconciling. A mark for any other version is ignored and named in the run's report, so a forged
+ * mark for a made-up older version cannot make a new component look established. A version the
+ * record marks sent that the run's own ledger does not is also named, with a warning, by the
+ * generator and by the relay. Neither copies the record's marks into its own ledger, so such a
+ * version is named again on every run that looks at it.
  * A missing or malformed record means nothing is known to be sent, with a warning. It never stops a run.
  *
  * Merging: a version sent or changed in either ledger counts as that. When one says sent and the
@@ -157,4 +161,68 @@ export function sentOnlyWarning(labels, skipped) {
 export function sentOnlySentence(count, [ifOne, ifMany] = ["", ""]) {
   if (count === 0) return "";
   return ` ${SHARED_LEDGER_VARIABLE} alone marks ${count} version${count === 1 ? "" : "s"} sent${count === 1 ? ifOne : ifMany}.`;
+}
+
+/** A key for a unit that tells a component from a screen with the same text. */
+const entryKey = (entry) => (entry.kind === "component" ? `c\u0000${entry.name}\u0000${entry.version}` : `s\u0000${entry.route}\u0000${entry.release}`);
+
+/**
+ * Whether the reading side lists a unit: its own ledger has it with any status, or it is one of
+ * the extra entries (the release the relay is relaying or reconciling).
+ * @returns {(entry: object) => boolean}
+ */
+export function listedIn(own, extra = []) {
+  const keys = new Set(extra.map(entryKey));
+  return (entry) => entryStatus(own, entry) !== undefined || keys.has(entryKey(entry));
+}
+
+/**
+ * The record's marks for the units the reading side lists, and the labels of the marks it ignores.
+ * @param {object} shared  The record's ledger.
+ * @param {(entry: object) => boolean} listed  From listedIn.
+ * @returns {{ ledger: object, ignored: string[] }}  ignored is sorted.
+ */
+export function listedMarks(shared, listed) {
+  const ledger = { version: LEDGER_VERSION, components: {}, screens: {} };
+  const ignored = [];
+  const keep = (table, key, version, status) => {
+    const entry = Object.hasOwn(table, key) ? table[key] : {};
+    setOwn(entry, version, status);
+    setOwn(table, key, entry);
+  };
+  for (const [name, versions] of Object.entries(shared.components)) {
+    for (const [version, status] of Object.entries(versions)) {
+      const entry = { kind: "component", name, version };
+      if (listed(entry)) keep(ledger.components, name, version, status);
+      else ignored.push(entryLabel(entry));
+    }
+  }
+  for (const [route, releases] of Object.entries(shared.screens)) {
+    for (const [release, status] of Object.entries(releases)) {
+      const entry = { kind: "screen", route, release };
+      if (listed(entry)) keep(ledger.screens, route, release, status);
+      else ignored.push(entryLabel(entry));
+    }
+  }
+  return { ledger, ignored: ignored.sort() };
+}
+
+/** The warning that names the marks the reading side ignored. */
+export function ignoredWarning(labels) {
+  const one = labels.length === 1;
+  return `${SHARED_LEDGER_VARIABLE} lists ${labels.length} version${one ? "" : "s"} this ledger never planned; ignored: ${labels.join(", ")}. A mark counts only for a version this checkout's ledger lists, or one in the release being relayed or reconciled.`;
+}
+
+/**
+ * Reads the record against the reading side's own ledger: the marks it may use, the ones it
+ * ignores, and the versions only it marks sent among the units the run looked at.
+ * @param {{ ledger: object | null }} shared  From parseSharedLedger or readVariable.
+ * @param {object} own  The reading side's own ledger.
+ * @param {Array<object>} extra  Units the reading side also lists: the release being relayed or reconciled.
+ * @returns {{ usable: object | null, ignored: string[] }}
+ */
+export function usableMarks(shared, own, extra = []) {
+  if (!shared.ledger) return { usable: null, ignored: [] };
+  const { ledger, ignored } = listedMarks(shared.ledger, listedIn(own, extra));
+  return { usable: ledger, ignored };
 }

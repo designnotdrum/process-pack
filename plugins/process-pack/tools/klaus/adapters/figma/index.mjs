@@ -34,7 +34,7 @@ import { packUnits } from "./batch.mjs";
 import { captureComponent, captureScreen, openStorybook, readStoryIndex, storyCandidates } from "./capture.mjs";
 import { anyVersionSent, componentSent, entryOf, GENERATED, readLedger, recordEntry, screenSent } from "./ledger.mjs";
 import { screenRoutes, uploadFor } from "./screens.mjs";
-import { mergeMarks, parseSharedLedger, SHARED_LEDGER_VARIABLE, sentOnlyInShared, sentOnlySentence, sentOnlyWarning } from "./shared-ledger.mjs";
+import { ignoredWarning, mergeMarks, parseSharedLedger, SHARED_LEDGER_VARIABLE, sentOnlyInShared, sentOnlySentence, sentOnlyWarning, usableMarks } from "./shared-ledger.mjs";
 import { RUNTIME_CODE } from "./codegen.mjs";
 import {
   CALL_BASE_TOKENS,
@@ -110,9 +110,10 @@ export function createAdapter(browser = {}, { env } = {}) {
       const root = rootOf(ctx);
       const release = releaseOf(ctx);
       const own = readLedger(ledgerFile(root, options));
-      // What the relay sent, from wherever it ran. Merged for planning only.
+      // What the relay sent, from wherever it ran, for the versions this ledger lists. Merged for planning only.
       const shared = parseSharedLedger(sharedText(), fileKeyOf(ctx.settings.target));
-      const ledger = shared.ledger ? mergeMarks(readLedger(ledgerFile(root, options)), shared.ledger) : own;
+      const { usable, ignored } = usableMarks(shared, own);
+      const ledger = usable ? mergeMarks(readLedger(ledgerFile(root, options)), usable) : own;
       const stories = readStories(root, options);
       const retry = new Set(ctx.unwrittenFromLastRun);
       const items = [];
@@ -150,9 +151,15 @@ export function createAdapter(browser = {}, { env } = {}) {
         }
         items.push({ id, kind: "screen", route, release, page: SCREENS_PAGE, editable: options.editableScreens });
       }
-      const sentOnlyInVariable = sentOnlyInShared(own, shared.ledger, skipped);
-      plans.set(ctx, { variable: SHARED_LEDGER_VARIABLE, read: shared.status, sentOnlyInVariable: { count: sentOnlyInVariable.length, versions: sentOnlyInVariable } });
+      const sentOnlyInVariable = sentOnlyInShared(own, usable, skipped);
+      plans.set(ctx, {
+        variable: SHARED_LEDGER_VARIABLE,
+        read: shared.status,
+        sentOnlyInVariable: { count: sentOnlyInVariable.length, versions: sentOnlyInVariable },
+        ignoredInVariable: { count: ignored.length, versions: ignored },
+      });
       const warnings = shared.warning ? [shared.warning] : [];
+      if (ignored.length > 0) warnings.push(ignoredWarning(ignored));
       if (sentOnlyInVariable.length > 0) warnings.push(sentOnlyWarning(sentOnlyInVariable, "this run did not plan"));
       return { items, warnings };
     },

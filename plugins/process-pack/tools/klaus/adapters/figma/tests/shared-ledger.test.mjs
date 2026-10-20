@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
-import { ciRun, inventoryOf, newRepo, sharedRecord } from "./ci-fixture.mjs";
+import { ciRun, inventoryOf, KEY, newRepo, sharedRecord } from "./ci-fixture.mjs";
 
 const NAMES = ["Button", "Input", "Spinner", "Dialog", "Card", "Badge", "Tooltip", "Switch", "Table", "Tabs"];
 const FIRST = ["Button", "Input", "Spinner", "Dialog"];
@@ -67,6 +67,7 @@ test("a variable for another Figma file is not used", async () => {
 
 test("a version the variable marks changed is planned again, as a changed version in CI's own ledger would be", async () => {
   const root = newRepo();
+  await ciRun(root, { inventory });
   const run = await ciRun(root, { inventory, env: { KLAUS_FIGMA_LEDGER: sharedRecord(["Button"], { status: "changed" }) }, dryRun: true });
   assert.equal(run.output.planned, 10);
   assert.deepEqual(sharedWarnings(run.output), []);
@@ -116,4 +117,38 @@ test("a record that agrees with CI's own ledger adds no warning and no count", a
   assert.deepEqual(sharedWarnings(run.output), []);
   assert.deepEqual(run.output.adapter.details.sharedLedger.sentOnlyInVariable, { count: 0, versions: [] });
   assert.doesNotMatch(run.output.adapter.summary, /KLAUS_FIGMA_LEDGER/);
+});
+
+// ---------------------------------------------------------------------------------------------
+// The record only confirms versions CI's own ledger lists. A mark for any other version is ignored.
+// ---------------------------------------------------------------------------------------------
+
+test("a fictitious older version marked sent does not let a new component past newComponents none, and is named as ignored", async () => {
+  const root = newRepo();
+  const selection = { newComponents: { rule: "none" } };
+  // Button is established: CI generated 1.0.0 and the relay sent it. 1.1.0 is its current version.
+  mkdirSync(path.join(root, ".klaus/figma"), { recursive: true });
+  writeFileSync(path.join(root, ".klaus/figma/ledger.json"), JSON.stringify({ version: 2, components: { Button: { "1.0.0": "generated" } }, screens: {} }));
+  const entries = inventoryOf(["Button", "Secret"]).entries.map((entry) => ({ ...entry, version: "1.1.0" }));
+  const forged = JSON.stringify({ version: 2, fileKey: KEY, components: { Button: { "1.0.0": "sent" }, Secret: { "0.9.0": "sent" } }, screens: {} });
+  const run = await ciRun(root, { inventory: { schemaVersion: 1, folders: ["packages/ui"], entries }, selection, env: { KLAUS_FIGMA_LEDGER: forged }, dryRun: true });
+
+  assert.equal(run.output.planned, 1, "Secret is new, so newComponents none keeps it out");
+  const { sharedLedger } = run.output.adapter.details;
+  assert.deepEqual(sharedLedger.ignoredInVariable, { count: 1, versions: ["Secret 0.9.0"] });
+  const warning = sharedWarnings(run.output).find((w) => w.includes("never planned"));
+  assert.match(warning, /^KLAUS_FIGMA_LEDGER lists 1 version this ledger never planned; ignored: Secret 0\.9\.0\./);
+});
+
+test("a legitimate mark for a version CI generated still applies, and nothing is named as ignored", async () => {
+  const root = newRepo();
+  const selection = { newComponents: { rule: "none" } };
+  mkdirSync(path.join(root, ".klaus/figma"), { recursive: true });
+  writeFileSync(path.join(root, ".klaus/figma/ledger.json"), JSON.stringify({ version: 2, components: { Button: { "1.0.0": "generated" } }, screens: {} }));
+  const entries = inventoryOf(["Button"]).entries.map((entry) => ({ ...entry, version: "1.1.0" }));
+  const run = await ciRun(root, { inventory: { schemaVersion: 1, folders: ["packages/ui"], entries }, selection, env: { KLAUS_FIGMA_LEDGER: sharedRecord(["Button"]) }, dryRun: true });
+
+  assert.equal(run.output.planned, 1, "Button 1.0.0 was sent, so Button is established and 1.1.0 is planned");
+  assert.deepEqual(run.output.adapter.details.sharedLedger.ignoredInVariable, { count: 0, versions: [] });
+  assert.equal(sharedWarnings(run.output).some((w) => w.includes("never planned")), false);
 });

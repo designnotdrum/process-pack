@@ -247,6 +247,32 @@ test("reconcile names the versions it did not look for because the record alone 
 });
 
 // ---------------------------------------------------------------------------------------------
+// The record only confirms versions the relay's ledger or the release lists. Others are ignored.
+// ---------------------------------------------------------------------------------------------
+
+test("the relay ignores and names a mark for a version neither its ledger nor the release lists, and still applies a known one", async () => {
+  const { root, folder } = await generatedRepo();
+  // A fresh relay machine: no ledger of its own. The release lists Button and Card.
+  writeFileSync(path.join(root, ".klaus/figma/ledger.json"), JSON.stringify({ version: 2, components: {}, screens: {} }));
+  const run = await relay(root, [folder], { variable: record({ Button: { "1.0.0": "sent" }, Ghost: { "3.0.0": "sent" } }) });
+
+  assert.equal(run.code, 0, run.stderr);
+  assert.equal(run.calls.length, 1, "Button is in the release, so its mark applies and only Card is sent");
+  assert.deepEqual(sharedOf(run).ignoredInVariable, { count: 1, versions: ["Ghost 3.0.0"] });
+  assert.ok(warningsOf(run).some((w) => w.startsWith("KLAUS_FIGMA_LEDGER lists 1 version this ledger never planned; ignored: Ghost 3.0.0.")));
+  assert.deepEqual(JSON.parse(run.variable).components.Ghost, { "3.0.0": "sent" }, "it is carried forward: another machine may have sent it");
+});
+
+test("reconcile ignores and names a mark for a version neither its ledger nor the release lists", async () => {
+  const root = reconcileRepo({ components: { Button: { "1.0.0": "generated" } } });
+  const run = await relay(root, ["--reconcile"], { names: [], variable: record({ Ghost: { "3.0.0": "sent" } }) });
+
+  assert.equal(run.code, 0, run.stderr);
+  assert.deepEqual(sharedOf(run).ignoredInVariable, { count: 1, versions: ["Ghost 3.0.0"] });
+  assert.ok(warningsOf(run).some((w) => w.startsWith("KLAUS_FIGMA_LEDGER lists 1 version this ledger never planned; ignored: Ghost 3.0.0.")));
+});
+
+// ---------------------------------------------------------------------------------------------
 // A first load: CI writes data for every planned unit, the plugin applies it, reconcile records it.
 // ---------------------------------------------------------------------------------------------
 

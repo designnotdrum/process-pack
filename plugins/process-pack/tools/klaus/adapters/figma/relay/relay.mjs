@@ -43,7 +43,8 @@
  *
  * KLAUS_FIGMA_LEDGER, a repository Actions variable, holds the sent and changed marks of every relay
  * machine. The relay reads it with `gh variable get` before it plans and merges it into the ledger it
- * plans from, but never into its own ledger file. After a run that changed its ledger it writes both
+ * plans from, but never into its own ledger file. Its marks count only for the versions the relay's
+ * ledger or the release lists; the rest are ignored and named in the report. After a run that changed its ledger it writes both
  * sets of marks back with `gh variable set`, and the Klaus workflow passes the variable to the
  * generator, so CI stops planning what was sent (variable.mjs). A version only the variable marks
  * sent is named in the report with a warning, so a forged record shows on every run.
@@ -105,7 +106,7 @@ import { CHANGED, entrySent, entryStatus, GENERATED, generatedComponents, markGe
 import { MAX_CODE_CHARS, readOptions, relayCallTokens } from "../settings.mjs";
 import { decodeResult, FIGMA_SERVER, FIGMA_TOOL, keyIn, parseEvents, readCodeResult, relayTokens, resultText, summarizeEvents } from "./events.mjs";
 import { lookupPlan, readFound, reconcileCode } from "./reconcile.mjs";
-import { mergeMarks, SHARED_LEDGER_VARIABLE, sentOnlyInShared, sentOnlySentence, sentOnlyWarning } from "../shared-ledger.mjs";
+import { ignoredWarning, mergeMarks, SHARED_LEDGER_VARIABLE, sentOnlyInShared, sentOnlySentence, sentOnlyWarning, usableMarks } from "../shared-ledger.mjs";
 import { publishVariable, readVariable } from "./variable.mjs";
 
 /**
@@ -606,12 +607,21 @@ const readShared = (options, root, fileKey) => readVariable({ gh: options.gh ?? 
  * Publishes the sent and changed marks of the local ledger and of the variable as read at the start,
  * after a run that changed the local ledger, unless it was a dry run.
  * @param {string[]} sentOnlyInVariable  The versions only the variable marks sent, already warned about.
- * @returns {{ variable: string, read: string, published: boolean | null, bytes: number | null, sentOnlyInVariable: { count: number, versions: string[] } }}  For the report.
+ * @param {string[]} ignoredInVariable  The variable's marks for versions this side does not list, already warned about.
+ * @returns {{ variable: string, read: string, published: boolean | null, bytes: number | null, sentOnlyInVariable: object, ignoredInVariable: object }}  For the report.
  */
-function shareMarks({ options, root, fileKey, ledgerPath, shared, changed, warnings, sentOnlyInVariable }) {
-  const details = { variable: SHARED_LEDGER_VARIABLE, read: shared.status, published: null, bytes: null, sentOnlyInVariable: { count: sentOnlyInVariable.length, versions: sentOnlyInVariable } };
+function shareMarks({ options, root, fileKey, ledgerPath, shared, changed, warnings, sentOnlyInVariable, ignoredInVariable }) {
+  const details = {
+    variable: SHARED_LEDGER_VARIABLE,
+    read: shared.status,
+    published: null,
+    bytes: null,
+    sentOnlyInVariable: { count: sentOnlyInVariable.length, versions: sentOnlyInVariable },
+    ignoredInVariable: { count: ignoredInVariable.length, versions: ignoredInVariable },
+  };
   if (!changed || options.dryRun) return details;
-  // The local file holds this machine's marks only. The variable's are added here, so none is dropped.
+  // The local file holds this machine's marks only. All of the variable's are added here, also the
+  // ones this machine ignored, because another machine may have sent those versions.
   const ledger = readLedger(ledgerPath);
   if (shared.ledger) mergeMarks(ledger, shared.ledger);
   const outcome = publishVariable({ gh: options.gh ?? "gh", repo: options.repo, cwd: root, fileKey, ledger, read: shared });
@@ -650,9 +660,13 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
   const shared = readShared(options, root, fileKey);
   if (shared.warning) warnings.push(shared.warning);
   const own = readLedger(ledgerPath);
-  const ledger = shared.ledger ? mergeMarks(readLedger(ledgerPath), shared.ledger) : own;
-  // Anyone who can write a repository variable can write it, so a unit only it marks sent is named.
-  const sentOnlyInVariable = sentOnlyInShared(own, shared.ledger, Object.values(manifest.ledgerEntries ?? {}));
+  // Anyone who can write a repository variable can write it. Its marks count only for the versions
+  // this ledger or this release lists, and a unit only it marks sent is named.
+  const releaseEntries = Object.values(manifest.ledgerEntries ?? {});
+  const { usable, ignored: ignoredInVariable } = usableMarks(shared, own, releaseEntries);
+  const ledger = usable ? mergeMarks(readLedger(ledgerPath), usable) : own;
+  const sentOnlyInVariable = sentOnlyInShared(own, usable, releaseEntries);
+  if (ignoredInVariable.length > 0) warnings.push(ignoredWarning(ignoredInVariable));
   if (sentOnlyInVariable.length > 0) warnings.push(sentOnlyWarning(sentOnlyInVariable, "the relay did not send"));
   let ledgerChanged = false;
   const startedAt = now();
@@ -807,7 +821,7 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
-  const sharedLedger = shareMarks({ options, root, fileKey, ledgerPath, shared, changed: ledgerChanged, warnings, sentOnlyInVariable });
+  const sharedLedger = shareMarks({ options, root, fileKey, ledgerPath, shared, changed: ledgerChanged, warnings, sentOnlyInVariable, ignoredInVariable });
 
   // Screenshot uploads go through another tool, which the relay does not call yet.
   const uploads = (manifest.uploads ?? []).filter((upload) => !entrySent(ledger, manifest.ledgerEntries[upload.id] ?? { kind: "screen", route: upload.screen, release: upload.release }));
@@ -961,13 +975,16 @@ async function reconcileLedger(options, { settings, ledgerPath, root, manifest, 
   const shared = readShared(options, root, fileKey);
   if (shared.warning) warnings.push(shared.warning);
   const own = readLedger(ledgerPath);
-  const ledger = shared.ledger ? mergeMarks(readLedger(ledgerPath), shared.ledger) : readLedger(ledgerPath);
+  // The variable's marks count only for the versions this ledger or the release folder lists.
+  const { usable, ignored: ignoredInVariable } = usableMarks(shared, own, manifest ? Object.values(manifest.ledgerEntries ?? {}) : []);
+  if (ignoredInVariable.length > 0) warnings.push(ignoredWarning(ignoredInVariable));
+  const ledger = usable ? mergeMarks(readLedger(ledgerPath), usable) : readLedger(ledgerPath);
   // The component versions a release folder holds count as generated here too, unless a ledger has them as sent or changed.
   const fromManifest = manifest ? Object.values(manifest.ledgerEntries ?? {}).filter((entry) => entry.kind === "component").map(({ name, version }) => ({ kind: "component", name, version })) : [];
   for (const entry of fromManifest) recordEntry(ledger, entry, GENERATED);
   // The versions this checkout knows of that only the variable marks sent, so reconcile does not look for them.
   const known = [...Object.entries(own.components).flatMap(([name, versions]) => Object.keys(versions).map((version) => ({ kind: "component", name, version }))), ...fromManifest];
-  const sentOnlyInVariable = sentOnlyInShared(own, shared.ledger, known);
+  const sentOnlyInVariable = sentOnlyInShared(own, usable, known);
   if (sentOnlyInVariable.length > 0) warnings.push(sentOnlyWarning(sentOnlyInVariable, "reconcile did not look for"));
   const generated = generatedComponents(ledger);
   const { pages, looked, skipped } = lookupPlan(generated, settings.options);
@@ -1081,7 +1098,7 @@ async function reconcileLedger(options, { settings, ledgerPath, root, manifest, 
     warnings.push("The reconcile call alone needs more relay tokens than spendingCap.maxRelayTokens allows, so it will never be made at this cap. Raise the cap.");
   } else if (stopped) warnings.push(`The relay stopped before the call, which would pass the ${stopped}.`);
   for (const labelText of changedLabels) unitRecords.push({ id: labelText, kind: "component", status: "changed", note: "Not touched. Delete the set in Figma, then run the relay." });
-  const sharedLedger = shareMarks({ options, root, fileKey, ledgerPath, shared, changed: reconciled.length > 0, warnings, sentOnlyInVariable });
+  const sharedLedger = shareMarks({ options, root, fileKey, ledgerPath, shared, changed: reconciled.length > 0, warnings, sentOnlyInVariable, ignoredInVariable });
 
   // A call that ended without a token count is left out of actual tokens, as for a send. The cap counted its prediction.
   const actual = { calls: fileRecord && fileRecord.calls === 1 && !dryRun ? 1 : 0, tokens: callTokens ?? 0, usd: 0 };
