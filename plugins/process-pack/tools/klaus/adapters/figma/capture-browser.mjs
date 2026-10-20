@@ -63,7 +63,9 @@ export function readStory(arg) {
 
   function read({ candidates, withTokens, maxDepth, maxNodes, rootSelector = "#storybook-root", useHost = false, bind = true }) {
     const host = document.querySelector(rootSelector);
-    const rootElement = host ? (useHost ? host : host.firstElementChild) : null;
+    // A story's root can start with a <style> or <script>; the component is the first child that draws.
+    const notDrawn = ["STYLE", "SCRIPT", "LINK", "META", "TEMPLATE", "NOSCRIPT"];
+    const rootElement = host ? (useHost ? host : [...host.children].find((el) => !notDrawn.includes(el.tagName))) : null;
     if (!rootElement) return { error: `Nothing was drawn inside ${rootSelector}.` };
 
     const canvas = document.createElement("canvas");

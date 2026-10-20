@@ -14,6 +14,9 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { findIcons, listCustomProperties, readStory } from "./capture-browser.mjs";
 
+/** Root children that draw nothing. A story's root can start with one, so they are skipped. */
+const NOT_DRAWN = ["STYLE", "SCRIPT", "LINK", "META", "TEMPLATE", "NOSCRIPT"];
+
 const TYPES = {
   ".html": "text/html",
   ".js": "text/javascript",
@@ -175,7 +178,17 @@ export async function openStorybook({ root, directory, globals }) {
         const parameter = argsParam(args);
         if (parameter) query.push(`args=${parameter}`);
         await page.goto(`http://127.0.0.1:${port}/iframe.html?${query.join("&")}`);
-        await page.waitForSelector("#storybook-root > *, .sb-show-errordisplay", { timeout: 30000 });
+        // A story can put a <style> or <script> first in the root. waitForSelector would wait for
+        // that first match to become visible, which never happens, so wait for any drawn child.
+        await page.waitForFunction(
+          (skip) => {
+            if (document.body.classList.contains("sb-show-errordisplay")) return true;
+            const root = document.querySelector("#storybook-root");
+            return [...(root?.children ?? [])].some((el) => !skip.includes(el.tagName) && el.getClientRects().length > 0);
+          },
+          NOT_DRAWN,
+          { timeout: 30000 },
+        );
         if (await page.evaluate(() => document.body.classList.contains("sb-show-errordisplay"))) {
           const message = await page.evaluate(() => document.querySelector(".sb-errordisplay")?.textContent?.slice(0, 300) ?? "");
           throw new Error(`The story ${id} failed to render: ${message.trim()}`);
@@ -249,10 +262,13 @@ export async function captureComponent(storybook, request) {
       const combination = combos[0].slice();
       combination[checked] = value;
       await storybook.show(id, argsFor(combination));
-      return page.evaluate(() => {
-        const element = document.querySelector("#storybook-root")?.firstElementChild;
-        return element ? `${element.className}|${getComputedStyle(element).backgroundColor}|${element.getBoundingClientRect().width}` : "";
-      });
+      // The whole drawn markup, not only the outer element: a story decorator often wraps the
+      // component in a box that looks the same whatever the args. Ids are left out, because a
+      // generated id may differ between two loads of the same story.
+      return page.evaluate((skip) => {
+        const drawn = [...(document.querySelector("#storybook-root")?.children ?? [])].filter((el) => !skip.includes(el.tagName));
+        return drawn.map((el) => el.outerHTML.replace(/\s(?:id|for|aria-[a-z]+)="[^"]*"/g, "")).join("");
+      }, NOT_DRAWN);
     };
     try {
       const [a, b] = [await probe(allAxes[checked].values[0]), await probe(allAxes[checked].values[1])];
