@@ -6,7 +6,7 @@ import { BUILD_OUTPUT_DIRS, isInside, toPosix } from './files.mjs'
  *
  * The compiler writes a type that is not in scope where it is printed as `import("<file>").Name`,
  * and `<file>` is the absolute path it loaded the file from, such as
- * `import("/Users/me/repo/node_modules/.pnpm/@types+react@19.2.17/node_modules/@types/react/index").ReactNode`.
+ * `import("<checkout>/node_modules/.pnpm/@types+react@19.2.17/node_modules/@types/react/index").ReactNode`.
  * That path would put the checkout's place on disk, often a home folder, into the inventory, and
  * two checkouts of one commit would print different types. Each such path is rewritten:
  *
