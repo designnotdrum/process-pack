@@ -52,19 +52,94 @@ function snapshot(repo) {
   return found
 }
 
-test('a callback prop that returns a promise gets a stub that returns one, and the story compiles', () => {
+const storyText = (inventory, item) => renderStory({ entry: inventory.entries.find((e) => e.name === item.name), importPath: item.importPath, isDefault: item.isDefault, framework: item.framework, typed: item.typed, args: item.args, spy: item.spy })
+
+/** Writes every story the plan would write beside its component, as the run does. */
+function writeStoriesOf({ inventory, stories }) {
+  for (const item of stories.items.filter((i) => i.status === 'write')) fs.writeFileSync(path.join(sample.repo, item.storyFile), storyText(inventory, item))
+}
+
+/**
+ * A Storybook test package in the fixture's node_modules, with only the `fn` that stories use:
+ * `storybook/test` as Storybook 9 and later ship it, or `@storybook/test` as Storybook 8 does.
+ */
+function installTestPackage(spec) {
+  const nine = spec === 'storybook/test'
+  const dir = path.join(sample.repo, 'node_modules', ...(nine ? ['storybook'] : ['@storybook', 'test']))
+  fs.mkdirSync(dir, { recursive: true })
+  const pkg = nine ? { name: 'storybook', version: '9.0.0', exports: { './test': { types: './test.d.ts' } } } : { name: '@storybook/test', version: '8.6.0', types: './index.d.ts' }
+  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(pkg))
+  fs.writeFileSync(path.join(dir, nine ? 'test.d.ts' : 'index.d.ts'), 'type Procedure = (...args: any[]) => any\nexport declare function fn<T extends Procedure = Procedure>(implementation?: T): T & { mock: { calls: unknown[][] } }\n')
+}
+
+// Lint flags an empty function (no-empty-function), and an async function with nothing to await (require-await).
+const EMPTY_FUNCTION = /=>\s*\{\s*\}/
+const ASYNC_WITH_NO_AWAIT = /async \(\) => (?!\{[^}]*await)/
+
+test('a sync and an async function prop each get a handler with a body, never an empty function, and the story compiles', () => {
   const { ts, inventory, stories } = plan()
   const field = byName(stories, 'AsyncField')
   assert.equal(field.status, 'write')
-  const textOf = (item) => renderStory({ entry: inventory.entries.find((e) => e.name === item.name), importPath: item.importPath, isDefault: item.isDefault, framework: item.framework, typed: item.typed, args: item.args })
-  const text = textOf(field)
-  assert.match(text, /onSave: async \(\) => \{\}/)
-  assert.match(text, /load: async \(\) => \[\]/)
+  const text = storyText(inventory, field)
+  assert.doesNotMatch(text, EMPTY_FUNCTION)
+  assert.doesNotMatch(text, ASYNC_WITH_NO_AWAIT)
+  assert.equal(field.spy, null, 'the fixture has no Storybook test package')
+  assert.match(text, /onChange: \(\) => \{ \/\* Nothing happens in a story\. \*\/ \}/)
+  assert.match(text, /onSave: \(\) => Promise\.resolve\(\)/)
+  assert.match(text, /load: \(\) => Promise\.resolve\(\[\]\)/)
   assert.match(text, /format: \(\) => 'Sample'/)
+  assert.doesNotMatch(text, /\bfn\b/)
 
   // Written for real beside the component, the whole package compiles as `tsc -p` would read it.
-  for (const item of stories.items.filter((i) => i.status === 'write')) fs.writeFileSync(path.join(sample.repo, item.storyFile), textOf(item))
+  writeStoriesOf({ inventory, stories })
   assert.deepEqual(errorsOf(ts, path.join(sample.repo, 'packages/ui/tsconfig.json')), [])
+})
+
+for (const spec of ['storybook/test', '@storybook/test']) {
+  test(`with ${spec} in the repo, a handler is Storybook's fn(), and the story compiles`, () => {
+    installTestPackage(spec)
+    const { ts, inventory, stories } = plan()
+    const field = byName(stories, 'AsyncField')
+    assert.equal(field.status, 'write')
+    assert.equal(field.spy, spec)
+    const text = storyText(inventory, field)
+    assert.match(text, new RegExp(`^import type \\{ Meta, StoryObj \\} from '@storybook/react'\\nimport \\{ fn \\} from '${spec}'\\nimport \\{ AsyncField \\} from '\\./AsyncField'\\n`))
+    assert.match(text, /onChange: fn\(\)/)
+    assert.match(text, /onSave: fn\(\(\) => Promise\.resolve\(\)\)/)
+    // A function that computes a value stays a plain function, so the value keeps the type the prop asks for.
+    assert.match(text, /load: \(\) => Promise\.resolve\(\[\]\)/)
+    assert.match(text, /format: \(\) => 'Sample'/)
+    assert.doesNotMatch(text, EMPTY_FUNCTION)
+    assert.doesNotMatch(text, ASYNC_WITH_NO_AWAIT)
+    // A story with no function to fill imports no fn.
+    assert.doesNotMatch(storyText(inventory, byName(stories, 'Badge')), /\bfn\b/)
+
+    writeStoriesOf({ inventory, stories })
+    assert.deepEqual(errorsOf(ts, path.join(sample.repo, 'packages/ui/tsconfig.json')), [])
+  })
+}
+
+test('a story in a separate stories folder that imports the component through nested index files counts, and no second story is written', () => {
+  const src = path.join(sample.repo, 'packages/ui/src')
+  fs.mkdirSync(path.join(src, 'components/forms'), { recursive: true })
+  fs.mkdirSync(path.join(src, 'stories/forms'), { recursive: true })
+  for (const name of ['Tray', 'Shelf']) fs.writeFileSync(path.join(src, `components/forms/${name}.tsx`), `export interface ${name}Props {\n  label: string\n}\n\nexport function ${name}({ label }: ${name}Props) {\n  return <span>{label}</span>\n}\n`)
+  fs.writeFileSync(path.join(src, 'components/forms/index.ts'), "export * from './Tray'\nexport * from './Shelf'\n")
+  fs.writeFileSync(path.join(src, 'components/index.ts'), "export * from './forms'\n")
+  // `../../components` is a folder, so it resolves to its index file, which re-exports the index of a sub-folder.
+  fs.writeFileSync(path.join(src, 'stories/forms/Tray.stories.tsx'), "import { Tray } from '../../components'\n\nexport default { component: Tray }\n")
+  // A story that draws a screen from a namespace import is not a story of every part the barrel re-exports.
+  fs.writeFileSync(path.join(src, 'stories/Screen.stories.tsx'), "import * as UI from '../components'\n\nexport default { component: UI.Shelf }\n")
+
+  let { stories } = plan()
+  assert.equal(byName(stories, 'Tray').status, 'exists')
+  assert.equal(stories.items.some((i) => i.storyFile === 'packages/ui/src/components/forms/Tray.stories.tsx'), false, 'no second story for Tray')
+  assert.equal(byName(stories, 'Shelf').status, 'write')
+
+  // A namespace import counts for the component the story file is named for.
+  fs.writeFileSync(path.join(src, 'stories/forms/Shelf.stories.tsx'), "import * as UI from '../../components'\n\nexport default { component: UI.Shelf }\n")
+  ;({ stories } = plan())
+  assert.equal(byName(stories, 'Shelf').status, 'exists')
 })
 
 test('the fixture reproduces the bug: a plain () => {} for a promise callback does not compile', () => {

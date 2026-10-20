@@ -102,7 +102,7 @@ export function storyFiles(plan, inventory, docs) {
   const captureOf = new Map((inventory.screens ?? []).map((s) => [s.route, s.screenshot]))
   const files = []
   const items = plan.stories.items.map((item) => {
-    if (item.status === 'write') files.push({ rel: item.storyFile, text: renderStory({ entry: byId.get(item.id), importPath: item.importPath, isDefault: item.isDefault, framework: item.framework ?? plan.stories.framework, typed: item.typed, args: item.args }) })
+    if (item.status === 'write') files.push({ rel: item.storyFile, text: renderStory({ entry: byId.get(item.id), importPath: item.importPath, isDefault: item.isDefault, framework: item.framework ?? plan.stories.framework, typed: item.typed, args: item.args, spy: item.spy }) })
     if (item.status !== 'data-bound') return item
     const screens = byId.get(item.id).usedIn
     return { ...item, screens, capture: screens.map((s) => captureOf.get(s)).find(Boolean) ?? null }
