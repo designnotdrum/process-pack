@@ -19,6 +19,14 @@ test('an added line has no before, and a removed line has no after', () => {
   assert.deepEqual(lineRewrites('a.ts', text('one', 'two', 'three'), text('one', 'three')), [{ rel: 'a.ts', line: 2, before: 'two', after: null }])
 })
 
+test('lines removed from one place are separate rewrites that share the line they were removed before', () => {
+  assert.deepEqual(lineRewrites('a.ts', text('keep', 'x', 'y', 'z', 'end'), text('keep', 'end')), [
+    { rel: 'a.ts', line: 2, before: 'x', after: null },
+    { rel: 'a.ts', line: 2, before: 'y', after: null },
+    { rel: 'a.ts', line: 2, before: 'z', after: null },
+  ])
+})
+
 test('separate places are separate rewrites, in file order, and a block that changes size is paired line by line', () => {
   const written = text('a', 'b', 'c', 'd', 'e', 'f')
   const committed = text('a', 'B', 'c', 'd', 'e1', 'e2', 'e3')

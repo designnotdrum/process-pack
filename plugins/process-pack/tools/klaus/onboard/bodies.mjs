@@ -5,6 +5,7 @@
 import { summarize } from '../inventory/inventory.mjs'
 import { whatHappens } from './duplicates.mjs'
 import { renderComparison } from './estimate.mjs'
+import { countByFile } from './hook-rewrites.mjs'
 
 const MAX_ROWS = 60
 const code = (text) => `\`${String(text).replace(/`/g, "'")}\``
@@ -78,7 +79,8 @@ const MAX_LINE_SHOWN = 200
 /** A line of the repo as an inline code span that keeps its text exactly, even when it holds backticks. */
 function exactLine(text) {
   if (text === null) return null
-  if (text.trim() === '') return '(a blank line)'
+  if (text === '') return '(an empty line)'
+  if (text.trim() === '') return '(a line of only spaces or tabs)'
   const clean = text.replace(/\r/g, '')
   const shown = clean.length > MAX_LINE_SHOWN ? `${clean.slice(0, MAX_LINE_SHOWN)} (cut here, ${clean.length - MAX_LINE_SHOWN} more characters)` : clean
   const longest = Math.max(0, ...(shown.match(/`+/g) ?? []).map((run) => run.length))
@@ -86,7 +88,7 @@ function exactLine(text) {
   return longest === 0 ? `${fence}${shown}${fence}` : `${fence} ${shown} ${fence}`
 }
 
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
+export const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
 
 /**
  * The section that names the lines the repo's commit hook rewrote in this pull request's commit
@@ -96,11 +98,13 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
 function hookRewrites(state, step) {
   const found = state.hookRewrites?.[step] ?? []
   if (found.length === 0) return []
-  const files = new Set(found.map((r) => r.rel)).size
+  const files = countByFile(found).length
   const shown = found.slice(0, MAX_REWRITES_SHOWN)
+  // A removed line is not in the committed file, so it is placed by the line it followed.
+  const where = (r) => (r.after !== null ? `line ${r.line}` : r.line > 1 ? `removed after line ${r.line - 1}` : 'removed at the start of the file')
   const lineOf = (r) => {
     const spacing = r.before !== null && r.after !== null && r.before.replace(/\s+/g, '') === r.after.replace(/\s+/g, '') ? ', only the spacing changed' : ''
-    return [`- ${code(r.rel)}, line ${r.line}${spacing}:`, `  - before: ${exactLine(r.before) ?? '(no line)'}`, `  - after: ${exactLine(r.after) ?? '(the line was removed)'}`]
+    return [`- ${code(r.rel)}, ${where(r)}${spacing}:`, `  - before: ${exactLine(r.before) ?? '(no line)'}`, `  - after: ${exactLine(r.after) ?? '(the line was removed)'}`]
   }
   return [
     "## Lines the repo's commit hook rewrote",

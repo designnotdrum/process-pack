@@ -15,7 +15,7 @@ const checker = async () => ({ ok: true, status: 200, json: async () => ({ choic
 /**
  * A pre-commit hook that rewrites code, as `oxlint --fix` run by lint-staged does. HOOK_MODE picks
  * what it does. `rewrite` changes one line of PrimaryButton.tsx, outside any comment, and stages the
- * file again. `many` adds a code span to the end of every line of every component file. `none` changes nothing. A hook run is logged, so a test can tell the hook was not skipped.
+ * file again. `remove` deletes that line. `many` adds a code span to the end of every line of every component file. `none` changes nothing. A hook run is logged, so a test can tell the hook was not skipped.
  */
 const HOOK = `#!/bin/sh
 echo hook >> "$HOOK_RUNS_LOG"
@@ -25,6 +25,12 @@ case "$HOOK_MODE" in
       sed 's|$| // \`x\`|' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
       git add "$file"
     done ;;
+  remove)
+    file=packages/ui/src/PrimaryButton.tsx
+    if git diff --cached --name-only | grep -q -x "$file"; then
+      sed '/^      disabled={disabled}$/d' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+      git add "$file"
+    fi ;;
   rewrite)
     file=packages/ui/src/PrimaryButton.tsx
     if git diff --cached --name-only | grep -q -x "$file"; then
@@ -73,10 +79,11 @@ const run = async (extra = {}) => {
 
 const ghEntries = () => fs.readFileSync(logs.gh, 'utf8').trim().split('\n').map((l) => JSON.parse(l))
 /** The body of a pull request as the run first opened it, and as it left it after the last edit. */
-const bodies = (number) => ({
-  created: ghEntries().find((e) => e.action === 'create' && e.number === number).body,
-  final: ghEntries().filter((e) => e.action === 'edit' && e.number === number).at(-1).body,
-})
+const bodies = (number) => {
+  const edits = ghEntries().filter((e) => e.action === 'edit' && e.number === number)
+  assert.ok(edits.length > 0, `the run edited pull request ${number}, but the gh log has no edit for it`)
+  return { created: ghEntries().find((e) => e.action === 'create' && e.number === number).body, final: edits.at(-1).body }
+}
 const HEADING = "## Lines the repo's commit hook rewrote"
 
 test('a line the commit hook rewrites outside the comment is named in the pull request body, and the report counts it', async () => {
@@ -132,7 +139,7 @@ test('a hook that rewrites many lines is listed up to a limit, with the rest cou
   const second = report.hookRewrites.find((r) => r.step === 2)
   assert.equal(second.count, total)
   assert.deepEqual(second.files.map((f) => f.rel).sort(), files)
-  assert.deepEqual(second.files.map((f) => [f.rel, f.count]).sort(), files.map((f) => [f, lineCount(f)]).sort())
+  assert.deepEqual(Object.fromEntries(second.files.map((f) => [f.rel, f.count])), Object.fromEntries(files.map((f) => [f, lineCount(f)])))
   assert.deepEqual(report.hookRewrites.filter((r) => r.step !== 2).map((r) => r.count), [0, 0])
 
   const body = bodies(2).final
@@ -140,4 +147,13 @@ test('a hook that rewrites many lines is listed up to a limit, with the rest cou
   assert.ok(body.includes(`rewrote ${total} lines in 4 files`), body)
   assert.ok(body.includes(`\n${total - 40} more are not listed here.\n`), body)
   assert.ok(body.includes("  - after: `` import type { ReactNode } from 'react' // `x` ``"), body)
+  assert.ok(body.includes('  - before: (an empty line)'), 'a blank line is named as one')
+})
+
+test('a line the hook removes is placed by the line it followed, since it is not in the committed file', async () => {
+  process.env.HOOK_MODE = 'remove'
+  const { report } = await run()
+  const body = bodies(2).final
+  assert.ok(body.includes('- `packages/ui/src/PrimaryButton.tsx`, removed after line 17:\n  - before: `      disabled={disabled}`\n  - after: (the line was removed)'), body)
+  assert.deepEqual(report.hookRewrites.map((r) => r.count), [0, 1, 0])
 })

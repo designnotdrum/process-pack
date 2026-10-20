@@ -110,8 +110,8 @@ export function changedHunks(before, after) {
 /**
  * One entry for each line the hook rewrote in a file: { rel, line, before, after }.
  * `line` counts from 1 in the committed file. A changed line has both texts. A line the hook added
- * has no `before` (null), and a line it removed has no `after` (null), where `line` is the line
- * that now follows the removed one. In a place where the hook replaced some lines with a different
+ * has no `before` (null). A line it removed has no `after` (null), and its `line` is the one that
+ * follows the place it was removed from, which is past the last line when it was the last. In a place where the hook replaced some lines with a different
  * number of lines, the old and new lines are paired in order and the rest are additions or removals.
  */
 export function lineRewrites(rel, written, committed) {
@@ -119,6 +119,8 @@ export function lineRewrites(rel, written, committed) {
   const rewrites = []
   for (const hunk of changedHunks(written.split('\n'), committed.split('\n'))) {
     const count = Math.max(hunk.removed.length, hunk.added.length)
+    // Lines removed from one place all get the same `line`: they were one run of lines, and the
+    // committed file has no line numbers of its own for them. The body shows "removed after line N" for each.
     for (let i = 0; i < count; i++) rewrites.push({ rel, line: hunk.at + Math.min(i, hunk.added.length), before: hunk.removed[i] ?? null, after: hunk.added[i] ?? null })
   }
   return rewrites

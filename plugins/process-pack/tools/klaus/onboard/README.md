@@ -72,7 +72,7 @@ A hook that fixes what it finds (a linter with an autofix, a formatter) changes 
 
 After each commit the run compares every text file in it with the text the run wrote. The run wrote each whole file, so every line that differs was added, changed or removed by the hook. The run does not undo these changes and does not skip the hook. A line the hook changed has a before and an after. A line it added has no before, and a line it removed has no after. Where the hook replaced some lines with a different number of lines, the old and new lines are paired in order and the rest count as added or removed.
 
-The pull request body gets a section, "Lines the repo's commit hook rewrote", placed after the first paragraph. It gives the count and, for each line, the file, the line number in the committed file, and the two texts as code. It lists the first 40 and says how many more are not listed. A hook that rewrote nothing adds no section. The run prints the count after the commit, and the summary repeats it for each pull request.
+The pull request body gets a section, "Lines the repo's commit hook rewrote", placed after the first paragraph. It gives the count and, for each line, the file, the line number in the committed file, and the two texts as code. A removed line is not in the committed file, so it is placed by the line it followed. It lists the first 40 and says how many more are not listed. A hook that rewrote nothing adds no section. The run prints the count after the commit, and the summary repeats it for each pull request.
 
 The report records `hookRewrites`: for each pull request the run made, its `step`, the `count` of lines, and the count for each of its `files`. The count is 0 when the hook rewrote nothing.
 

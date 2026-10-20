@@ -33,7 +33,7 @@ import { toPosix } from '../inventory/files.mjs'
 import { buildInventory } from '../inventory/inventory.mjs'
 import { renderMarkdown } from '../inventory/markdown.mjs'
 import { pickVersions, readCaptures } from '../version/version.mjs'
-import { listBody, purposesBody, renderPurposesView, renderStoriesView, renderSummary, storiesBody } from './bodies.mjs'
+import { listBody, plural, purposesBody, renderPurposesView, renderStoriesView, renderSummary, storiesBody } from './bodies.mjs'
 import { readOnboardingConfig } from './config.mjs'
 import { decisionPairs, decisionPictureName } from './decisions.mjs'
 import { attachDecisionPictures, decisionFiles, mergedPictureFiles } from './decisions-pictures.mjs'
@@ -357,15 +357,16 @@ export async function runOnboarding(options) {
    * Commits a step's files, then names the lines the repo's commit hook rewrote in the commit:
    * the hook may change the staged files, and the pull request has to say what Klaus did not write.
    */
-  const commitStep = (step, options) => {
-    const sha = commit(repo, options)
-    const written = new Map(options.paths.filter((p) => wroteText.has(p)).map((p) => [p, wroteText.get(p)]))
+  const commitStep = (step, commitOptions) => {
+    const written = new Map(commitOptions.paths.filter((p) => wroteText.has(p)).map((p) => [p, wroteText.get(p)]))
+    // Cleared before the commit, so a commit that fails leaves nothing for the next one.
     wroteText.clear()
+    const sha = commit(repo, commitOptions)
     const rewrites = findHookRewrites({ repo, commit: sha, written })
     state.hookRewrites[step] = rewrites
     if (rewrites.length > 0) {
       const files = countByFile(rewrites).length
-      log(`The repo's commit hook rewrote ${rewrites.length} ${rewrites.length === 1 ? 'line' : 'lines'} in ${files} ${files === 1 ? 'file' : 'files'} in the commit for pull request ${step}. Klaus did not undo them, and the pull request names them.`)
+      log(`The repo's commit hook rewrote ${plural(rewrites.length, 'line')} in ${plural(files, 'file')} in the commit for pull request ${step}. Klaus did not undo them, and the pull request names them.`)
     }
     return sha
   }
