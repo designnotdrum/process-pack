@@ -133,14 +133,14 @@ test('a merged first pull request that the plan no longer writes is refused with
   // The estimate lists what a refresh would change, says the approval covers it, and prints the command with --refresh.
   const { text, estimated } = await estimateCommand()
   assert.match(text, /The run would refuse to start\. The first pull request's files are on main, but not as this plan writes them/)
-  assert.match(text, /With --refresh the run does not refuse\. It makes the first pull request again as a refresh: a pull request cut from main, titled with "\(refresh\)", that holds only the files below as this plan writes them now\. The second and third are stacked on it\./)
+  assert.ok(text.includes(`With --refresh the run does not refuse. It makes the first pull request again as a refresh: a pull request from the branch ${REFRESH}, cut from main and titled "Klaus onboarding 1 of 3 (refresh): the list of components at 1.0.0, and the duplicates", that holds only the files below as this plan writes them now. The second and third are stacked on it.`), text)
   assert.match(text, /A refresh would change 4 files:/)
   assert.ok(text.includes(`- inventory.json: changed, at entries[${button}].props[0].type (Button in packages/ui/src/Button.tsx) the plan writes "ReactNode", and it holds "import(\\"react/dist/index\\").ReactNode"`), text)
   assert.match(text, /- docs\/klaus\/duplicates\.md: changed, it has more text at the end/)
   assert.ok(text.includes(`- ${TICKET}: added`), text)
   assert.ok(text.includes(`- ${OLD_TICKET}: removed, no pair needs it now`), text)
   assert.doesNotMatch(text, /- INVENTORY\.md|tickets\/README\.md/)
-  assert.match(text, /The decisions list and its pictures are drawn again when the run makes the refresh, and are in it where they differ from main\./)
+  assert.match(text, /The decisions list and its pictures are drawn again when the run makes the refresh, and are in it where they differ from main\. A picture on main that the run does not draw again is removed\./)
   assert.match(text, new RegExp(`Approving the plan with --approve ${estimated.id} approves this refresh too\\.`))
   assert.ok(text.endsWith(`To run it with the refresh: onboard.mjs run --repo ${sample.repo} --approve ${estimated.id} --refresh`), text)
 

@@ -27,6 +27,13 @@ import { isDeepStrictEqual } from 'node:util'
 import { staleDecisionFiles } from './decisions-pictures.mjs'
 import { git } from './git.mjs'
 
+/**
+ * The branch and title of a refresh of the first pull request. The branch is its own, so the merged
+ * one's branch is never pushed over. They are here so the estimate can name them as the run uses them.
+ */
+export const REFRESH_BRANCH = 'klaus/onboarding-1-list-refresh'
+export const REFRESH_TITLE = 'Klaus onboarding 1 of 3 (refresh): the list of components at 1.0.0, and the duplicates'
+
 const collapse = (text) => text.replace(/\s+/g, ' ').trim()
 const MAX_SHOWN = 160
 const show = (value) => {

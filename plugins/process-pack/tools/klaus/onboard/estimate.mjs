@@ -9,6 +9,7 @@
 import { checkerPrompt, isCheckable, readPrice } from './checker.mjs'
 import { countDuplicates } from './duplicates.mjs'
 import { checkerContext } from './source.mjs'
+import { REFRESH_BRANCH, REFRESH_TITLE } from './stages.mjs'
 import { writerPrompt } from './writer.mjs'
 
 /**
@@ -199,10 +200,10 @@ function renderRefresh(estimate) {
   // An added file has nothing to compare. A changed one shows the first place it differs, and a removed one why it goes.
   const why = (c) => (c.change === 'added' ? '' : `, ${c.why}`)
   return [
-    `    With --refresh the run does not refuse. It makes the first pull request again as a refresh: a pull request cut from ${base}, titled with "(refresh)", that holds only the files below as this plan writes them now. The second and third are stacked on it.`,
+    `    With --refresh the run does not refuse. It makes the first pull request again as a refresh: a pull request from the branch ${REFRESH_BRANCH}, cut from ${base} and titled "${REFRESH_TITLE}", that holds only the files below as this plan writes them now. The second and third are stacked on it.`,
     `    A refresh would change ${plural(changes.length, 'file')}${changes.length > 0 ? ':' : '.'}`,
     ...changes.map((c) => `    - ${c.rel}: ${c.change}${why(c)}`),
-    ...(redrawn ? [`    The decisions list and its pictures are drawn again when the run makes the refresh, and are in it where they differ from ${base}.`] : []),
+    ...(redrawn ? [`    The decisions list and its pictures are drawn again when the run makes the refresh, and are in it where they differ from ${base}. A picture on ${base} that the run does not draw again is removed.`] : []),
     `    Approving the plan with --approve ${estimate.id} approves this refresh too. If the files a refresh would change are no longer these, the run refuses it until the estimate is made again.`,
   ]
 }

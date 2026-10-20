@@ -45,7 +45,7 @@ import { buildPlan } from './plan.mjs'
 import { mkdirPlain, removePlainFile, writePlainFile } from './plain-path.mjs'
 import { obtainPurposes, savedWork } from './purposes-stage.mjs'
 import { createResultStore } from './results.mjs'
-import { findMerged, refreshChanges } from './stages.mjs'
+import { findMerged, REFRESH_BRANCH, REFRESH_TITLE, refreshChanges } from './stages.mjs'
 import { renderStory } from './stories.mjs'
 import { applyPurposes } from './verify.mjs'
 
@@ -57,9 +57,7 @@ export const TITLES = Object.freeze([
   'Klaus onboarding 2 of 3: purpose comments, written and then checked',
   'Klaus onboarding 3 of 3: stories for components that have none',
 ])
-/** The branch and title of a refresh of the first pull request. A branch of its own, so the merged one's branch is never pushed over. */
-export const REFRESH_BRANCH = 'klaus/onboarding-1-list-refresh'
-export const REFRESH_TITLE = 'Klaus onboarding 1 of 3 (refresh): the list of components at 1.0.0, and the duplicates'
+export { REFRESH_BRANCH, REFRESH_TITLE }
 
 /** Where the run keeps its own files, inside the git folder so the working tree stays clean. */
 export const workFolder = (repo) => path.join(gitDir(repo), 'klaus-onboarding')
@@ -218,6 +216,10 @@ export async function earlierRuns({ repo, plan, onboarding, captures, base = cur
  * Refuses a refresh the estimate did not list. The plan id does not cover what is on the default
  * branch, so --approve covers a refresh only when the estimate listed the same changes. The decisions
  * list and its pictures are left out: the estimate cannot draw them, and says the run draws them again.
+ *
+ * Only the set of files and the kind of each change are held, not the first place a file differs.
+ * What the refresh writes is the plan's text, which the plan id approves. The default branch decides
+ * only which files are in the refresh, and each one is shown in a pull request before anything merges.
  */
 function holdRefreshToEstimate({ estimate, approve, changes }) {
   const approved = estimate.earlier?.refreshFiles?.changes
