@@ -152,3 +152,22 @@ test("a legitimate mark for a version CI generated still applies, and nothing is
   assert.deepEqual(run.output.adapter.details.sharedLedger.ignoredInVariable, { count: 0, versions: [] });
   assert.equal(sharedWarnings(run.output).some((w) => w.includes("never planned")), false);
 });
+
+test("a record with toString, constructor and __proto__ as versions and as component names is ignored and named, and lets no new component past newComponents none", async () => {
+  const root = newRepo();
+  const selection = { newComponents: { rule: "none" } };
+  // CI generated Secret 1.1.0 once, and no version of it was ever sent, so it is new.
+  mkdirSync(path.join(root, ".klaus/figma"), { recursive: true });
+  writeFileSync(path.join(root, ".klaus/figma/ledger.json"), JSON.stringify({ version: 2, components: { Secret: { "1.1.0": "generated" } }, screens: {} }));
+  const entries = inventoryOf(["Secret"]).entries.map((entry) => ({ ...entry, version: "1.1.0" }));
+  // Raw JSON text, so __proto__ is a key of its own, as JSON.parse makes it.
+  const forged = `{"version":2,"fileKey":"${KEY}","components":{"Secret":{"toString":"sent","constructor":"sent","__proto__":"sent"},"toString":{"1.0.0":"sent"},"constructor":{"1.0.0":"sent"},"__proto__":{"1.0.0":"sent"}},"screens":{}}`;
+  const run = await ciRun(root, { inventory: { schemaVersion: 1, folders: ["packages/ui"], entries }, selection, env: { KLAUS_FIGMA_LEDGER: forged }, dryRun: true });
+
+  assert.equal(run.output.planned, 0, "Secret is still new, so newComponents none keeps it out");
+  const ignored = ["Secret toString", "Secret constructor", "Secret __proto__", "toString 1.0.0", "constructor 1.0.0", "__proto__ 1.0.0"].sort();
+  assert.deepEqual(run.output.adapter.details.sharedLedger.ignoredInVariable, { count: 6, versions: ignored });
+  const warning = sharedWarnings(run.output).find((w) => w.includes("never planned"));
+  assert.match(warning, /^KLAUS_FIGMA_LEDGER lists 6 versions this ledger never planned; ignored: /);
+  assert.deepEqual(run.output.adapter.details.sharedLedger.sentOnlyInVariable, { count: 0, versions: [] });
+});

@@ -96,7 +96,14 @@ export function readLedger(file) {
   return { version: LEDGER_VERSION, components: cleanTable(ledger.components), screens: cleanTable(ledger.screens) };
 }
 
-const ownEntry = (table, key) => (Object.hasOwn(table, key) ? table[key] : undefined);
+/**
+ * The table's own value for a key, or undefined. A name or version comes from data, and a plain
+ * lookup would find "toString", "constructor" or "__proto__" on Object.prototype.
+ */
+const ownEntry = (table, key) => (table !== null && typeof table === "object" && Object.hasOwn(table, key) ? table[key] : undefined);
+
+/** The status a table holds for one version of one name, through own properties only. */
+const statusIn = (table, key, version) => ownEntry(ownEntry(table, key), version);
 
 function mark(table, key, value, status) {
   const entry = ownEntry(table, key) ?? {};
@@ -112,8 +119,8 @@ export const recordComponent = (ledger, name, version, status = GENERATED) => ma
 export const recordScreen = (ledger, route, release, status = GENERATED) => mark(ledger.screens, route, release, status);
 
 /** True when the relay has sent this version. A generated version is not in Figma yet. */
-export const componentSent = (ledger, name, version) => ownEntry(ledger.components, name)?.[version] === SENT;
-export const screenSent = (ledger, route, release) => ownEntry(ledger.screens, route)?.[release] === SENT;
+export const componentSent = (ledger, name, version) => statusIn(ledger.components, name, version) === SENT;
+export const screenSent = (ledger, route, release) => statusIn(ledger.screens, route, release) === SENT;
 
 /** True when any version of the component has reached Figma. */
 export const anyVersionSent = (ledger, name) => Object.values(ownEntry(ledger.components, name) ?? {}).includes(SENT);
@@ -173,8 +180,8 @@ export function recordEntry(ledger, entry, status) {
 
 /** The status the ledger holds for the unit a manifest names, or undefined. */
 export function entryStatus(ledger, entry) {
-  if (entry.kind === "component") return ownEntry(ledger.components, entry.name)?.[entry.version];
-  if (entry.kind === "screen") return ownEntry(ledger.screens, entry.route)?.[entry.release];
+  if (entry.kind === "component") return statusIn(ledger.components, entry.name, entry.version);
+  if (entry.kind === "screen") return statusIn(ledger.screens, entry.route, entry.release);
   throw unknownKind(entry.kind);
 }
 

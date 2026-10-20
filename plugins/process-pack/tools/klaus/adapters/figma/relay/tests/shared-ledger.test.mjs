@@ -272,6 +272,17 @@ test("reconcile ignores and names a mark for a version neither its ledger nor th
   assert.ok(warningsOf(run).some((w) => w.startsWith("KLAUS_FIGMA_LEDGER lists 1 version this ledger never planned; ignored: Ghost 3.0.0.")));
 });
 
+test("the relay ignores and names marks whose version or component is a name of Object.prototype", async () => {
+  const { root, folder } = await generatedRepo();
+  const forged = `{"version":2,"fileKey":"${KEY}","components":{"Button":{"toString":"sent","constructor":"sent","__proto__":"sent"},"constructor":{"1.0.0":"sent"}},"screens":{}}`;
+  const run = await relay(root, [folder], { variable: forged });
+
+  assert.equal(run.code, 0, run.stderr);
+  assert.equal(run.calls.length, 2, "Button 1.0.0 is not marked, so both units are sent");
+  assert.deepEqual(sharedOf(run).ignoredInVariable, { count: 4, versions: ["Button __proto__", "Button constructor", "Button toString", "constructor 1.0.0"] });
+  assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "sent" }, Card: { "1.0.0": "sent" } }, "no forged key reaches the local ledger");
+});
+
 // ---------------------------------------------------------------------------------------------
 // A first load: CI writes data for every planned unit, the plugin applies it, reconcile records it.
 // ---------------------------------------------------------------------------------------------

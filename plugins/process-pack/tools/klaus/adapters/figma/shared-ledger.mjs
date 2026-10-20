@@ -168,7 +168,9 @@ const entryKey = (entry) => (entry.kind === "component" ? `c\u0000${entry.name}\
 
 /**
  * Whether the reading side lists a unit: its own ledger has it with any status, or it is one of
- * the extra entries (the release the relay is relaying or reconciling).
+ * the extra entries (the release the relay is relaying or reconciling). entryStatus reads own
+ * properties only, so a version named "toString" or "__proto__" is listed only when the ledger
+ * holds that version itself.
  * @returns {(entry: object) => boolean}
  */
 export function listedIn(own, extra = []) {

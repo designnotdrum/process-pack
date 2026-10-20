@@ -600,6 +600,14 @@ function manifestFor(folder, settings, stopped) {
   return manifest;
 }
 
+/** True for a ledger entry of the shape the generator writes. */
+const wellFormedEntry = (entry) =>
+  entry !== null && typeof entry === "object" &&
+  (entry.kind === "component" ? typeof entry.name === "string" && typeof entry.version === "string" : entry.kind === "screen" && typeof entry.route === "string" && typeof entry.release === "string");
+
+/** The manifest's ledger entries of the shape the generator writes. readManifest checks those of the data files. */
+const releaseEntriesOf = (manifest) => (manifest ? Object.values(manifest.ledgerEntries ?? {}).filter(wellFormedEntry) : []);
+
 /** Reads KLAUS_FIGMA_LEDGER for a run, with the repo --repo names or the one gh finds in root. */
 const readShared = (options, root, fileKey) => readVariable({ gh: options.gh ?? "gh", repo: options.repo, cwd: root, fileKey });
 
@@ -662,7 +670,7 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
   const own = readLedger(ledgerPath);
   // Anyone who can write a repository variable can write it. Its marks count only for the versions
   // this ledger or this release lists, and a unit only it marks sent is named.
-  const releaseEntries = Object.values(manifest.ledgerEntries ?? {});
+  const releaseEntries = releaseEntriesOf(manifest);
   const { usable, ignored: ignoredInVariable } = usableMarks(shared, own, releaseEntries);
   const ledger = usable ? mergeMarks(readLedger(ledgerPath), usable) : own;
   const sentOnlyInVariable = sentOnlyInShared(own, usable, releaseEntries);
@@ -824,7 +832,9 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
   const sharedLedger = shareMarks({ options, root, fileKey, ledgerPath, shared, changed: ledgerChanged, warnings, sentOnlyInVariable, ignoredInVariable });
 
   // Screenshot uploads go through another tool, which the relay does not call yet.
-  const uploads = (manifest.uploads ?? []).filter((upload) => !entrySent(ledger, manifest.ledgerEntries[upload.id] ?? { kind: "screen", route: upload.screen, release: upload.release }));
+  // An upload's id is data, so its entry is read as an own property only.
+  const uploadEntry = (upload) => (Object.hasOwn(manifest.ledgerEntries ?? {}, upload.id) && wellFormedEntry(manifest.ledgerEntries[upload.id]) ? manifest.ledgerEntries[upload.id] : { kind: "screen", route: upload.screen, release: upload.release });
+  const uploads = (manifest.uploads ?? []).filter((upload) => !entrySent(ledger, uploadEntry(upload)));
   for (const upload of uploads) deferred.push({ id: upload.id, kind: "screen", reason: "upload-not-supported" });
   if (uploads.length > 0) {
     warnings.push(`The relay does not upload screenshots yet, so ${plural(uploads.length, "upload")}${manifest.afterUploads ? " and the retention file" : ""} were not sent.`);
@@ -976,11 +986,11 @@ async function reconcileLedger(options, { settings, ledgerPath, root, manifest, 
   if (shared.warning) warnings.push(shared.warning);
   const own = readLedger(ledgerPath);
   // The variable's marks count only for the versions this ledger or the release folder lists.
-  const { usable, ignored: ignoredInVariable } = usableMarks(shared, own, manifest ? Object.values(manifest.ledgerEntries ?? {}) : []);
+  const { usable, ignored: ignoredInVariable } = usableMarks(shared, own, releaseEntriesOf(manifest));
   if (ignoredInVariable.length > 0) warnings.push(ignoredWarning(ignoredInVariable));
   const ledger = usable ? mergeMarks(readLedger(ledgerPath), usable) : readLedger(ledgerPath);
   // The component versions a release folder holds count as generated here too, unless a ledger has them as sent or changed.
-  const fromManifest = manifest ? Object.values(manifest.ledgerEntries ?? {}).filter((entry) => entry.kind === "component").map(({ name, version }) => ({ kind: "component", name, version })) : [];
+  const fromManifest = releaseEntriesOf(manifest).filter((entry) => entry.kind === "component").map(({ name, version }) => ({ kind: "component", name, version }));
   for (const entry of fromManifest) recordEntry(ledger, entry, GENERATED);
   // The versions this checkout knows of that only the variable marks sent, so reconcile does not look for them.
   const known = [...Object.entries(own.components).flatMap(([name, versions]) => Object.keys(versions).map((version) => ({ kind: "component", name, version }))), ...fromManifest];
