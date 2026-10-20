@@ -227,7 +227,7 @@ function capturedBox(fields) {
 
 /** A calendar's column: a navigation bar placed over the caption, then the month, in auto layout. */
 function calendarUnit() {
-  const nav = capturedBox({ tag: "nav", x: 12, y: 12, w: 224, h: 28, position: "absolute", display: "flex" });
+  const nav = capturedBox({ tag: "nav", x: 30, y: 40, w: 224, h: 28, position: "absolute", display: "flex" });
   const month = capturedBox({ tag: "div", x: 12, y: 12, w: 224, h: 260 });
   const column = capturedBox({ x: 12, y: 12, w: 224, h: 260, display: "flex", direction: "column", children: [nav, month] });
   const tree = capturedBox({ x: 0, y: 0, w: 250, h: 286, padding: [12, 12, 12, 12], borderWidth: [1, 1, 1, 1], children: [column] });
@@ -242,7 +242,7 @@ test("a child placed absolutely inside an auto layout keeps its place and does n
   const column = unit.nodes[columnId];
   assert.equal(column.L, "V");
   assert.equal(column.fh, undefined, "the column hugs the month alone");
-  assert.deepEqual({ ...unit.nodes[navId] }, { k: "b", n: "nav", w: 224, h: 28, x: 0, y: 0, ap: 1, L: "H", fw: 1, fh: 1 });
+  assert.deepEqual({ ...unit.nodes[navId] }, { k: "b", n: "nav", w: 224, h: 28, x: 18, y: 28, ap: 1, L: "H", fw: 1, fh: 1 });
   assert.equal(unit.nodes[monthId].ap, undefined);
   assert.equal(unit.nodes[monthId].x, undefined, "the month flows");
   // The data file reader takes the new key.
@@ -258,7 +258,7 @@ test("the code places an absolute child by position inside its auto layout", asy
   const [nav, month] = column.children;
   assert.equal(column.layoutMode, "VERTICAL");
   assert.equal(nav.layoutPositioning, "ABSOLUTE");
-  assert.deepEqual([nav.x, nav.y], [0, 0]);
+  assert.deepEqual([nav.x, nav.y], [18, 28]);
   assert.equal(month.layoutPositioning, undefined);
 });
 

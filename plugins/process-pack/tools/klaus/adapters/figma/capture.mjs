@@ -238,10 +238,13 @@ export async function openComponent(page, name) {
     const trigger = page.locator("[data-klaus-trigger]").first();
     if (how === "hover") await trigger.hover({ timeout: 5000 });
     else await trigger.click({ timeout: 5000 });
+    // Open when the trigger says so. A trigger React drew again has lost its mark, so then any
+    // element that says it is open will do.
     await page.waitForFunction(
       () => {
-        const element = document.querySelector("[data-klaus-trigger]");
-        return !element || element.getAttribute("aria-expanded") === "true" || /open/.test(element.dataset.state ?? "");
+        const isOpen = (element) => element.getAttribute("aria-expanded") === "true" || /open/.test(element.dataset.state ?? "");
+        const trigger = document.querySelector("[data-klaus-trigger]");
+        return trigger ? isOpen(trigger) : [...document.querySelectorAll("[aria-expanded], [data-state]")].some(isOpen);
       },
       null,
       { timeout: 2000 },

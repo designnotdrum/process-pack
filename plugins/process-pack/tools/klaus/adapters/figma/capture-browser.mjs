@@ -85,7 +85,7 @@ export function markComponent() {
       return out;
     }
     // Drawn for screen readers only, such as a live region of one clipped pixel.
-    if (rect.width <= 1 && rect.height <= 1 && style.overflow !== "visible") return out;
+    if (rect.width <= 1 && rect.height <= 1 && style.overflowX !== "visible") return out;
     out.push(element);
     return out;
   }
@@ -244,7 +244,6 @@ export function readStory(arg) {
     const watch = (element, pseudo = null) => watched.push([element, pseudo]) - 1;
     let count = 0;
     let truncated = false;
-    const outOfFlow = (style) => style.position === "absolute" || style.position === "fixed";
 
     function textBox(textNode, parentElement, parentStyle) {
       const range = document.createRange();
@@ -410,6 +409,7 @@ export function readStory(arg) {
         }
         if (child.nodeType === Node.TEXT_NODE) {
           if (child.data.trim() === "") continue;
+          count += 1;
           const leaf = textBox(child, element, style);
           if (leaf) node.children.push(leaf);
           continue;

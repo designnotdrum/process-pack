@@ -70,10 +70,11 @@ test("an overlay drawn closed is opened with a click, and its portal content is 
   assert.ok(!texts.includes("Not drawn"), "content kept out of the document is not read");
   const content = tree.children.find((n) => n.kind === "box" && n.position === "fixed");
   assert.ok(content, "the content is a part of the component");
-  assert.equal(tree.x, Math.min(tree.children[0].x, content.x));
+  // The story root's 16px padding puts the trigger at 16, 16. The panel is 4px below its wrapper.
+  assert.deepEqual([tree.x, tree.y], [16, 16], "the component's box starts at the trigger");
   const panel = content.children[0];
   assert.equal(panel.y, content.y + 4);
-  assert.equal(tree.h, panel.y + panel.h - tree.y, "the component's box holds the trigger and the whole panel, 4px below its wrapper");
+  assert.equal(tree.y + tree.h, content.y + 4 + panel.h, "the component's box holds the whole panel, 4px below its wrapper");
   const input = nodesOf(tree).find((n) => n.tag === "input");
   assert.deepEqual(input.borderColor, [204, 204, 204, 1], "drawn at rest: the focus the overlay moved into the input is let go");
 });
