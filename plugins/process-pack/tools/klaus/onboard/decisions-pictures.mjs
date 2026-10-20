@@ -15,9 +15,7 @@ import { toPosix } from '../inventory/files.mjs'
 import { describeMeasuredDifference } from './decisions-look.mjs'
 import { decisionPairs, decisionPictureName, renderDecisions, sidesOf } from './decisions.mjs'
 import { renderTicket, ticketFileName } from './duplicates.mjs'
-import { declaringFile, reExportedFiles } from './barrels.mjs'
-import { importsOf, parseSource } from './source.mjs'
-import { findStoryFiles } from './stories.mjs'
+import { storyImports } from './stories.mjs'
 import { NOT_SEARCHED } from './storybook.mjs'
 
 // ---- the static build
@@ -67,33 +65,8 @@ export function findStorybookBuild({ root, configured }) {
 
 // ---- which story draws which component
 
-/** The story files that import each component file, directly or through a barrel file, resolved with the repo's own TypeScript. */
-export function storyImports({ ts, root, tsconfigs }) {
-  const byComponent = new Map()
-  const record = (file, story) => byComponent.set(file, [...new Set([...(byComponent.get(file) ?? []), story])])
-  for (const story of findStoryFiles(root)) {
-    let sourceFile
-    try {
-      sourceFile = parseSource(ts, story)
-    } catch {
-      continue
-    }
-    for (const item of importsOf(ts, sourceFile)) {
-      const resolved = ts.resolveModuleName(item.module, story, tsconfigs.optionsFor(story), ts.sys).resolvedModule?.resolvedFileName
-      if (!resolved || resolved.endsWith('.d.ts')) continue
-      const module = toPosix(resolved)
-      record(module, story)
-      // A default import is the barrel's `default` export, which may be re-exported from the component's file.
-      for (const imported of [...item.names.map((n) => n.imported), ...(item.defaultName ? ['default'] : [])]) {
-        const declared = declaringFile({ ts, tsconfigs, file: module, name: imported })
-        if (declared && declared !== module) record(declared, story)
-      }
-      // A namespace import reaches everything the barrel re-exports. Only a story named for the component is used later, so a story that draws a whole screen does not count for them all.
-      if (item.namespace) for (const target of reExportedFiles({ ts, tsconfigs, file: module })) record(target, story)
-    }
-  }
-  return byComponent
-}
+// The story files that import each component file are found as the stories step finds them (stories.mjs).
+export { storyImports }
 
 const simple = (text) => String(text).toLowerCase().replace(/[^a-z0-9]/g, '')
 const FIRST = /^(primary|default|playground|base)$/i

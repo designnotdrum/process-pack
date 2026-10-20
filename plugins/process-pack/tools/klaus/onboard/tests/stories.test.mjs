@@ -24,6 +24,9 @@ after(() => sample.cleanup())
 
 const item = (name) => plan.items.find((i) => i.name === name)
 
+// A handler for a function that returns nothing: a comment keeps it from being an empty function, which lint flags.
+const NOTHING = '() => { /* Nothing happens in a story. */ }'
+
 test('sampleValue gives a value for the types a story can fill in, and null for the rest', () => {
   const cases = [
     ['label', 'string', "'Sample'"],
@@ -34,23 +37,42 @@ test('sampleValue gives a value for the types a story can fill in, and null for 
     ['icon', 'ReactElement', '<span>Sample</span>'],
     ['size', '"sm" | "lg"', "'sm'"],
     ['level', '1 | 2 | 3', '1'],
-    ['onClick', '() => void', '() => {}'],
-    ['onChange', '(value: string) => void', '() => {}'],
-    ['onSave', '(_value: string) => Promise<void>', 'async () => {}'],
-    ['onSave', '(_value?: Date) => Promise<void>', 'async () => {}'],
-    ['onSave', '((_value: string) => Promise<void>)', 'async () => {}'],
-    ['onLoad', '() => Promise<string[]>', 'async () => []'],
-    ['onLoad', '() => Promise<number>', 'async () => 1'],
+    ['onClick', '() => void', NOTHING],
+    ['onChange', '(value: string) => void', NOTHING],
+    ['onSave', '(_value: string) => Promise<void>', '() => Promise.resolve()'],
+    ['onSave', '(_value?: Date) => Promise<void>', '() => Promise.resolve()'],
+    ['onSave', '((_value: string) => Promise<void>)', '() => Promise.resolve()'],
+    ['onLoad', '() => Promise<string[]>', '() => Promise.resolve([])'],
+    ['onLoad', '() => Promise<number>', '() => Promise.resolve(1)'],
     ['format', '(value: number) => string', "() => 'Sample'"],
     ['isValid', '() => boolean', '() => false'],
-    ['onDone', '(cb: () => void) => void | Promise<void>', '() => {}'],
-    ['onUpdate', '((_sectionId: string, _width: number, _height: number) => void)', '() => {}'],
+    ['onDone', '(cb: () => void) => void | Promise<void>', NOTHING],
+    ['onUpdate', '((_sectionId: string, _width: number, _height: number) => void)', NOTHING],
     ['rows', 'string[]', '[]'],
     ['items', 'Array<Item>', '[]'],
     ['when', 'Date', "new Date('2026-01-01T00:00:00Z')"],
   ]
   for (const [name, type, want] of cases) assert.equal(sampleValue(name, type), want, `${name}: ${type}`)
   for (const type of ['{ a: string }', 'Record<string, string>', 'Project', 'T', '() => Project', '() => Promise<Project>', '<T>(value: T) => void']) assert.equal(sampleValue('x', type), null, type)
+})
+
+test('with Storybook\'s fn to hand, a function that returns nothing is fn(), and one that computes a value stays plain', () => {
+  const spy = { spy: true }
+  assert.equal(sampleValue('onClick', '() => void', spy), 'fn()')
+  assert.equal(sampleValue('onDone', '(cb: () => void) => void | Promise<void>', spy), 'fn()')
+  assert.equal(sampleValue('onSave', '(_value: string) => Promise<void>', spy), 'fn(() => Promise.resolve())')
+  assert.equal(sampleValue('onLoad', '() => Promise<string[]>', spy), '() => Promise.resolve([])')
+  assert.equal(sampleValue('format', '(value: number) => string', spy), "() => 'Sample'")
+  assert.equal(sampleValue('label', 'string', spy), "'Sample'")
+  assert.deepEqual(storyArgs({ props: [{ name: 'onClick', type: '() => void', required: true }] }, spy), { args: [['onClick', 'fn()']], blocked: null })
+})
+
+test('a story imports fn only when an arg uses it', () => {
+  const entry = { name: 'Chip', props: [], variants: {} }
+  const used = renderStory({ entry, importPath: './Chip', isDefault: false, framework: '@storybook/react', typed: true, args: [['onClick', 'fn()']], spy: 'storybook/test' })
+  assert.match(used, /^import type \{ Meta, StoryObj \} from '@storybook\/react'\nimport \{ fn \} from 'storybook\/test'\nimport \{ Chip \} from '\.\/Chip'\n/)
+  const unused = renderStory({ entry, importPath: './Chip', isDefault: false, framework: '@storybook/react', typed: true, args: [['label', "'Sample'"]], spy: 'storybook/test' })
+  assert.doesNotMatch(unused, /\bfn\b/)
 })
 
 test('storyArgs fills required props only and names the prop it cannot fill', () => {

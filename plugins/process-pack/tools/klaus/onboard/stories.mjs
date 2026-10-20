@@ -9,6 +9,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { pascalCase, toPosix } from '../inventory/files.mjs'
+import { declaringFile, reExportedFiles } from './barrels.mjs'
 import { dataBoundReasons, findComponent, importsOf, parseSource } from './source.mjs'
 import { checkStories } from './story-check.mjs'
 import { findStorybookConfigs, NOT_SEARCHED, storybookFor } from './storybook.mjs'
@@ -35,8 +36,60 @@ export function findStoryFiles(root) {
 }
 
 /**
+ * The component files one story reaches, resolved with the repo's own TypeScript: each file it
+ * imports, and the file that declares each name it imports, followed through barrel files
+ * (barrels.mjs). A namespace import reaches every file the barrel re-exports; `namespace` marks those.
+ *
+ * @returns {{ file: string, namespace: boolean }[]}
+ */
+function reachedBy({ ts, tsconfigs, story, sourceFile }) {
+  const reached = []
+  for (const item of importsOf(ts, sourceFile)) {
+    const resolved = ts.resolveModuleName(item.module, story, tsconfigs.optionsFor(story), ts.sys).resolvedModule?.resolvedFileName
+    if (!resolved || resolved.endsWith('.d.ts')) continue
+    const module = toPosix(resolved)
+    reached.push({ file: module, namespace: false })
+    // A default import is the barrel's `default` export, which may be re-exported from the component's file.
+    for (const imported of [...item.names.map((n) => n.imported), ...(item.defaultName ? ['default'] : [])]) {
+      const declared = declaringFile({ ts, tsconfigs, file: module, name: imported })
+      if (declared && declared !== module) reached.push({ file: declared, namespace: false })
+    }
+    if (item.namespace) for (const target of reExportedFiles({ ts, tsconfigs, file: module })) reached.push({ file: target, namespace: true })
+  }
+  return reached
+}
+
+/** Each story file, parsed, with the ones that cannot be read left out. */
+function parsedStories(ts, storyFiles) {
+  const parsed = []
+  for (const story of storyFiles) {
+    try {
+      parsed.push({ story, sourceFile: parseSource(ts, story) })
+    } catch {
+      // A story that cannot be read imports nothing Klaus can see.
+    }
+  }
+  return parsed
+}
+
+/** The story files that import each component file, directly or through a barrel file, resolved with the repo's own TypeScript. */
+export function storyImports({ ts, root, tsconfigs }) {
+  const byComponent = new Map()
+  for (const { story, sourceFile } of parsedStories(ts, findStoryFiles(root))) {
+    for (const { file } of reachedBy({ ts, tsconfigs, story, sourceFile })) byComponent.set(file, [...new Set([...(byComponent.get(file) ?? []), story])])
+  }
+  return byComponent
+}
+
+const simple = (text) => String(text).toLowerCase().replace(/[^a-z0-9]/g, '')
+const stemOf = (file) => simple(path.posix.basename(file).replace(/\.(?:stories|story)\.[^.]+$|\.[^.]+$/, ''))
+
+/**
  * The component files that a story already imports, and the package the stories take `Meta` from.
- * A story is found by what it imports, so a story named something else still counts.
+ * A story is found by what it imports, so a story named something else still counts. An import
+ * through a barrel file counts for the file that declares the name, as `storyImports` finds it. A
+ * namespace import of a barrel counts only for the component the story file is named for, so a
+ * story that draws a whole screen is not counted as a story of every part.
  *
  * @returns {{ covered: Set<string>, framework: string | null, storyFiles: string[] }}
  */
@@ -44,24 +97,28 @@ export function storyCoverage({ ts, root, tsconfigs }) {
   const covered = new Set()
   let framework = null
   const storyFiles = findStoryFiles(root)
-  for (const file of storyFiles) {
-    let sourceFile
-    try {
-      sourceFile = parseSource(ts, file)
-    } catch {
-      continue
-    }
+  for (const { story, sourceFile } of parsedStories(ts, storyFiles)) {
     for (const statement of sourceFile.statements) {
       if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue
       const spec = statement.moduleSpecifier.text
       if (!framework && spec.startsWith('@storybook/') && statement.getText(sourceFile).includes('Meta')) framework = spec
     }
-    for (const item of importsOf(ts, sourceFile)) {
-      const resolved = ts.resolveModuleName(item.module, file, tsconfigs.optionsFor(file), ts.sys).resolvedModule?.resolvedFileName
-      if (resolved) covered.add(toPosix(resolved))
-    }
+    for (const { file, namespace } of reachedBy({ ts, tsconfigs, story, sourceFile })) if (!namespace || stemOf(file) === stemOf(story)) covered.add(file)
   }
   return { covered, framework, storyFiles }
+}
+
+const SPY_MODULES = ['storybook/test', '@storybook/test']
+
+/**
+ * The module a story at this path can import Storybook's `fn` from, or null. `storybook/test` is
+ * where Storybook 9 and later ship it, `@storybook/test` where Storybook 8 does. A module counts
+ * when the repo's own TypeScript resolves it from the story's folder with the tsconfig of its
+ * package, the same way the story is type-checked.
+ */
+export function spyModule({ ts, tsconfigs, file }) {
+  const options = tsconfigs.optionsFor(file)
+  return SPY_MODULES.find((spec) => ts.resolveModuleName(spec, file, options, ts.sys).resolvedModule) ?? null
 }
 
 /** The Storybook package to import types from: the existing stories', else package.json's, else the plain React one. */
@@ -123,19 +180,33 @@ function unionMembers(type) {
 }
 
 const NOTHING = /^(?:void|unknown|any)$/
+const returnsNothing = (type) => unionMembers(type).some((member) => NOTHING.test(member))
+
+/**
+ * A handler for a function that returns nothing. The comment keeps it from being an empty
+ * function, which lint flags (no-empty-function). `() => undefined` is not used: Ultracite's
+ * oxlint preset flags it (unicorn/no-useless-undefined).
+ */
+const DOES_NOTHING = '() => { /* Nothing happens in a story. */ }'
 
 /**
  * A function that returns what its type says it returns: nothing for `void`, a promise for
- * `Promise<...>`, and a sample value of the right kind otherwise. Null when the return type is one
- * Klaus will not invent a value for.
+ * `Promise<...>`, and a sample value of the right kind otherwise. A promise comes from
+ * `Promise.resolve`, not from an async function, which lint flags when it has nothing to await
+ * (require-await). Null when the return type is one Klaus will not invent a value for.
+ *
+ * With `spy`, a function that returns nothing, or a promise of nothing, is Storybook's `fn()`,
+ * which also shows each call in the Actions panel. A function that computes a value stays a plain
+ * one: `fn` would type the value from the sample alone, so a literal such as 'sm' would no longer
+ * match the prop's type.
  */
-function sampleFunction(returnType) {
-  if (unionMembers(returnType).some((member) => NOTHING.test(member))) return '() => {}'
+function sampleFunction(returnType, spy) {
+  if (returnsNothing(returnType)) return spy ? 'fn()' : DOES_NOTHING
   const promised = /^Promise<([\s\S]*)>$/.exec(returnType)?.[1].trim()
   if (promised !== undefined) {
-    if (unionMembers(promised).some((member) => NOTHING.test(member))) return 'async () => {}'
+    if (returnsNothing(promised)) return spy ? 'fn(() => Promise.resolve())' : '() => Promise.resolve()'
     const value = sampleValue('', promised)
-    return value === null ? null : `async () => ${value}`
+    return value === null ? null : `() => Promise.resolve(${value})`
   }
   const value = sampleValue('', returnType)
   return value === null ? null : `() => ${value}`
@@ -143,9 +214,10 @@ function sampleFunction(returnType) {
 
 /**
  * A sample value, as source text, for a prop of this printed type. Null when the type is one Klaus
- * will not invent a value for (an object shape, a generic, a type from another file).
+ * will not invent a value for (an object shape, a generic, a type from another file). With `spy`,
+ * a function that returns nothing is Storybook's `fn()`; the story then imports `fn`.
  */
-export function sampleValue(name, type) {
+export function sampleValue(name, type, { spy = false } = {}) {
   let t = type.replace(/\s*\|\s*(?:undefined|null)\b/g, '').replace(/\b(?:undefined|null)\s*\|\s*/g, '').trim()
   // A function type in parentheses, such as `(() => void)`, loses the outer pair.
   if (/^\(.*\)$/.test(t) && !/^\([^()]*\)\s*=>/.test(t) && /=>/.test(t)) t = t.slice(1, -1).trim()
@@ -158,7 +230,7 @@ export function sampleValue(name, type) {
   if (/^(?:"[^"]*"|'[^']*')(?:\s*\|\s*(?:"[^"]*"|'[^']*'))*$/.test(t)) return quote(t.match(/^(?:"([^"]*)"|'([^']*)')/).slice(1).find((x) => x !== undefined))
   if (/^-?\d+(?:\s*\|\s*-?\d+)*$/.test(t)) return t.split('|')[0].trim()
   const returned = returnTypeOf(t)
-  if (returned !== null) return sampleFunction(returned)
+  if (returned !== null) return sampleFunction(returned, spy)
   if (/^(?:readonly\s+)?[\w.<>]+\[\]$/.test(t) || /^(?:Readonly)?Array<.*>$/.test(t)) return '[]'
   if (t === 'Date') return "new Date('2026-01-01T00:00:00Z')"
   return null
@@ -166,14 +238,14 @@ export function sampleValue(name, type) {
 
 /**
  * The args a story needs: one sample value for each required prop. `blocked` names the first
- * required prop that cannot be given one.
+ * required prop that cannot be given one. With `spy`, a function that returns nothing is `fn()`.
  *
  * @returns {{ args: [string, string][], blocked: string | null }}
  */
-export function storyArgs(entry) {
+export function storyArgs(entry, { spy = false } = {}) {
   const args = []
   for (const prop of entry.props.filter((p) => p.required)) {
-    const value = sampleValue(prop.name, prop.type)
+    const value = sampleValue(prop.name, prop.type, { spy })
     if (value === null) {
       const type = (prop.type.length > 60 ? `${prop.type.slice(0, 57)}...` : prop.type).replace(/`/g, "'")
       return { args: [], blocked: `the required prop ${prop.name} has the type \`${type}\`, and Klaus will not invent a value for it` }
@@ -208,14 +280,16 @@ function variantStories(entry) {
  * @param {string} options.framework The package to import types from.
  * @param {boolean} options.typed False for a .jsx or .js component.
  * @param {[string, string][]} options.args
+ * @param {string | null} [options.spy] The module to import Storybook's `fn` from, imported only when an arg uses it.
  */
-export function renderStory({ entry, importPath, isDefault, framework, typed, args }) {
+export function renderStory({ entry, importPath, isDefault, framework, typed, args, spy = null }) {
   const importLine = isDefault ? `import ${entry.name} from '${importPath}'` : `import { ${entry.name} } from '${importPath}'`
   const variants = variantStories(entry)
   const meta = [`  component: ${entry.name},`]
   if (args.length > 0) meta.push(`  args: ${argsText(args)},`)
   const lines = []
   if (typed) lines.push(`import type { Meta, StoryObj } from '${framework}'`)
+  if (spy && args.some(([, value]) => value.startsWith('fn('))) lines.push(`import { fn } from '${spy}'`)
   lines.push(importLine, '')
   lines.push('// Written by the Klaus onboarding run. Edit it freely: Klaus never rewrites a story that exists.')
   lines.push(typed ? 'const meta = {' : 'export default {', ...meta, typed ? '} satisfies Meta<typeof ' + entry.name + '>' : '}')
@@ -281,7 +355,9 @@ export function planStories({ ts, root, tsconfigs, inventory, dataBoundImports =
     }
     taken.add(first)
     const importPath = `./${stem}`
-    return { ...base, status: 'write', storyFile: first, importPath, isDefault: found.isDefault && !found.named, typed, args, framework: loadedBy.framework ?? framework }
+    // Storybook's `fn` when the story's package can import it, else a plain handler.
+    const spy = spyModule({ ts, tsconfigs, file: path.join(root, first) })
+    return { ...base, status: 'write', storyFile: first, importPath, isDefault: found.isDefault && !found.named, typed, args: spy ? storyArgs(entry, { spy: true }).args : args, spy, framework: loadedBy.framework ?? framework }
   })
 
   // Every story is compiled before any file exists. A plain JavaScript story has no types to check.
@@ -301,13 +377,13 @@ export function planStories({ ts, root, tsconfigs, inventory, dataBoundImports =
           isDefault: item.isDefault,
           framework: item.framework,
           args: item.args,
-          text: renderStory({ entry: entries.get(item.id), importPath: item.importPath, isDefault: item.isDefault, framework: item.framework, typed: item.typed, args: item.args }),
+          text: renderStory({ entry: entries.get(item.id), importPath: item.importPath, isDefault: item.isDefault, framework: item.framework, typed: item.typed, args: item.args, spy: item.spy }),
         })),
       })
   items = items.map((item) => {
     const problem = problems.get(item.id)
     if (!problem) return item
-    const { storyFile, importPath, isDefault, typed, args, framework: _framework, ...rest } = item
+    const { storyFile, importPath, isDefault, typed, args, spy: _spy, framework: _framework, ...rest } = item
     return { ...rest, status: 'skipped', cause: problem.cause, reason: problem.reason }
   })
 
