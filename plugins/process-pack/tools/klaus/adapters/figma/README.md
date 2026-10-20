@@ -8,7 +8,7 @@ The values come from the browser's computed styles, not from the CSS files. On M
 
 | Step | What the adapter does |
 |---|---|
-| `plan` | Lists the components whose current version is not written yet, and the screens to write for this release. A component with no story in the Storybook build is left out. |
+| `plan` | Lists the components whose current version is not sent yet, and the screens to write for this release. A component with no story in the Storybook build is left out. It counts a version as sent when its own ledger or the `KLAUS_FIGMA_LEDGER` variable says so (see "The ledger"). |
 | `estimate` | Costs a component version at the relay's measured rate: 71,000 relay tokens a call plus 1.4 a character of code, about 100,000 for a Button-sized version, and one call. The code's size is the runtime plus about 1,600 characters and 160 a variant, as the relay encodes it. A screenshot upload and an editable screen are costed apart (unverified, there is no measurement). |
 | `write` | Reads each story in a static Storybook build, builds the data, packs it into files of one component version each (`componentsPerCall`) whose code is at most 50,000 characters, and lists the screenshots to upload. It sends nothing. |
 | `report` | Says where the files are and links the Figma file. |
@@ -20,7 +20,7 @@ The values come from the browser's computed styles, not from the CSS files. On M
 | File | Holds |
 |---|---|
 | `figma-001.json`, `figma-002.json`, ... | Data, no code. Each file is one `use_figma` call and holds one component version, unless `componentsPerCall` says more. |
-| `manifest.json` | The file key, each data file with the length of its code and its units, the ledger entry of each unit, the uploads, the retention file, and warnings. |
+| `manifest.json` | The file key, each data file with the length of its code and its units, the ledger entry of each unit, the uploads, the retention file, and warnings. `firstLoad: true` on a first load (see "The first load"). |
 | `figma-retention.json` | Present when there are screenshots. Run it after the uploads. It keeps the last N versions of each screen. |
 
 A data file holds the call's variable collection, its colour tokens and its units, as JSON (`codegen.mjs` `dataFor`). Whatever sends it reads it with `data-file.mjs`, which refuses anything that is not the generator's shape, checks that it writes only to the collection and pages the repo's settings name, and builds the code with `codegen.mjs` `codeFor`. So an artifact from CI never supplies code. The relay passes `codeFor` a key, which encodes every string in the data so the relaying model cannot read it; the plugin passes none.
@@ -29,7 +29,11 @@ An entry in `uploads` has the image path, the page, and the name the frame must 
 
 The code built from each data file returns, for every unit, `written`, `exists` or `failed` with an error. A set that fails is removed again and the next unit still runs. The relay reports failures back to Klaus.
 
+### The ledger
+
 `.klaus/figma/ledger.json` records each component version and screen release as `generated` when its data file exists, and as `sent` once the relay has seen `use_figma` report it written or already there. A run plans every unit that is not sent, so a unit whose relay call failed is generated and sent again. A unit Figma drew from code the relaying model changed is `changed` until a person deletes the set and the relay writes it again. The manifest's `ledgerEntries` tell the relay which version each unit is. If the ledger is lost, the next run plans everything again. The code leaves a set that already exists alone, so the only cost is relay tokens. The relay is in [`relay/`](relay/README.md).
+
+The relay runs on another machine than CI and keeps its own ledger. It publishes its sent and changed marks to the repository Actions variable `KLAUS_FIGMA_LEDGER` after each run that sends or reconciles, and the Klaus workflow passes that variable to this adapter in the environment. `plan` merges it into the ledger it reads: a version `sent` or `changed` in either counts as that, and `sent` wins over `changed`. It is read for planning only and never written into CI's ledger. A missing or malformed variable, or one for another Figma file, is a warning in the run report, and the run plans as if the relay had sent nothing. The relay README has the details, including who can write the variable and its 48 KB limit (`relay/README.md`, "What the relay sent: KLAUS_FIGMA_LEDGER").
 
 ## The Figma plugin
 
@@ -46,6 +50,12 @@ A Figma plugin in [`plugin/`](plugin/) applies a whole release's data in one run
 No. Figma's Help Center says creating a plugin for development is "supported on any team or plan": [Create a classic plugin for development](https://help.figma.com/hc/en-us/articles/360042786733-Create-a-plugin-for-development). Running it needs a seat that can use plugins in Figma Design files: a Starter plan, or a Full seat on a paid plan. Dev, Collab and View seats cannot: [Use plugins in files](https://help.figma.com/hc/en-us/articles/360042532714-Run-plugins-in-files).
 
 Nick's account is on the Professional plan (tier `pro`) with a Full seat, from Figma's `whoami` on 2026-10-18. The table on the second page lists the Full seat as allowed in Figma Design, so a development plugin should run. That is read from the docs, not tried: the page's own heading says "Starter plan or a paid seat in an organization or enterprise" and does not name Professional. Two more things are unverified. The page says organization admins can limit plugins to approved ones, which the docs tie to organizations and not to Professional. And `manifest.json` carries a placeholder `id`, because the docs describe `id` as the ID to publish updates to; whether the import accepts it was not tried, because an agent cannot click in the desktop app. The first real click is in the onboarding run (#30).
+
+### The first load
+
+The workflow's `figma_first_load` input (run the Klaus workflow by hand) runs the frame with `--first-load figma`: the Figma output covers the newest release even when the state says that release is covered, and the spending cap does not apply, so the `klaus-figma` artifact holds data for every planned component. The cap exists to bound relay spend, and the plugin spends nothing. The manifest says `firstLoad: true`, the run report says it is a first load for the plugin and costs it at no relay calls or tokens, and the relay refuses to send it. Versions `KLAUS_FIGMA_LEDGER` marks sent are left out, because they are in Figma already.
+
+The first setup, in order: dispatch the workflow with `figma_first_load` on, apply that run's `.zip` with the plugin, run `relay.mjs --reconcile --run <that run's id> --repo <owner/name>` on the relay machine, then run the relay nightly. The relay README explains each step (`relay/README.md`, "The first setup").
 
 ### Apply a release
 

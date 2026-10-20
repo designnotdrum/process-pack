@@ -2,7 +2,26 @@
 
 The Figma generator (`../`) writes data for Plugin API code and makes no Figma call. Figma's MCP server refuses a plain script, so the relay builds each call's code from that data and sends it through a signed-in Codex CLI. Codex calls `use_figma` once per data file with the code unchanged. It makes no design decisions.
 
-The relay carries the small updates after each release: one component version per call, by default. The first, large load of a repo's components goes through a Klaus Figma plugin instead (a separate ticket), because a relay call costs about 70,000 to 100,000 relay tokens. The plugin cannot write the repo's ledger, so `--reconcile` marks what the plugin wrote (see "Reconcile after the plugin's first load").
+The relay carries the small updates after each release: one component version per call, by default. The first, large load of a repo's components goes through the Klaus Figma plugin instead, because a relay call costs about 70,000 to 100,000 relay tokens and the plugin costs nothing. The plugin cannot write the repo's ledger, so `--reconcile` marks what the plugin wrote (see "Reconcile after the plugin's first load").
+
+The relay and CI keep separate ledgers. The relay publishes what it sent to the repository variable `KLAUS_FIGMA_LEDGER`, and CI reads it before it plans (see "What the relay sent: KLAUS_FIGMA_LEDGER").
+
+## The first setup
+
+In this order:
+
+1. Run the Klaus workflow by hand with the `figma_first_load` input on (Actions, Klaus, Run workflow). It writes data for every planned component of the newest release to the `klaus-figma` artifact, with no spending cap, even if an earlier run covered that release. The run report says it is a first load for the plugin.
+2. Download that artifact's `.zip` and apply it in Figma with the Klaus plugin (`../README.md`, "Apply a release"). The relay refuses to send a first load.
+3. On the relay machine, record what the plugin wrote:
+
+   ```sh
+   node scripts/klaus/adapters/figma/relay/relay.mjs --reconcile --run <that run's id> --repo <owner/name>
+   ```
+
+   It looks for every component version in the artifact, marks the ones it finds as sent, and publishes `KLAUS_FIGMA_LEDGER`. A version it does not find stays generated, and a later `--reconcile` looks for it again.
+4. From then on, run the relay nightly on the `klaus-figma` artifact of the newest Klaus run (`--run <id>`). CI plans only what `KLAUS_FIGMA_LEDGER` does not mark sent, so each night's artifact holds the next units under the cap.
+
+If the plugin is never applied, nothing is lost: the next run that is not skipped (a new release, or units a run left unwritten) plans every version that is not sent, under the cap.
 
 ## Which machine runs it
 
@@ -71,7 +90,7 @@ node scripts/klaus/adapters/figma/relay/relay.mjs --run 1234567890 --repo acme/a
 2. Reads every data file with `../data-file.mjs`, before any call. A file that is not JSON, is not the generator's shape, writes to a variable collection or page the settings do not name, or does not match the manifest stops the run, and nothing is sent.
 3. Builds each call's code from its data file and the runtime in this checkout (`../codegen.mjs` `codeFor`). Code in the artifact is never read. Every string from the data is encoded with a new random key for each call, so the model reads no text from the data (see "What the model sees" below). Each file gets two versions of its code, one that holds changed token values back and one for the release's last call (see "Token values wait for the release's last call").
 4. Checks that Codex has a `figma` server that is signed in. If not, it stops before any call.
-5. Reads the ledger, `.klaus/figma/ledger.json` (or `outputs.figma.options.outputDir`).
+5. Reads `KLAUS_FIGMA_LEDGER` with `gh variable get`, then the ledger, `.klaus/figma/ledger.json` (or `outputs.figma.options.outputDir`), and merges the two (see "What the relay sent: KLAUS_FIGMA_LEDGER").
 6. For each data file in order, skips it when every unit in it is already sent. Otherwise it picks the held or the last version of its code, checks the spending cap, then runs `codex exec` once:
    - The code goes to Codex on stdin, byte for byte. The prompt holds no code. It tells Codex to call `use_figma` exactly once with that code, report the result, and do nothing else.
    - Codex runs with a clean config: only the `figma` server, only its `use_figma` tool, no plugins, no hooks, no shell tool (see "What the model sees"), a read-only sandbox, in an empty folder. `--keep-codex-config` uses `~/.codex/config.toml` instead.
@@ -80,13 +99,37 @@ node scripts/klaus/adapters/figma/relay/relay.mjs --run 1234567890 --repo acme/a
    - `use_figma` finished without an error, on the settings' Figma file.
    - The code it received, by Codex's own events, is the code the relay built. Whitespace at either end is ignored.
    - The code's own result, decoded with the call's key, lists the unit as `written` or `exists`.
-8. Writes a run report to `.klaus/reports/` in the frame's format, with the output name `figma-relay`.
+8. If the run marked anything, writes the ledger's sent and changed marks to `KLAUS_FIGMA_LEDGER` with `gh variable set`.
+9. Writes a run report to `.klaus/reports/` in the frame's format, with the output name `figma-relay`.
+
+A manifest marked `firstLoad` stops the run after step 1, with exit code 2: it is the plugin's to apply (see "The first setup").
 
 The pages the code touches are in the generator's README, under "Which pages it touches".
 
 A unit that failed stays `generated`. The next relay run on the same folder sends its file again, and the next generator run plans it again. Sending a file twice is safe: the code leaves a set that already exists alone and reports it as `exists`.
 
 When Codex changed the code and Figma still wrote a unit from it, the set in Figma may be wrong. The relay records that unit as `changed` and the report says to delete the set in Figma. While a unit is `changed`, an `exists` from a later call does not count, because it only means a set of that name is there. The unit becomes `sent` when a call writes it again from the right code.
+
+## What the relay sent: KLAUS_FIGMA_LEDGER
+
+The generator runs in CI and keeps its ledger in the `klaus-state` artifact. The relay runs on another machine and keeps its own. Only the relay records `sent`, so without a shared record CI would plan the same most-used units every night, the relay would find them sent and skip them, and the rest would never reach Figma. That happened on Meridian's first scheduled run (issue #76).
+
+So the relay keeps its sent and changed marks in a repository Actions variable, `KLAUS_FIGMA_LEDGER`:
+
+```json
+{"version":2,"fileKey":"<Figma file key>","components":{"Button":{"1.0.0":"sent"}},"screens":{}}
+```
+
+- **The relay reads it on start**, with `gh variable get KLAUS_FIGMA_LEDGER` (and `--repo` when given), before it plans or reconciles, so any machine that relays agrees on what is sent without copying files.
+- **The relay writes it** with `gh variable set KLAUS_FIGMA_LEDGER --body <record>` after any run that marked a unit: a send, or `--reconcile`. It writes the sent and changed marks of its ledger, which by then hold the variable's marks too. A dry run and a run that marked nothing do not write it.
+- **CI reads it.** The Klaus workflow passes `vars.KLAUS_FIGMA_LEDGER` to the generator, which merges it into its ledger before it plans. CI does not copy the marks into its own ledger, so deleting the variable makes CI plan as if nothing was sent.
+- **The merge rule.** A version `sent` or `changed` in either ledger counts as that. When one says `sent` and the other `changed`, `sent` wins: a version goes from changed to sent only when the relay writes it again from its own code, after a person deleted the set, and the relay never sends a sent version again. `generated` marks are never shared.
+- **One Figma file.** The record names the Figma file. A run whose `klaus.config.json` names another file neither uses nor overwrites it, and warns. Delete the variable to start a record for a new file.
+- **The size limit.** GitHub holds at most 48 KB in one variable (GitHub's variables reference, read 2026-10-20). The relay counts that as 48,000 bytes and refuses plainly to write a larger record; the local ledger keeps the marks, and CI plans those units again. A component with a 10-character name and one version takes 30 bytes and each further version of it 15, so about 1,500 such components fit (counted with `JSON.stringify`).
+- **Nothing here stops a run.** A missing or malformed variable is a warning, and the run treats only its own ledger's marks as sent. No `gh`, or a `gh` that cannot read the variable, is a warning, and the relay does not write the variable either, so marks it could not read are not overwritten. A `gh variable set` that fails is a warning, and the local ledger keeps the marks. So a one-off run on a laptop without `gh`, or without permission, still works.
+- **Who can write it.** GitHub's docs (read 2026-10-20) say creating a repository variable needs write access to an organization's repository, or collaborator access to a personal account's repository. A fine-grained token needs the "Variables" repository permission (write); a classic token needs the `repo` scope. A workflow's `GITHUB_TOKEN` has no variables permission (the `permissions` table of GitHub's workflow syntax reference), so no workflow run, from any branch, can write it. An artifact, by contrast, can be uploaded by any workflow in the repo. That the relay machine's `gh` sign-in has these permissions is unverified until its first run.
+
+The report's `adapter.details.sharedLedger` says how the variable read (`read`, `absent`, `malformed`, `other-file` or `unreadable`), whether this run wrote it (`published`: true, false, or null when it had nothing to write), and the record's size in bytes.
 
 ## Token values wait for the release's last call
 
@@ -175,24 +218,28 @@ The Klaus plugin runs inside Figma and cannot write the repo's ledger, `.klaus/f
 
 ```sh
 node scripts/klaus/adapters/figma/relay/relay.mjs --reconcile
+node scripts/klaus/adapters/figma/relay/relay.mjs --reconcile --run <id> --repo <owner/name>
+node scripts/klaus/adapters/figma/relay/relay.mjs --reconcile .klaus/figma/<release>
 ```
 
-It takes no release folder, `--run`, `--repo`, `--artifact` or `--release`. `--dry-run`, `--json`, `--max-calls`, `--model`, `--effort`, `--timeout`, `--events-dir`, `--ledger`, `--config` and `--report-dir` work as they do for a send.
+On the relay machine, after a first load, give it the first load's run: the plugin applied data CI generated, so the relay machine's ledger has never seen those versions. With `--run` or a release folder, the versions the manifest lists are looked for too, and the run is checked as for a send. `--artifact` and `--release` work only with `--run`. A manifest for another Figma file than `klaus.config.json` names stops the run. `--dry-run`, `--json`, `--max-calls`, `--model`, `--effort`, `--timeout`, `--events-dir`, `--ledger`, `--config`, `--repo` and `--report-dir` work as they do for a send.
 
 What it does:
 
-1. Reads the ledger and takes every component version that is `generated`. Screens are not read: they are frames, not components, so generated and changed screens are left as they are and the report says so. A `changed` version is not looked for and is never touched. A `sent` version is not looked for.
+1. Reads `KLAUS_FIGMA_LEDGER` and the ledger, and merges them as a send does. Adds the component versions of the release folder or artifact, when one is given, as `generated`, unless a ledger has them as `sent` or `changed`. Takes every component version that is `generated`. Screens are not read: they are frames, not components, so generated and changed screens are left as they are and the report says so. A `changed` version is not looked for and is never touched. A `sent` version is not looked for.
 2. Works out the pages to read: each version's page (the `page` setting, or the component's own name, the same rule as the generator) and `Older versions`. A component whose page name has a control character or is over 100 characters is left `generated`, with a warning.
 3. Writes the call's code (`reconcile.mjs` `reconcileCode`) with a new key. The code is told the `<Name> <version>` of each version it looks for, and the page names, all encoded with the key. It writes nothing, makes no page and switches no page. For each page it finds the page by name, loads it with `page.loadAsync()` (as the generated code does, so it is not a page switch), and collects the names of the component sets and components that sit directly on it. It returns `{ found }` and nothing else: one `true` or `false` for each label, in the order it was given. It returns no name from the file.
 4. Checks the spending cap as a send does (the predicted tokens and `--max-calls`). Component writes count for nothing, because the call writes none. A call over the cap is not made, and the versions are reported as deferred.
 5. Runs `codex exec` once, with the same limits as a send: the settings' Figma file only, a clean Codex config, only the figma server's `use_figma` tool, a 60-second start-up wait, no hooks, no shell tool, a read-only sandbox, the code on stdin byte for byte.
 6. Applies the copy check. The code `use_figma` received, by Codex's own events, must equal the code the relay wrote, on the settings' file, and the call must have completed. If not, the result is refused, and the error says the code could have written, so the file needs a look.
 7. Reads the answer from the tool's result only, never the model's closing message. The result must hold an object whose only key is `found`, a list of `true` and `false` as long as the list of labels sent (the code's own return value; the search looks through wrappers, and an object with other keys is not taken for it). A result of any other shape or length is refused and nothing changes. The relay maps the list back to the versions by position, so a name in the file never reaches the relay either.
-8. Marks each generated version whose answer is `true` as `sent`. The ledger is read again just before the write, so a mark another run wrote is kept, and a version that is no longer `generated` by then is left as it is and reported as not marked. The relay takes no lock, so a run that writes in the instant between that read and the write can still be overwritten (see "Limits"). Versions not found stay `generated`.
+8. Marks each generated version whose answer is `true` as `sent`. The ledger is read again just before the write, so a mark another run wrote is kept, and a version that is no longer `generated` by then is left as it is and reported as not marked. The relay takes no lock, so a run that writes in the instant between that read and the write can still be overwritten (see "Limits"). Versions not found stay `generated`, and the release folder's versions are written to the ledger as `generated`, so a later `--reconcile` without a folder looks for them again.
+9. If it marked a version, writes `KLAUS_FIGMA_LEDGER`, as a send does.
 
 The report counts the call and its tokens under `figma-relay`, like a send. It differs from a send in these ways:
 
 - `written` is empty, because the relay wrote no set. The versions it marked are in `adapter.details.reconciled`, with status `reconciled` in `adapter.details.units`, so a reconciled version can be told from a relayed send (`sent`).
+- `adapter.details.folder` names the release folder or artifact whose versions were looked for, or is null.
 - `adapter.details.missing` lists the versions the file did not have. They stay `generated`. A missing version is not a failure: the plugin may not have written it yet.
 - `adapter.details.changed` lists the `changed` versions that were left alone. `adapter.details.notMarked` lists versions the call found whose ledger status changed while it ran. A version skipped for an unusable page name is `deferred` with the reason `page-name-not-usable`.
 - A refused or failed call is one entry in `failed`, with the id `reconcile`, and the run exits with 1. No version is called missing then, because the answer could not be read.
@@ -208,11 +255,11 @@ On 2026-10-18 one real call ran against the Klaus prototype file, with `page` se
 ## Limits
 
 - Screenshot uploads go through another tool, which the relay does not call yet. They are reported as deferred with the reason `upload-not-supported`, and so is the retention file.
-- `templates/klaus.yml` does not upload `.klaus/figma/` as an artifact yet. `--run` expects an artifact, named `klaus-figma` unless `--artifact` says otherwise, that holds a release folder.
+- `--run` expects an artifact, named `klaus-figma` unless `--artifact` says otherwise, that holds a release folder. A Klaus run whose Figma output was skipped (nothing new to plan) leaves an artifact with the ledger and no release folder, and the relay stops with "The artifact holds no manifest.json." A nightly job should pick the newest run whose artifact holds one.
 - Reconcile looks only at the top level of each page it reads. A set a person moved into a section or a frame is not found, and its version stays `generated`.
-- Run one relay at a time for a ledger. The relay re-reads the ledger just before each write and keeps marks written since, but it takes no lock.
+- Run one relay at a time for a ledger, and one at a time for `KLAUS_FIGMA_LEDGER`. The relay re-reads the ledger just before each write and keeps marks written since, but it takes no lock. It reads the variable once, at the start, so a relay on another machine that writes it during the run loses those marks when this run writes it; they come back when that machine next writes it.
 - The report's `usd` is always 0, because the relay spends the ChatGPT plan's Codex quota, not money per call.
-- The ledger must be where both the generator and the relay read it. When the generator runs in CI and the relay runs elsewhere, the relay updates its own repo's ledger, not CI's.
+- CI learns what the relay sent only through `KLAUS_FIGMA_LEDGER`. When the variable is missing, unreadable or over the size limit, CI plans the sent units again; the relay then finds them sent and skips them.
 
 ## Tests
 
@@ -220,4 +267,4 @@ On 2026-10-18 one real call ran against the Klaus prototype file, with `page` se
 node --test "plugins/process-pack/tools/klaus/adapters/figma/relay/**/*.test.mjs"
 ```
 
-The tests put a stub `codex` and a stub `gh` first on `PATH` (`tests/stub/`). The stub `gh` answers the run, repo and compare reads and the download. The stub `codex` keeps what it was given, so a test can check the code that would have reached Figma. The stub replays the event output in `tests/fixtures/`. `success.jsonl` is the event stream of real call 1, with the code, file key and result replaced by placeholders. The stub also covers a tool error, a crash, a reply with no call, and code changed on the way. Its `figma` scenario runs the code in the fake Plugin API (`../tests/fake-figma.mjs`) and returns what the code returned, so `token-order.test.mjs` can check the colours an older version keeps. `no-call.jsonl` is the real call 6. The crash fixture follows Codex's documented event shapes, because no real run has produced one.
+The tests put a stub `codex` and a stub `gh` first on `PATH` (`tests/stub/`). The stub `gh` answers the run, repo and compare reads and the download, and keeps `KLAUS_FIGMA_LEDGER` in a file for `gh variable get` and `gh variable set`, so no test reads or writes a real variable. The stub `codex` keeps what it was given, so a test can check the code that would have reached Figma. The stub replays the event output in `tests/fixtures/`. `success.jsonl` is the event stream of real call 1, with the code, file key and result replaced by placeholders. The stub also covers a tool error, a crash, a reply with no call, and code changed on the way. Its `figma` scenario runs the code in the fake Plugin API (`../tests/fake-figma.mjs`) and returns what the code returned, so `token-order.test.mjs` can check the colours an older version keeps. `no-call.jsonl` is the real call 6. The crash fixture follows Codex's documented event shapes, because no real run has produced one.

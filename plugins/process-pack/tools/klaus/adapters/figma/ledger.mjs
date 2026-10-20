@@ -29,6 +29,11 @@
  * The file sits in the adapter's output folder. If it is lost, the next run
  * plans everything again. That costs relay tokens and nothing else: the
  * generated code leaves a set that already exists alone.
+ *
+ * The relay usually runs on another machine than CI, so each keeps its own file.
+ * The relay publishes its sent and changed marks to the KLAUS_FIGMA_LEDGER
+ * variable, and CI and every relay machine merge that into the file they read
+ * (shared-ledger.mjs). CI does not copy the marks into its own file.
  */
 import { existsSync } from "node:fs";
 import { readJsonFile } from "../../frame/json-file.mjs";

@@ -67,6 +67,7 @@ Defaults are 50 component writes and 500,000 relay tokens. They apply to each ou
 - Screens do not count toward the component limit. Every item counts toward the token limit, and so does any `overhead` the estimate reports.
 - An item that alone needs more tokens than the whole limit is deferred with the reason `larger-than-token-cap` and does not block the items behind it.
 - `node scripts/klaus/frame/cli.mjs run --trigger manual --dry-run --json` prints the estimate and the deferrals without writing anything.
+- `--first-load <output>` lifts the cap for one output and covers the newest release even when the state says it is covered, so every item the plan lists is written. The workflow's `figma_first_load` input passes `--first-load figma`, for the data the Klaus Figma plugin applies in one run (`adapters/figma/README.md`, "The first load"). The report says so in the output's warnings.
 
 ### Triggers
 
@@ -86,7 +87,7 @@ Each run writes one JSON file to `.klaus/reports/`, named `report-<time>.json`. 
 
 ### Running it in CI
 
-`templates/klaus.yml` is a GitHub Actions workflow for `.github/workflows/klaus.yml`. It refreshes the inventory, then runs `cli.mjs run --model-free` for the release tag, the schedule or a manual dispatch. It keeps the state file in the Actions cache. The cache can be dropped by GitHub, and the next run then covers only the newest release.
+`templates/klaus.yml` is a GitHub Actions workflow for `.github/workflows/klaus.yml`. It refreshes the inventory, then runs `cli.mjs run --model-free` for the release tag, the schedule or a manual dispatch. It keeps the state in the `klaus-state` artifact. When no earlier artifact can be trusted, the next run covers only the newest release. A manual dispatch has two inputs: `dry_run`, and `figma_first_load` when the Figma output is on. The Run Klaus step passes the repository variable `KLAUS_FIGMA_LEDGER`, what the Figma relay sent, to the Figma generator (`adapters/figma/relay/README.md`).
 
 ### Where the secrets live
 

@@ -14,6 +14,15 @@
  *             and list the screenshots to upload
  *   report    where the files are, and a link to the Figma file
  *
+ * The relay runs on another machine and keeps its own ledger. It publishes its sent and changed
+ * marks to the KLAUS_FIGMA_LEDGER variable, which the workflow passes to this adapter in the
+ * environment. plan merges them into the ledger it reads, so a unit the relay sent is not planned
+ * again (shared-ledger.mjs). They are not written into this checkout's ledger.
+ *
+ * A first load (ctx.firstLoad, from the workflow's figma_first_load input) is the whole release for
+ * the Klaus plugin: the frame lifts the spending cap, and the manifest says firstLoad, so the relay
+ * does not send it.
+ *
  * Settings are under outputs.figma.options. See settings.mjs.
  */
 import fs from "node:fs";
@@ -24,6 +33,7 @@ import { packUnits } from "./batch.mjs";
 import { captureComponent, captureScreen, openStorybook, readStoryIndex, storyCandidates } from "./capture.mjs";
 import { anyVersionSent, componentSent, entryOf, GENERATED, readLedger, recordEntry, screenSent } from "./ledger.mjs";
 import { screenRoutes, uploadFor } from "./screens.mjs";
+import { mergeMarks, parseSharedLedger, SHARED_LEDGER_VARIABLE } from "./shared-ledger.mjs";
 import { RUNTIME_CODE } from "./codegen.mjs";
 import {
   CALL_BASE_TOKENS,
@@ -79,11 +89,13 @@ function readStories(root, options) {
 /**
  * The adapter. The browser steps are passed in so a test can replace them.
  * @param {{ openStorybook?: Function, captureComponent?: Function, captureScreen?: Function }} [browser]
+ * @param {{ env?: Record<string, string | undefined> }} [options]  Where KLAUS_FIGMA_LEDGER is read. Default process.env.
  */
-export function createAdapter(browser = {}) {
+export function createAdapter(browser = {}, { env } = {}) {
   const open = browser.openStorybook ?? openStorybook;
   const readComponent = browser.captureComponent ?? captureComponent;
   const readScreen = browser.captureScreen ?? captureScreen;
+  const sharedText = () => (env ?? process.env)[SHARED_LEDGER_VARIABLE];
 
   return {
     name: "figma",
@@ -94,6 +106,9 @@ export function createAdapter(browser = {}) {
       const root = rootOf(ctx);
       const release = releaseOf(ctx);
       const ledger = readLedger(ledgerFile(root, options));
+      // What the relay sent, from wherever it ran. Merged for planning only.
+      const shared = parseSharedLedger(sharedText(), fileKeyOf(ctx.settings.target));
+      if (shared.ledger) mergeMarks(ledger, shared.ledger);
       const stories = readStories(root, options);
       const retry = new Set(ctx.unwrittenFromLastRun);
       const items = [];
@@ -123,10 +138,12 @@ export function createAdapter(browser = {}) {
         if (screenSent(ledger, route, release) && !retry.has(id)) continue;
         items.push({ id, kind: "screen", route, release, page: SCREENS_PAGE, editable: options.editableScreens });
       }
-      return { items };
+      return { items, warnings: shared.warning ? [shared.warning] : [] };
     },
 
     estimate(plan, ctx) {
+      // The plugin applies a first load with no model and no relay call, so it costs no relay tokens.
+      if (ctx.firstLoad) return { items: plan.items.map((item) => ({ id: item.id, calls: 0, tokens: 0, usd: 0 })) };
       const options = readOptions(ctx.settings);
       const per = options.componentsPerCall;
       const perCall = Math.round((1 / per) * 10000) / 10000;
@@ -232,7 +249,8 @@ export function createAdapter(browser = {}) {
       for (const file of everyFile) writeJsonFile(path.join(directory, file.name), file.data);
 
       // What relaying these files will cost. No relay has run yet, so this is the measured rate.
-      const actual = {
+      // A first load is the plugin's, which spends nothing.
+      const actual = ctx.firstLoad ? { calls: 0, tokens: 0, usd: 0 } : {
         calls: everyFile.length + (uploads.length > 0 ? Math.ceil(uploads.length / 60) : 0),
         tokens: everyFile.reduce((sum, file) => sum + relayCallTokens(file.chars), 0) + uploads.length * TOKENS_PER_SCREEN_IMAGE,
         usd: 0,
@@ -255,6 +273,8 @@ export function createAdapter(browser = {}) {
         afterUploads: afterUploads ? { name: afterUploads.name, chars: afterUploads.chars } : null,
         warnings: [...new Set(warnings)],
       };
+      // The Klaus plugin applies a first load. The relay refuses to send one (relay/README.md).
+      if (ctx.firstLoad) manifest.firstLoad = true;
       writeJsonFile(path.join(directory, "manifest.json"), manifest);
 
       // Generated, not sent: only the relay records a unit as sent, after use_figma confirms it.
@@ -278,10 +298,18 @@ export function createAdapter(browser = {}) {
       const { manifest, directory } = run;
       const parts = [`${manifest.files.reduce((n, f) => n + f.units.length, 0)} in ${manifest.files.length} data file${manifest.files.length === 1 ? "" : "s"}`];
       if (manifest.uploads.length > 0) parts.push(`${manifest.uploads.length} screenshot${manifest.uploads.length === 1 ? "" : "s"} to upload`);
+      const details = { directory, manifest: `${directory}/manifest.json`, files: manifest.files, uploads: manifest.uploads.length, warnings: manifest.warnings };
+      if (manifest.firstLoad) {
+        return {
+          summary: `Figma first load for the Klaus plugin in ${directory}: ${parts.join(" and ")}, with no spending cap. Apply the klaus-figma artifact with the plugin, then run the relay with --reconcile --run <this run's id>. The relay does not send a first load.`,
+          links,
+          details: { ...details, firstLoad: true },
+        };
+      }
       return {
         summary: `Figma data is ready for the relay in ${directory}: ${parts.join(" and ")}.`,
         links,
-        details: { directory, manifest: `${directory}/manifest.json`, files: manifest.files, uploads: manifest.uploads.length, warnings: manifest.warnings },
+        details,
       };
     },
   };
