@@ -8,6 +8,8 @@
  *       the estimate in the repo's git folder. After an earlier run it also says which pull requests
  *       are merged, where the run would continue, and which model results it would use again. Give
  *       it the --captures the run will get, since the list it compares with the merged one uses them.
+ *       When the first pull request is merged with files this plan no longer writes, it lists the
+ *       files a refresh would change and prints the command with --refresh.
  *
  *   node onboard/onboard.mjs run --repo <dir> --approve <plan id> [options]
  *       Runs the three steps: the list at 1.0.0 with the duplicates, the purposes (written, then
@@ -24,6 +26,10 @@
                                      writes the briefs and stops, having changed nothing.
          --checks-file <file>        With an external checker: its verdicts, as in briefs/checks.template.json.
                                      Without it the run writes the briefs and stops, having changed nothing.
+ *         --refresh                   When the first pull request is merged with files this plan no longer writes,
+ *                                     make it again as a refresh: a pull request from the default branch with only
+ *                                     the files that change, and the second and third stacked on it. Without it the
+ *                                     run refuses. The estimate must list the same refresh, since --approve covers it.
  *         --commit-trailer <line>     A line to end each commit message with. May be repeated.
  *         --body-footer <text>        Text to end each pull request body with.
  *
@@ -56,6 +62,7 @@ const OPTIONS = {
   storybook: { type: 'string' },
   'writer-branch': { type: 'string' },
   'checks-file': { type: 'string' },
+  refresh: { type: 'boolean' },
   'commit-trailer': { type: 'string', multiple: true },
   'body-footer': { type: 'string' },
 }
@@ -70,11 +77,13 @@ async function estimateCommand(values, { fetchImpl } = {}) {
   const dir = workFolder(repo)
   const found = await earlierRuns({ repo, plan, onboarding, captures: values.captures })
   const saved = savedWork({ plan, onboarding, store: createResultStore({ repo, work: dir, planId: plan.id }) })
-  estimate.earlier = { start: found.start, merged: found.merged, refusal: found.refusal, note: found.note, savedWriterCalls: saved.writerCalls, savedChecks: saved.checks, otherPlans: savedPlans(dir).filter((p) => p.planId !== plan.id) }
+  estimate.earlier = { start: found.start, merged: found.merged, refusal: found.refusal, note: found.note, refreshFiles: found.refreshFiles ?? null, savedWriterCalls: saved.writerCalls, savedChecks: saved.checks, otherPlans: savedPlans(dir).filter((p) => p.planId !== plan.id) }
   fs.mkdirSync(dir, { recursive: true })
   writeJsonFile(path.join(dir, 'estimate.json'), estimate)
+  const command = `onboard.mjs run --repo ${values.repo} --approve ${estimate.id}`
   if (values.json) console.log(JSON.stringify(estimate, null, 2))
-  else console.log(`${renderEstimate(estimate)}\n\nTo run it: onboard.mjs run --repo ${values.repo} --approve ${estimate.id}`)
+  else if (found.refreshFiles) console.log(`${renderEstimate(estimate)}\n\nTo run it with the refresh: ${command} --refresh`)
+  else console.log(`${renderEstimate(estimate)}\n\nTo run it: ${command}`)
   return 0
 }
 
@@ -88,6 +97,7 @@ async function runCommand(values, { fetchImpl } = {}) {
     storybookDir: values.storybook,
     writerBranch: values['writer-branch'],
     checksFile: values['checks-file'],
+    refresh: values.refresh === true,
     commitTrailers: values['commit-trailer'] ?? [],
     bodyFooter: values['body-footer'] ?? '',
   })

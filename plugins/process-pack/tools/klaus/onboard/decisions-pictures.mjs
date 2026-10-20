@@ -325,6 +325,32 @@ export function mergedPictureFiles({ repo, docs }) {
   return [...new Set(found)].map((file) => ({ rel: `${docs}/${file}`, text: '', volatile: true }))
 }
 
+/** The files the decisions write in folders of their own: numbered tickets and numbered pictures. Nothing else in those folders is the run's. */
+const GENERATED = [
+  { folder: 'tickets', name: /^\d{2,}-(?:merge|remove)-.+\.md$/ },
+  { folder: 'decisions', name: /^\d{2,}-.+\.png$/ },
+]
+
+/**
+ * The tickets and pictures under `base` that an earlier run wrote and that are not in `wanted`.
+ * The set of them changes when the pairs do, so these are the ones to remove.
+ *
+ * @param {{ base: string, docs: string, wanted: Set<string> }} options `wanted` holds paths from the repo root.
+ * @returns {string[]} Paths from the repo root, sorted.
+ */
+export function staleDecisionFiles({ base, docs, wanted }) {
+  const stale = []
+  for (const { folder, name } of GENERATED) {
+    const dir = path.join(base, docs, folder)
+    if (!fs.existsSync(dir)) continue
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const rel = toPosix(path.posix.join(docs, folder, entry.name))
+      if (entry.isFile() && name.test(entry.name) && !wanted.has(rel)) stale.push(rel)
+    }
+  }
+  return stale.sort()
+}
+
 /**
  * Every file the decisions add to the first pull request, besides the list of all pairs: the
  * decisions list, a ticket for each pair the data settled, and the pictures. A picture's `text` is

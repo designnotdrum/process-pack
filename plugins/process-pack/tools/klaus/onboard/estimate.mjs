@@ -9,6 +9,7 @@
 import { checkerPrompt, isCheckable, readPrice } from './checker.mjs'
 import { countDuplicates } from './duplicates.mjs'
 import { checkerContext } from './source.mjs'
+import { REFRESH_BRANCH, REFRESH_TITLE } from './stages.mjs'
 import { writerPrompt } from './writer.mjs'
 
 /**
@@ -171,21 +172,40 @@ function renderEarlier(estimate) {
   const lines = ['  Earlier runs:']
   if (earlier.refusal) {
     lines.push(`    The run would refuse to start. ${earlier.refusal.split('\n').join('\n    ')}`)
-    return lines
+    if (!earlier.refreshFiles) return lines
+    lines.push(...renderRefresh(estimate))
+  } else {
+    lines.push(`    ${earlier.note ?? 'No pull request of an earlier run is merged, so the run makes all three. One that is still open is closed and replaced.'}`)
+    if (earlier.start > 3) return lines
+    if (earlier.start > 2) {
+      lines.push('    The purposes are merged, so the run makes no model call. The model numbers above are not compared.')
+      return lines
+    }
+    if (earlier.start === 2) lines.push('    The first pull request is not made again. The second and third are, and an open one is closed and replaced by a new one that says which it replaces.')
   }
-  lines.push(`    ${earlier.note ?? 'No pull request of an earlier run is merged, so the run makes all three. One that is still open is closed and replaced.'}`)
-  if (earlier.start > 3) return lines
-  if (earlier.start > 2) {
-    lines.push('    The purposes are merged, so the run makes no model call. The model numbers above are not compared.')
-    return lines
-  }
-  if (earlier.start === 2) lines.push('    The first pull request is not made again. The second and third are, and an open one is closed and replaced by a new one that says which it replaces.')
   const reused = new Set(earlier.savedWriterCalls)
   const toMake = purposes.writerCalls - reused.size
   const tokens = (purposes.writerCallDetails ?? []).filter((c) => !reused.has(c.id)).reduce((sum, c) => sum + (c.tokens ?? 0), 0)
   lines.push(`    Model results saved for this plan: ${plural(reused.size, 'writer call')} of ${whole(purposes.writerCalls)} and ${plural(earlier.savedChecks, 'check')}. The run uses them again instead of calling the model, so it makes ${plural(toMake, 'writer call')}${settings.writer.route === 'external' || toMake === 0 ? '' : `, about ${approx(tokens)} tokens`}, and at most ${plural(Math.max(0, purposes.checkerCalls - earlier.savedChecks), 'check')}.`)
   for (const other of earlier.otherPlans ?? []) lines.push(`    Results saved for another plan, ${other.planId} (${plural(other.writer, 'writer call')} and ${plural(other.checker, 'check')}), are not used: a saved result is used only by the plan it was made for, and the plan changes when a component file, a call, a story or a duplicate pair does.`)
   return lines
+}
+
+/**
+ * What a run with --refresh would do with a merged first pull request whose files differ: each file
+ * the refresh changes, and that approving the plan approves the refresh.
+ */
+function renderRefresh(estimate) {
+  const { base, changes, redrawn } = estimate.earlier.refreshFiles
+  // An added file has nothing to compare. A changed one shows the first place it differs, and a removed one why it goes.
+  const why = (c) => (c.change === 'added' ? '' : `, ${c.why}`)
+  return [
+    `    With --refresh the run does not refuse. It makes the first pull request again as a refresh: a pull request from the branch ${REFRESH_BRANCH}, cut from ${base} and titled "${REFRESH_TITLE}", that holds only the files below as this plan writes them now. The second and third are stacked on it.`,
+    `    A refresh would change ${plural(changes.length, 'file')}${changes.length > 0 ? ':' : '.'}`,
+    ...changes.map((c) => `    - ${c.rel}: ${c.change}${why(c)}`),
+    ...(redrawn ? [`    The decisions list and its pictures are drawn again when the run makes the refresh, and are in it where they differ from ${base}. A picture on ${base} that the run does not draw again is removed.`] : []),
+    `    Approving the plan with --approve ${estimate.id} approves this refresh too. If the files a refresh would change are no longer these, the run refuses it until the estimate is made again.`,
+  ]
 }
 
 /**

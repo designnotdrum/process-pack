@@ -25,15 +25,9 @@ import { toPosix } from '../inventory/files.mjs'
 import { buildInventory } from '../inventory/inventory.mjs'
 import { createTsconfigLoader } from '../inventory/tsconfig.mjs'
 import { readOnboardingConfig } from './config.mjs'
-import { attachDecisionPictures, decisionFiles } from './decisions-pictures.mjs'
+import { attachDecisionPictures, decisionFiles, staleDecisionFiles } from './decisions-pictures.mjs'
 import { countDuplicates, findDuplicates, renderDuplicatesList } from './duplicates.mjs'
 import { mkdirPlain, removePlainFile, writePlainFile } from './plain-path.mjs'
-
-/** The files an earlier run of this command may have left: numbered tickets and numbered pictures. Nothing else in those folders is touched. */
-const GENERATED = [
-  { folder: 'tickets', name: /^\d{2,}-(?:merge|remove)-.+\.md$/ },
-  { folder: 'decisions', name: /^\d{2,}-.+\.png$/ },
-]
 
 const USAGE = 'Usage: write-decisions.mjs --repo <dir> [--storybook <dir>] [--out <dir>] [--ask-all]'
 
@@ -52,16 +46,7 @@ export async function writeDecisions({ repo: given, storybook, out, askAll = fal
   if (out) fs.mkdirSync(base, { recursive: true })
   const written = []
   // The set of tickets and pictures changes when the pairs do, so what an earlier run wrote and this one does not is removed.
-  const wanted = new Set(files.map((f) => toPosix(f.rel)))
-  const stale = []
-  for (const { folder, name } of GENERATED) {
-    const dir = path.join(base, docs, folder)
-    if (!fs.existsSync(dir)) continue
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const rel = toPosix(path.posix.join(docs, folder, entry.name))
-      if (entry.isFile() && name.test(entry.name) && !wanted.has(rel)) stale.push(rel)
-    }
-  }
+  const stale = staleDecisionFiles({ base, docs, wanted: new Set(files.map((f) => toPosix(f.rel))) })
   for (const rel of stale) {
     if (out) fs.rmSync(path.join(base, rel), { force: true })
     else removePlainFile(repo, path.join(repo, rel))

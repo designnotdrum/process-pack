@@ -15,12 +15,24 @@
  * `purposes.md` for the second and `stories.json` for the third.
  *
  * When the default branch holds some of the first pull request's files, or holds them with other
- * content, the run refuses and says which files differ and where.
+ * content, the run refuses and says which files differ and where. Klaus itself can change between
+ * stages, so this is how a merged first pull request goes stale. With `--refresh` the run does not
+ * refuse: it makes the first pull request again as a refresh, a pull request from the default
+ * branch that holds only the files that change (refreshChanges). Only the first can be refreshed,
+ * because the second and third change the files the plan is made from.
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
+import { staleDecisionFiles } from './decisions-pictures.mjs'
 import { git } from './git.mjs'
+
+/**
+ * The branch and title of a refresh of the first pull request. The branch is its own, so the merged
+ * one's branch is never pushed over. They are here so the estimate can name them as the run uses them.
+ */
+export const REFRESH_BRANCH = 'klaus/onboarding-1-list-refresh'
+export const REFRESH_TITLE = 'Klaus onboarding 1 of 3 (refresh): the list of components at 1.0.0, and the duplicates'
 
 const collapse = (text) => text.replace(/\s+/g, ' ').trim()
 const MAX_SHOWN = 160
@@ -91,10 +103,13 @@ export function contentDifference({ repo, rel, expected, actual }) {
  * @param {string} options.docs The docs folder of the run's records.
  * @param {{ rel: string, text: string, volatile?: boolean }[]} options.listFiles The first pull request's files, as the plan writes them.
  *   A `volatile` file depends on a browser and a Storybook build, not on the plan, so it has only to be there.
- * @returns {{ start: number, merged: number[], refusal: string | null, note: string | null }}
+ * @param {boolean} [options.refresh] The run was given --refresh: a merged first pull request whose files differ is made again as a refresh.
+ * @returns {{ start: number, merged: number[], refusal: string | null, note: string | null, refreshable?: true, refresh?: true }}
  *   `start` is the first pull request to make: 1, 2 or 3, or 4 when all three are merged.
+ *   `refreshable` says the first pull request is merged with files that differ, so --refresh would make it again.
+ *   `refresh` says this run does.
  */
-export function findMerged({ repo, base, docs, listFiles }) {
+export function findMerged({ repo, base, docs, listFiles, refresh = false }) {
   const has = (rel) => fs.existsSync(path.join(repo, rel))
   const purposes = `${docs}/purposes.md`
   const stories = `${docs}/stories.json`
@@ -116,11 +131,51 @@ export function findMerged({ repo, base, docs, listFiles }) {
     }
   }
   if (problems.length === 0) return { start: 2, merged: [1], refusal: null, note: `The first pull request's files are on ${base}, as this plan writes them (formatting aside), so the run continues at the second.` }
+  if (refresh) return { start: 1, merged: [], refusal: null, refreshable: true, refresh: true, note: `The first pull request's files are on ${base}, but not as this plan writes them. With --refresh the run makes the first pull request again as a refresh from ${base}, and stacks the second and third on it.` }
   const shown = problems.slice(0, 5)
-  return refuse([
-    `The first pull request's files are on ${base}, but not as this plan writes them, so the run cannot continue from them and does not overwrite them.`,
-    ...shown.map((p) => `- ${p}`),
-    ...(problems.length > shown.length ? [`- and ${problems.length - shown.length} more`] : []),
-    `Find out why they differ: a change made on ${base} after the merge, or a repo that no longer gives the list that was merged. When ${base} holds what the plan writes, run again.`,
-  ].join('\n'))
+  return {
+    ...refuse([
+      `The first pull request's files are on ${base}, but not as this plan writes them, so the run cannot continue from them and does not overwrite them.`,
+      ...shown.map((p) => `- ${p}`),
+      ...(problems.length > shown.length ? [`- and ${problems.length - shown.length} more`] : []),
+      `Find out why they differ: a change made on ${base} after the merge, or a repo that no longer gives the list that was merged. When ${base} holds what the plan writes, run again.`,
+      'To bring them up to date through a pull request instead, run again with --refresh. onboard.mjs estimate lists the files it would change.',
+    ].join('\n')),
+    refreshable: true,
+  }
+}
+
+/**
+ * What a refresh of the first pull request changes on the default branch: each of its files that
+ * is not there, or is there with other content (formatting aside, as findMerged compares), and each
+ * numbered ticket or picture an earlier run wrote that the plan does not write now. A file that
+ * already matches is left as it is, so the refresh holds only what changes.
+ *
+ * @param {object} options
+ * @param {string} options.repo On the default branch.
+ * @param {string} options.docs
+ * @param {{ rel: string, text: string | Buffer, volatile?: boolean }[]} options.files The first pull request's files, as the plan writes them now.
+ * @param {string[]} [options.mayWrite] More paths the run may write, which are not removed: the pictures, before they are drawn.
+ * @returns {{ rel: string, change: 'added' | 'changed' | 'removed', why: string | null, volatile: boolean }[]}
+ *   Sorted by path. A `volatile` change is to the decisions list or a picture, which depend on the drawing.
+ */
+export function refreshChanges({ repo, docs, files, mayWrite = [] }) {
+  const pictures = `${docs}/decisions/`
+  const changes = []
+  for (const file of files) {
+    const volatile = Boolean(file.volatile)
+    const at = path.join(repo, file.rel)
+    if (!fs.existsSync(at)) {
+      changes.push({ rel: file.rel, change: 'added', why: null, volatile })
+      continue
+    }
+    const why = Buffer.isBuffer(file.text)
+      ? (fs.readFileSync(at).equals(file.text) ? null : 'the picture is not the one drawn now')
+      : contentDifference({ repo, rel: file.rel, expected: file.text, actual: fs.readFileSync(at, 'utf8') })
+    if (why) changes.push({ rel: file.rel, change: 'changed', why, volatile })
+  }
+  for (const rel of staleDecisionFiles({ base: repo, docs, wanted: new Set([...files.map((f) => f.rel), ...mayWrite]) })) {
+    changes.push({ rel, change: 'removed', why: 'no pair needs it now', volatile: rel.startsWith(pictures) })
+  }
+  return changes.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0))
 }

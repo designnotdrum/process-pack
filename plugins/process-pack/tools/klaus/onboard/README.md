@@ -14,7 +14,7 @@ The decisions behind it are in NJM-1779 on the Klaus map (NJM-1767). The Linear 
 
 ```sh
 node onboard/onboard.mjs estimate --repo <dir> [--captures <file>]
-node onboard/onboard.mjs run --repo <dir> --approve <plan id>
+node onboard/onboard.mjs run --repo <dir> --approve <plan id> [--refresh]
 ```
 
 Run from the repo's default branch, with a clean tree, after the Klaus install commit is on `origin`. The pull requests are based on `origin/<default branch>`, so a commit that is only on the machine would be inside the first one, and the run refuses in that case.
@@ -27,6 +27,7 @@ Run from the repo's default branch, with a clean tree, after the Klaus install c
 | `--codex <path>` | The Codex executable. Default: `codex` on the path. |
 | `--writer-branch <ref>` | With an external writer: the branch that holds its edits. |
 | `--checks-file <file>` | With an external checker: its verdicts. |
+| `--refresh` | When the first pull request is merged with files this plan no longer writes, make it again as a refresh instead of refusing (below). |
 | `--commit-trailer <line>` | A line to end each commit message with. May be repeated. |
 | `--body-footer <text>` | Text to end each pull request body with. |
 
@@ -43,6 +44,19 @@ A run that stops names the branches and pull requests it made, and puts back any
 - **Merged content that is not what the plan writes stops the run** before anything is spent, with each file that differs and the place: the JSON path, with the component's name, or the first Markdown line. The run does not overwrite a merged file. The same holds when `inventory.json` is there without the run's other files: that repo already has a baseline.
 
 `estimate` shows the same answer before a run: which pull requests are merged, where the run would continue, how many writer calls and checks are saved for this plan, and which results were saved for another plan and so are not used.
+
+### Refreshing a merged first pull request: `--refresh`
+
+Klaus can change between stages. On Meridian the first pull request merged, and then Klaus changed how prop types print and which duplicates it lists, so the merged files were no longer what the plan writes and every continue run refused. `--refresh` is the way forward that a person can review:
+
+- **Without `--refresh` nothing changes.** The run refuses as above, and the refusal names the flag.
+- **With `--refresh`, the first pull request is made again as a refresh.** Its branch is `klaus/onboarding-1-list-refresh`, cut from the default branch, so the merged pull request's own branch is never pushed over. The title ends in "(refresh)". It holds only the files that change: each of the first pull request's files that is not there or differs (formatting aside, as above), as the plan writes it now, and the removal of each numbered ticket or picture that the plan no longer writes. A file someone else put in those folders is not removed. The second and third pull requests are stacked on it as in any run, and an open one is closed and replaced.
+- **The commit hook is tried on the refresh's files**, removals included, before any model call, as for every other commit.
+- **`estimate` lists what a refresh would change**, file by file, and prints the command with `--refresh`. The pictures are drawn only by the run, so when the decisions list has questions the estimate says the list and its pictures are drawn again, and leaves them out of the list. A picture that the run does not draw again is removed, because the decisions list the run writes no longer shows it.
+- **The plan id approves the refresh too**, and the estimate says so. The plan id does not cover what is on the default branch, so a run with `--refresh` also checks that the estimate it approves listed a refresh with the same files and the same kind of change for each (the decisions list and pictures aside). The first place a file differs is not held to the estimate: what the refresh writes is the plan's text, which the plan id approves. If the files a refresh would change are different by then, the run refuses until the estimate is made again.
+- **A merged first pull request whose files already match is skipped as before**, with or without the flag. Only the first can be refreshed: the second and third change the files the plan is made from.
+
+The report lists the refresh under `refreshed`, with the merged pull request it brings up to date and each file it changes.
 
 ### Before any model call: the commit hook
 
