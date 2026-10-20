@@ -8,6 +8,24 @@
 # The Figma relay needs a signed-in Codex CLI and never runs in CI. Run it on the
 # machine that holds that sign-in, from the klaus-figma artifact of a run:
 #   node scripts/klaus/adapters/figma/relay/relay.mjs --run <run id> --repo <owner/name>
+# klaus:begin figma-ledger
+#
+# The relay records what reached Figma in the repository variable KLAUS_FIGMA_LEDGER, with
+# `gh variable set`, after each run that sends or reconciles. The Run Klaus step passes it to the
+# Figma generator, so CI plans only what the relay has not sent. Anyone with write access to the
+# repository can write a repository variable (a collaborator, for a personal account's repository);
+# a workflow's GITHUB_TOKEN cannot. A missing or malformed variable is a warning, never a stop.
+# Its marks count only for versions CI generated. Every version the variable alone marks sent,
+# and every mark it ignored, is named in the run report, so a wrong mark shows.
+#
+# The first setup of the Figma output, in this order:
+#   1. Run this workflow by hand with figma_first_load on. It writes data for every planned
+#      component of the newest release to the klaus-figma artifact, with no spending cap.
+#   2. Apply that artifact's .zip in Figma with the Klaus plugin. The relay does not send it.
+#   3. On the relay machine, record what the plugin wrote, which also writes KLAUS_FIGMA_LEDGER:
+#        node scripts/klaus/adapters/figma/relay/relay.mjs --reconcile --run <that run's id> --repo <owner/name>
+#   4. From then on, run the relay nightly on the klaus-figma artifact of the newest run.
+# klaus:end figma-ledger
 #
 # Code that is not on the default branch must not get the deploy token. Three things
 # keep it away, and they are in this file in this order:
@@ -60,6 +78,13 @@ on:
         description: Plan and estimate only. Writes nothing.
         type: boolean
         default: false
+      # klaus:begin figma-first-load
+      # For the Klaus Figma plugin's first load. See "The first setup of the Figma output" above.
+      figma_first_load:
+        description: "Figma first load: data for every planned component of the newest release, with no spending cap, for the Klaus plugin to apply."
+        type: boolean
+        default: false
+      # klaus:end figma-first-load
 
 permissions:
   contents: read
@@ -303,12 +328,22 @@ jobs:
       # The only step with secrets. It builds Storybook, deploys it, and writes the Figma data.
       # The Storybook adapter starts its build without the secrets, and gives the token to
       # the Vercel calls alone.
+      # klaus:begin figma-ledger
+      # KLAUS_FIGMA_LEDGER is a variable, not a secret: what the relay sent, read by the Figma
+      # generator before it plans. An unset variable arrives as empty text.
+      # klaus:end figma-ledger
       - name: Run Klaus
         if: steps.pick.outputs.proceed == 'true'
         env:
           EVENT: ${{ github.event_name }}
           TAG: ${{ github.ref_name }}
           DRY_RUN: ${{ inputs.dry_run }}
+          # klaus:begin figma-first-load
+          FIGMA_FIRST_LOAD: ${{ inputs.figma_first_load }}
+          # klaus:end figma-first-load
+          # klaus:begin figma-ledger
+          KLAUS_FIGMA_LEDGER: ${{ vars.KLAUS_FIGMA_LEDGER }}
+          # klaus:end figma-ledger
           # klaus:secrets
         run: |
           args=(run --model-free --config "$KLAUS_CONFIG")
@@ -318,6 +353,9 @@ jobs:
             *) args+=(--trigger manual) ;;
           esac
           if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          # klaus:begin figma-first-load
+          if [ "$FIGMA_FIRST_LOAD" = "true" ]; then args+=(--first-load figma); fi
+          # klaus:end figma-first-load
           node "$KLAUS/frame/cli.mjs" "${args[@]}"
 
       - name: Keep Klaus state for the next run
@@ -337,6 +375,8 @@ jobs:
 
       # klaus:begin figma-artifact
       # The relay downloads this by name: relay.mjs --run <id> --artifact klaus-figma.
+      # After a run with figma_first_load on, it holds the whole first load: the Klaus plugin applies
+      # its .zip, and the relay refuses to send it.
       - name: Keep the Figma data for the relay
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

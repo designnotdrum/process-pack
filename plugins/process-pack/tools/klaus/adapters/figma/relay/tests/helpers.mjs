@@ -42,7 +42,7 @@ const browser = {
 /** A cap no test reaches unless it means to. At measured costs, the frame's default allows about one call. */
 export const ROOMY = { outputs: { figma: { enabled: true, target: KEY } }, spendingCap: { maxRelayTokens: 10000000 } };
 
-export async function generatedRepo({ components = ["Button", "Card"], perFile = 1, release = "v1.0.0", version = "1.0.0", config = ROOMY, purpose } = {}) {
+export async function generatedRepo({ components = ["Button", "Card"], perFile = 1, release = "v1.0.0", version = "1.0.0", config = ROOMY, purpose, firstLoad = false } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "klaus-relay-"));
   if (config) writeFileSync(path.join(root, "klaus.config.json"), JSON.stringify(config));
   const ctx = {
@@ -57,9 +57,11 @@ export async function generatedRepo({ components = ["Button", "Card"], perFile =
     releases: [release],
     unwrittenFromLastRun: [],
     dryRun: false,
+    firstLoad,
     secret() {},
   };
-  const figma = createAdapter(browser);
+  // No shared record: what the relay sent is the business of the relay's tests, not the generator's.
+  const figma = createAdapter(browser, { env: {} });
   await figma.write(await figma.plan(ctx), ctx);
   const folder = path.join(root, ".klaus/figma", release);
   const manifest = JSON.parse(readFileSync(path.join(folder, "manifest.json"), "utf8"));
@@ -68,18 +70,26 @@ export async function generatedRepo({ components = ["Button", "Card"], perFile =
 
 /**
  * Runs the relay as a command, with the stub codex and gh first on PATH.
- * @returns {Promise<{ code: number, stdout: string, stderr: string, calls: Array<{ args: string[], stdin: Buffer }>, report: object | null }>}
+ *
+ * variable is the text of the KLAUS_FIGMA_LEDGER variable before the run, or undefined when it is
+ * not set. variableGetError and variableSetError make the stub gh fail that command with the text.
+ * @returns {Promise<{ code: number, stdout: string, stderr: string, calls: Array<{ args: string[], stdin: Buffer }>, report: object | null, variable: string | null }>}
  */
-export function relay(root, args, { scenarios = "success", mcp, ghSource, ghRun, ghCompare, otherRunLedger, names, resultText, message, otherRunMarks, warnings, figmaSeed, failDrawing } = {}) {
+export function relay(root, args, { scenarios = "success", mcp, ghSource, ghRun, ghCompare, otherRunLedger, names, resultText, message, otherRunMarks, warnings, figmaSeed, failDrawing, variable, variableGetError, variableSetError } = {}) {
   const log = mkdtempSync(path.join(tmpdir(), "klaus-relay-log-"));
   const ghLog = path.join(log, "gh.json");
+  const variableFile = path.join(log, "variable.txt");
+  if (variable !== undefined) writeFileSync(variableFile, variable);
   const env = {
     ...process.env,
     PATH: `${STUBS}${path.delimiter}${process.env.PATH}`,
     STUB_CODEX_LOG: path.join(log, "codex"),
     STUB_CODEX_SCENARIOS: scenarios,
     STUB_GH_LOG: ghLog,
+    STUB_GH_VARIABLE: variableFile,
   };
+  if (variableGetError !== undefined) env.STUB_GH_VARIABLE_GET_ERROR = variableGetError;
+  if (variableSetError !== undefined) env.STUB_GH_VARIABLE_SET_ERROR = variableSetError;
   if (mcp !== undefined) env.STUB_CODEX_MCP = JSON.stringify(mcp);
   if (failDrawing !== undefined) env.STUB_CODEX_FIGMA_FAIL_DRAWING = failDrawing;
   if (figmaSeed !== undefined) {
@@ -115,7 +125,8 @@ export function relay(root, args, { scenarios = "success", mcp, ghSource, ghRun,
       }
       // Every gh call, in order. The download is the call that starts with "run".
       const gh = existsSync(ghLog) ? readFileSync(ghLog, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
-      resolve({ code: error ? error.code : 0, stdout, stderr, calls, report, reportError, gh });
+      const after = existsSync(variableFile) ? readFileSync(variableFile, "utf8") : null;
+      resolve({ code: error ? error.code : 0, stdout, stderr, calls, report, reportError, gh, variable: after });
     });
   });
 }

@@ -75,6 +75,8 @@ export function renderWorkflow({ template, config, install, installSteps, corepa
     schedule: config.trigger.mode === "schedule",
     "figma-build": figma,
     "figma-artifact": figma,
+    "figma-first-load": figma,
+    "figma-ledger": figma,
     captures: captures !== "",
     environment: Boolean(config.trigger.secretsEnvironment),
   };
@@ -100,7 +102,8 @@ export function renderWorkflow({ template, config, install, installSteps, corepa
         out.push(...installLines({ install, installSteps, corepack }, indent.length));
         skipping = name;
       } else if (keep[name]) {
-        kept.push(name);
+        // A part can appear in several places. It is listed once.
+        if (!kept.includes(name)) kept.push(name);
       } else {
         skipping = name;
       }

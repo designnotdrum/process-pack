@@ -8,6 +8,9 @@
  * run options:
  *   --release <tag>      The release tag. Required when --trigger is release.
  *   --dry-run            Plan and estimate only. Writes no design output, state or report file.
+ *   --first-load <output>  Write every item the output's plan lists for the newest release, with no
+ *                        spending cap, even when the state says that release is covered. For the Figma
+ *                        output this is the data the Klaus plugin applies in one run.
  *   --model-free         Skip outputs whose adapter needs a model or a signed-in tool (CI uses this).
  *   --json               Print the run report instead of a summary.
  *   --config <file>      Default klaus.config.json
@@ -39,6 +42,7 @@ const OPTIONS = {
   trigger: { type: "string" },
   release: { type: "string" },
   "dry-run": { type: "boolean" },
+  "first-load": { type: "string" },
   "model-free": { type: "boolean" },
   json: { type: "boolean" },
   config: { type: "string", default: "klaus.config.json" },
@@ -48,7 +52,7 @@ const OPTIONS = {
   adapters: { type: "string", default: fileURLToPath(new URL("../adapters", import.meta.url)) },
 };
 
-const USAGE = "Usage: cli.mjs validate | cli.mjs run --trigger <release|schedule|manual> [--release <tag>] [--dry-run] [--model-free] [--json]";
+const USAGE = "Usage: cli.mjs validate | cli.mjs run --trigger <release|schedule|manual> [--release <tag>] [--dry-run] [--first-load <output>] [--model-free] [--json]";
 
 function listReleases(pattern) {
   // Two sorts: the last one given is the main key. Date order, then version order for tags made together.
@@ -131,6 +135,7 @@ async function runCommand(values) {
     state,
     modelFree: values["model-free"],
     dryRun: values["dry-run"],
+    firstLoad: values["first-load"] ?? null,
     log: (line) => console.error(line),
   });
 

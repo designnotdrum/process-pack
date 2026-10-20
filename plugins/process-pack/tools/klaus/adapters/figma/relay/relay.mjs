@@ -5,7 +5,7 @@
  *
  *   node relay.mjs <folder> [options]
  *   node relay.mjs --run <id> [--repo <owner/name>] [--artifact <name>] [--release <release>] [options]
- *   node relay.mjs --reconcile [options]
+ *   node relay.mjs --reconcile [<folder> | --run <id> [--artifact <name>] [--release <release>]] [options]
  *
  * <folder> is a release folder the generator wrote, `.klaus/figma/<release>/`,
  * holding manifest.json and the data files figma-001.json, figma-002.json, ...
@@ -37,7 +37,21 @@
  * and the report lists them, and a changed unit is never touched. The same rules hold: the Figma
  * file is the settings' file, the code is written by the relay and checked after it reached
  * Figma, and only the tool's result is read, never the model's reply. The call and its tokens are
- * counted under figma-relay and the spending cap applies.
+ * counted under figma-relay and the spending cap applies. Given a release folder or --run, reconcile also
+ * looks for the component versions that folder's manifest lists, for a machine whose ledger never saw
+ * them: the plugin's first load is generated in CI, not on the relay machine.
+ *
+ * KLAUS_FIGMA_LEDGER, a repository Actions variable, holds the sent and changed marks of every relay
+ * machine. The relay reads it with `gh variable get` before it plans and merges it into the ledger it
+ * plans from, but never into its own ledger file. Its marks count only for the versions the relay's
+ * ledger or the release lists; the rest are ignored and named in the report. After a run that changed its ledger it writes both
+ * sets of marks back with `gh variable set`, and the Klaus workflow passes the variable to the
+ * generator, so CI stops planning what was sent (variable.mjs). A version only the variable marks
+ * sent is named in the report with a warning, so a forged record shows on every run.
+ * No gh, no permission, a missing or a malformed variable is a warning, and the local ledger is kept.
+ *
+ * A manifest marked firstLoad (the workflow's figma_first_load input) is for the Klaus plugin. The
+ * relay refuses to send it, and reconcile records what the plugin wrote.
  *
  * A changed token value is written only by the call that sends the release's last component unit,
  * so a version moved to Older versions in an earlier call is frozen in the colours it shipped with
@@ -51,7 +65,7 @@
  *
  * Options:
  *   --reconcile            Mark the generated components the plugin wrote as sent, in one read-only call.
- *                          Takes no release folder, --run, --repo, --artifact or --release.
+ *                          With a release folder or --run, the versions its manifest lists are looked for too.
  *   --root <dir>           The repo. klaus.config.json, the ledger and the reports are under it. Default: here.
  *   --config <file>        Default klaus.config.json. It must name the Figma file (outputs.figma.target).
  *   --ledger <file>        Default <outputDir>/ledger.json, as the generator keeps it.
@@ -66,6 +80,7 @@
  *                          hook adds to the tokens.
  *   --dry-run              Say what would be sent and what it would cost. Makes no call.
  *   --json                 Print the run report.
+ *   --repo <owner/name>    The repository of --run, and of KLAUS_FIGMA_LEDGER. Default: the one gh finds in --root.
  *   --codex <path>, --gh <path>   The executables. Default: found on PATH.
  *
  * Exit 0 when every unit was sent or deferred, 1 when a unit failed, 2 on an
@@ -91,6 +106,8 @@ import { CHANGED, entrySent, entryStatus, GENERATED, generatedComponents, markGe
 import { MAX_CODE_CHARS, readOptions, relayCallTokens } from "../settings.mjs";
 import { decodeResult, FIGMA_SERVER, FIGMA_TOOL, keyIn, parseEvents, readCodeResult, relayTokens, resultText, summarizeEvents } from "./events.mjs";
 import { lookupPlan, readFound, reconcileCode } from "./reconcile.mjs";
+import { ignoredWarning, mergeMarks, SHARED_LEDGER_VARIABLE, sentOnlyInShared, sentOnlySentence, sentOnlyWarning, usableMarks } from "../shared-ledger.mjs";
+import { publishVariable, readVariable } from "./variable.mjs";
 
 /**
  * The relaying model. On 2026-10-18 gpt-6-luna at low effort changed a 20,582-character file on
@@ -546,19 +563,78 @@ export async function runRelay(options) {
   const settings = readSettings(root, options.config);
   const ledgerPath = options.ledger ? path.resolve(root, options.ledger) : path.join(root, settings.outputDir, "ledger.json");
   if (options.reconcile) {
-    const stray = [options.folder && "a release folder", options.run && "--run", options.repo && "--repo", options.artifact && "--artifact", options.release && "--release"].filter(Boolean);
-    if (stray.length > 0) throw new UserError(`--reconcile reads the ledger and Figma, and takes no release folder or artifact. Remove ${stray.join(", ")}.`);
-    return reconcileLedger(options, { root, settings, ledgerPath });
-  }
-  if (Boolean(options.folder) === Boolean(options.run)) throw new UserError("Give a release folder or --run <id>, not both and not neither.");
+    // A release folder or an artifact is optional here: its manifest adds the versions it holds to the
+    // ones to look for, for a machine whose ledger never saw them, such as after the plugin's first load.
+    if (options.folder && options.run) throw new UserError("--reconcile takes a release folder or --run <id>, not both.");
+    const stray = [!options.run && options.artifact && "--artifact", !options.run && options.release && "--release"].filter(Boolean);
+    if (stray.length > 0) throw new UserError(`--reconcile takes ${stray.join(" and ")} only with --run <id>.`);
+    if (!options.folder && !options.run) return reconcileLedger(options, { root, settings, ledgerPath, manifest: null, source: null });
+    if (options.folder) {
+      const folder = path.resolve(root, options.folder);
+      return reconcileLedger(options, { root, settings, ledgerPath, manifest: manifestFor(folder, settings, "nothing was looked for"), source: folder });
+    }
+  } else if (Boolean(options.folder) === Boolean(options.run)) throw new UserError("Give a release folder or --run <id>, not both and not neither.");
   if (!options.run) return relayRelease(options, { root, settings, ledgerPath, folder: path.resolve(root, options.folder), source: null });
   const downloaded = downloadArtifact({ gh: options.gh ?? "gh", run: options.run, repo: options.repo, artifact: options.artifact ?? DEFAULT_ARTIFACT, cwd: root });
   try {
     const source = `the ${options.artifact ?? DEFAULT_ARTIFACT} artifact of run ${options.run}`;
-    return await relayRelease(options, { root, settings, ledgerPath, folder: findReleaseFolder(downloaded, options.release), source });
+    const folder = findReleaseFolder(downloaded, options.release);
+    if (options.reconcile) return await reconcileLedger(options, { root, settings, ledgerPath, manifest: manifestFor(folder, settings, "nothing was looked for"), source });
+    return await relayRelease(options, { root, settings, ledgerPath, folder, source });
   } finally {
     rmSync(downloaded, { recursive: true, force: true });
   }
+}
+
+/**
+ * Reads a release folder's manifest and checks that it is for the Figma file the settings name.
+ * `stopped` says what the refusal means for this run.
+ */
+function manifestFor(folder, settings, stopped) {
+  const manifest = readManifest(folder);
+  // The Figma file comes from the repo's settings. The manifest only has to agree with them.
+  if (!FILE_KEY.test(settings.fileKey)) throw new UserError(`outputs.figma.target is not a Figma file key the relay can use.`);
+  if (manifest.fileKey !== settings.fileKey) {
+    throw new UserError(`The manifest is for Figma file ${JSON.stringify(manifest.fileKey)}, but klaus.config.json names ${settings.fileKey}. The relay works only on the file the settings name, so ${stopped}.`);
+  }
+  return manifest;
+}
+
+/** True for a ledger entry of the shape the generator writes. */
+const wellFormedEntry = (entry) =>
+  entry !== null && typeof entry === "object" &&
+  (entry.kind === "component" ? typeof entry.name === "string" && typeof entry.version === "string" : entry.kind === "screen" && typeof entry.route === "string" && typeof entry.release === "string");
+
+/** The manifest's ledger entries of the shape the generator writes. readManifest checks those of the data files. */
+const releaseEntriesOf = (manifest) => (manifest ? Object.values(manifest.ledgerEntries ?? {}).filter(wellFormedEntry) : []);
+
+/** Reads KLAUS_FIGMA_LEDGER for a run, with the repo --repo names or the one gh finds in root. */
+const readShared = (options, root, fileKey) => readVariable({ gh: options.gh ?? "gh", repo: options.repo, cwd: root, fileKey });
+
+/**
+ * Publishes the sent and changed marks of the local ledger and of the variable as read at the start,
+ * after a run that changed the local ledger, unless it was a dry run.
+ * @param {string[]} sentOnlyInVariable  The versions only the variable marks sent, already warned about.
+ * @param {string[]} ignoredInVariable  The variable's marks for versions this side does not list, already warned about.
+ * @returns {{ variable: string, read: string, published: boolean | null, bytes: number | null, sentOnlyInVariable: object, ignoredInVariable: object }}  For the report.
+ */
+function shareMarks({ options, root, fileKey, ledgerPath, shared, changed, warnings, sentOnlyInVariable, ignoredInVariable }) {
+  const details = {
+    variable: SHARED_LEDGER_VARIABLE,
+    read: shared.status,
+    published: null,
+    bytes: null,
+    sentOnlyInVariable: { count: sentOnlyInVariable.length, versions: sentOnlyInVariable },
+    ignoredInVariable: { count: ignoredInVariable.length, versions: ignoredInVariable },
+  };
+  if (!changed || options.dryRun) return details;
+  // The local file holds this machine's marks only. All of the variable's are added here, also the
+  // ones this machine ignored, because another machine may have sent those versions.
+  const ledger = readLedger(ledgerPath);
+  if (shared.ledger) mergeMarks(ledger, shared.ledger);
+  const outcome = publishVariable({ gh: options.gh ?? "gh", repo: options.repo, cwd: root, fileKey, ledger, read: shared });
+  if (outcome.warning) warnings.push(outcome.warning);
+  return { ...details, published: outcome.published, bytes: outcome.bytes };
 }
 
 /** Relays the release in folder. source names the artifact it came from, or is null for a local folder. */
@@ -571,12 +647,11 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
   const effort = options.effort ?? DEFAULT_EFFORT;
   const maxCalls = options.maxCalls ?? null;
   const timeoutMs = (options.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
-  const manifest = readManifest(folder);
-  // The Figma file comes from the repo's settings. The manifest only has to agree with them.
+  const manifest = manifestFor(folder, settings, "nothing was sent");
   const fileKey = settings.fileKey;
-  if (!FILE_KEY.test(fileKey)) throw new UserError(`outputs.figma.target is not a Figma file key the relay can use.`);
-  if (manifest.fileKey !== fileKey) {
-    throw new UserError(`The manifest is for Figma file ${JSON.stringify(manifest.fileKey)}, but klaus.config.json names ${fileKey}. The relay writes only to the file the settings name, so nothing was sent.`);
+  if (manifest.firstLoad === true) {
+    const again = source ? `--run ${options.run}` : "the same folder";
+    throw new UserError(`${source ?? folder} is a first load for the Klaus plugin, so the relay does not send it: the plugin applies it in one run for nothing, and each relay call costs about 70,000 to 100,000 relay tokens. Apply it with the plugin, then run the relay with --reconcile and ${again} to record what the plugin wrote.`);
   }
   const prepared = prepareCode(folder, manifest, settings.options);
 
@@ -589,7 +664,19 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
     warnings.push(error.message);
   }
 
-  const ledger = readLedger(ledgerPath);
+  // This machine's own ledger, and what every relay machine has sent. The run plans from both together.
+  const shared = readShared(options, root, fileKey);
+  if (shared.warning) warnings.push(shared.warning);
+  const own = readLedger(ledgerPath);
+  // Anyone who can write a repository variable can write it. Its marks count only for the versions
+  // this ledger or this release lists, and a unit only it marks sent is named.
+  const releaseEntries = releaseEntriesOf(manifest);
+  const { usable, ignored: ignoredInVariable } = usableMarks(shared, own, releaseEntries);
+  const ledger = usable ? mergeMarks(readLedger(ledgerPath), usable) : own;
+  const sentOnlyInVariable = sentOnlyInShared(own, usable, releaseEntries);
+  if (ignoredInVariable.length > 0) warnings.push(ignoredWarning(ignoredInVariable));
+  if (sentOnlyInVariable.length > 0) warnings.push(sentOnlyWarning(sentOnlyInVariable, "the relay did not send"));
+  let ledgerChanged = false;
   const startedAt = now();
   const keepEvents = options.eventsDir ? path.resolve(root, options.eventsDir) : null;
   if (keepEvents) mkdirSync(keepEvents, { recursive: true });
@@ -714,13 +801,14 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
       }
       if (marks.length > 0) {
         // Apply this file's marks to the ledger as it is now, so a mark another run wrote
-        // since this run read it is kept.
+        // since this run read it is kept. The variable's marks stay out of the file.
         const fresh = readLedger(ledgerPath);
         for (const [entry, status] of marks) {
           recordEntry(fresh, entry, status);
           recordEntry(ledger, entry, status);
         }
         writeJsonFile(ledgerPath, fresh);
+        ledgerChanged = true;
       }
 
       const status = sentHere === pending.length ? "sent" : sentHere === 0 ? "failed" : "partly sent";
@@ -741,9 +829,12 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }
+  const sharedLedger = shareMarks({ options, root, fileKey, ledgerPath, shared, changed: ledgerChanged, warnings, sentOnlyInVariable, ignoredInVariable });
 
   // Screenshot uploads go through another tool, which the relay does not call yet.
-  const uploads = (manifest.uploads ?? []).filter((upload) => !entrySent(ledger, manifest.ledgerEntries[upload.id] ?? { kind: "screen", route: upload.screen, release: upload.release }));
+  // An upload's id is data, so its entry is read as an own property only.
+  const uploadEntry = (upload) => (Object.hasOwn(manifest.ledgerEntries ?? {}, upload.id) && wellFormedEntry(manifest.ledgerEntries[upload.id]) ? manifest.ledgerEntries[upload.id] : { kind: "screen", route: upload.screen, release: upload.release });
+  const uploads = (manifest.uploads ?? []).filter((upload) => !entrySent(ledger, uploadEntry(upload)));
   for (const upload of uploads) deferred.push({ id: upload.id, kind: "screen", reason: "upload-not-supported" });
   if (uploads.length > 0) {
     warnings.push(`The relay does not upload screenshots yet, so ${plural(uploads.length, "upload")}${manifest.afterUploads ? " and the retention file" : ""} were not sent.`);
@@ -760,9 +851,10 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
   // A call that ended without a token count is left out of actual tokens, as for a send. The cap counted its prediction.
   const actual = { calls: dryRun ? 0 : totals.calls, tokens: dryRun ? 0 : totals.measured, usd: 0 };
   const waitingNote = waiting > 0 ? ` ${plural(waiting, "token change")} waiting for the release's last call.` : "";
+  const variableNote = sentOnlySentence(sentOnlyInVariable.length);
   const summary = dryRun
-    ? `Figma relay, dry run: would send ${plural(unitRecords.filter((u) => u.status === "would send").length, "unit")} in ${plural(estimated.calls, "call")}, about ${estimated.tokens} relay tokens; ${deferred.length} deferred.`
-    : `Figma relay: sent ${sent.length} of ${plural(planned, "unit")} in ${plural(actual.calls, "call")}, ${actual.tokens} relay tokens; ${failed.length} failed, ${deferred.length} deferred.${waitingNote}`;
+    ? `Figma relay, dry run: would send ${plural(unitRecords.filter((u) => u.status === "would send").length, "unit")} in ${plural(estimated.calls, "call")}, about ${estimated.tokens} relay tokens; ${deferred.length} deferred.${variableNote}`
+    : `Figma relay: sent ${sent.length} of ${plural(planned, "unit")} in ${plural(actual.calls, "call")}, ${actual.tokens} relay tokens; ${failed.length} failed, ${deferred.length} deferred.${waitingNote}${variableNote}`;
   const outputRecord = {
     output: REPORT_OUTPUT,
     status: dryRun ? "dry-run" : "ok",
@@ -788,6 +880,8 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
         maxCalls,
         // Token values this run's calls changed in Figma, and those they held back for the release's last call.
         tokenChanges: { written: tokenWritten.size, waiting },
+        // KLAUS_FIGMA_LEDGER: how it read at the start, and whether this run wrote it.
+        sharedLedger,
         files: fileRecords,
         units: unitRecords,
       },
@@ -874,7 +968,7 @@ function reconcileSummary({ total, pages, changed, dryRun, stopped, failed, reco
  * writes. Each generated component version whose `<Name> <version>` is in the list becomes sent.
  * The rest stay generated, and a changed unit is never touched.
  */
-async function reconcileLedger(options, { settings, ledgerPath, root }) {
+async function reconcileLedger(options, { settings, ledgerPath, root, manifest, source }) {
   const now = options.now ?? (() => new Date());
   const log = options.log ?? (() => {});
   const codex = options.codex ?? "codex";
@@ -887,7 +981,21 @@ async function reconcileLedger(options, { settings, ledgerPath, root }) {
   if (!FILE_KEY.test(fileKey)) throw new UserError(`outputs.figma.target is not a Figma file key the relay can use.`);
 
   const startedAt = now();
-  const ledger = readLedger(ledgerPath);
+  const warnings = [];
+  const shared = readShared(options, root, fileKey);
+  if (shared.warning) warnings.push(shared.warning);
+  const own = readLedger(ledgerPath);
+  // The variable's marks count only for the versions this ledger or the release folder lists.
+  const { usable, ignored: ignoredInVariable } = usableMarks(shared, own, releaseEntriesOf(manifest));
+  if (ignoredInVariable.length > 0) warnings.push(ignoredWarning(ignoredInVariable));
+  const ledger = usable ? mergeMarks(readLedger(ledgerPath), usable) : readLedger(ledgerPath);
+  // The component versions a release folder holds count as generated here too, unless a ledger has them as sent or changed.
+  const fromManifest = releaseEntriesOf(manifest).filter((entry) => entry.kind === "component").map(({ name, version }) => ({ kind: "component", name, version }));
+  for (const entry of fromManifest) recordEntry(ledger, entry, GENERATED);
+  // The versions this checkout knows of that only the variable marks sent, so reconcile does not look for them.
+  const known = [...Object.entries(own.components).flatMap(([name, versions]) => Object.keys(versions).map((version) => ({ kind: "component", name, version }))), ...fromManifest];
+  const sentOnlyInVariable = sentOnlyInShared(own, usable, known);
+  if (sentOnlyInVariable.length > 0) warnings.push(sentOnlyWarning(sentOnlyInVariable, "reconcile did not look for"));
   const generated = generatedComponents(ledger);
   const { pages, looked, skipped } = lookupPlan(generated, settings.options);
   const changedLabels = [];
@@ -895,7 +1003,6 @@ async function reconcileLedger(options, { settings, ledgerPath, root }) {
     for (const [version, status] of Object.entries(versions)) if (status === CHANGED) changedLabels.push(labelOf({ kind: "component", name, version }));
   }
 
-  const warnings = [];
   const unitRecords = [];
   const deferred = [];
   for (const { entry, reason } of skipped) {
@@ -967,13 +1074,15 @@ async function reconcileLedger(options, { settings, ledgerPath, root }) {
       } else {
         const found = looked.filter((_, i) => outcome.found[i]);
         for (const entry of looked) if (!found.includes(entry)) missing.push(entry);
-        if (found.length > 0) {
+        if (found.length > 0 || fromManifest.length > 0) {
           // Apply the marks to the ledger as it is now, so a mark another run wrote since this run read it is kept.
           // A version that is no longer generated by now is left as it is, and the report says it was not marked.
           // This narrows the race with another run and does not close it: the relay takes no lock (README, Limits).
+          // The release folder's versions are kept as generated, so a later reconcile looks for the missing ones again.
           const fresh = readLedger(ledgerPath);
+          for (const entry of fromManifest) recordEntry(fresh, entry, GENERATED);
           for (const entry of found) (markGeneratedAsSent(fresh, entry) ? reconciled : notMarked).push(entry);
-          if (reconciled.length > 0) writeJsonFile(ledgerPath, fresh);
+          if (reconciled.length > 0 || fromManifest.length > 0) writeJsonFile(ledgerPath, fresh);
         }
         for (const entry of reconciled) unitRecords.push({ id: labelOf(entry), kind: "component", status: "reconciled" });
         for (const entry of notMarked) unitRecords.push({ id: labelOf(entry), kind: "component", status: "not marked", note: "Its status changed while the call ran, so the relay left it as it is." });
@@ -999,11 +1108,12 @@ async function reconcileLedger(options, { settings, ledgerPath, root }) {
     warnings.push("The reconcile call alone needs more relay tokens than spendingCap.maxRelayTokens allows, so it will never be made at this cap. Raise the cap.");
   } else if (stopped) warnings.push(`The relay stopped before the call, which would pass the ${stopped}.`);
   for (const labelText of changedLabels) unitRecords.push({ id: labelText, kind: "component", status: "changed", note: "Not touched. Delete the set in Figma, then run the relay." });
+  const sharedLedger = shareMarks({ options, root, fileKey, ledgerPath, shared, changed: reconciled.length > 0, warnings, sentOnlyInVariable, ignoredInVariable });
 
   // A call that ended without a token count is left out of actual tokens, as for a send. The cap counted its prediction.
   const actual = { calls: fileRecord && fileRecord.calls === 1 && !dryRun ? 1 : 0, tokens: callTokens ?? 0, usd: 0 };
   const total = looked.length;
-  const summary = reconcileSummary({ total, pages: pages.length, changed: changedLabels.length, dryRun, stopped, failed: failed.length > 0, reconciled: reconciled.length, missing: missing.length, predicted: estimated.tokens, tokens: callTokens });
+  const summary = reconcileSummary({ total, pages: pages.length, changed: changedLabels.length, dryRun, stopped, failed: failed.length > 0, reconciled: reconciled.length, missing: missing.length, predicted: estimated.tokens, tokens: callTokens }) + sentOnlySentence(sentOnlyInVariable.length);
   const outputRecord = {
     output: REPORT_OUTPUT,
     status: dryRun ? "dry-run" : "ok",
@@ -1021,7 +1131,8 @@ async function reconcileLedger(options, { settings, ledgerPath, root }) {
       links: [{ label: "Figma file", url: `https://www.figma.com/design/${fileKey}` }],
       details: {
         mode: "reconcile",
-        folder: null,
+        // The release folder or artifact whose versions were looked for too, or null for the ledger alone.
+        folder: source ?? null,
         ledger: ledgerPath,
         model,
         effort,
@@ -1033,6 +1144,7 @@ async function reconcileLedger(options, { settings, ledgerPath, root }) {
         notMarked: notMarked.map(labelOf),
         missing: missing.map(labelOf),
         changed: changedLabels,
+        sharedLedger,
         files: fileRecord ? [fileRecord] : [],
         units: unitRecords,
       },
@@ -1069,6 +1181,7 @@ export function describeRun(report, reportFile) {
     if (details.missing.length > 0) lines.push(`  missing, still generated: ${details.missing.join(", ")}`);
     if (details.changed.length > 0) lines.push(`  changed, left alone: ${details.changed.join(", ")}`);
   }
+  if (details.sharedLedger?.published) lines.push(`  ${details.sharedLedger.variable} updated, ${details.sharedLedger.bytes} bytes`);
   for (const failure of output.failed) lines.push(`  failed ${failure.id}: ${failure.error}`);
   for (const warning of output.warnings) lines.push(`  note: ${warning}`);
   if (reportFile) lines.push(`Report: ${reportFile}`);

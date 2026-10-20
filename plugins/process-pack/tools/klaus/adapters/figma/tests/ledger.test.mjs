@@ -23,6 +23,7 @@ import {
   screenSent,
   SENT,
 } from "../ledger.mjs";
+import { listedIn } from "../shared-ledger.mjs";
 
 function ledgerFile(value) {
   const file = path.join(mkdtempSync(path.join(tmpdir(), "klaus-ledger-")), "ledger.json");
@@ -144,4 +145,27 @@ test("markGeneratedAsSent sends a generated unit and never touches a changed or 
   assert.equal(markGeneratedAsSent(ledger, of("1.2.0")), false);
   assert.equal(markGeneratedAsSent(ledger, of("9.9.9")), false, "a version the ledger does not hold is not added");
   assert.deepEqual(ledger.components.Button, { "1.0.0": SENT, "1.1.0": CHANGED, "1.2.0": SENT });
+});
+
+test("names of Object.prototype are not present versions or components unless the ledger holds them as its own", () => {
+  const file = path.join(mkdtempSync(path.join(tmpdir(), "klaus-ledger-")), "ledger.json");
+  writeFileSync(file, '{"version":2,"components":{"Button":{"1.0.0":"generated"},"Card":{"toString":"sent"}},"screens":{"/":{"v1":"generated"}}}');
+  const ledger = readLedger(file);
+  const listed = listedIn(ledger);
+  for (const key of ["toString", "constructor", "__proto__", "hasOwnProperty"]) {
+    const version = { kind: "component", name: "Button", version: key };
+    assert.equal(entryStatus(ledger, version), undefined, `Button ${key}`);
+    assert.equal(componentSent(ledger, "Button", key), false, `Button ${key}`);
+    assert.equal(listed(version), false, `Button ${key} is not listed`);
+    const name = { kind: "component", name: key, version: "1.0.0" };
+    assert.equal(entryStatus(ledger, name), undefined, `${key} 1.0.0`);
+    assert.equal(anyVersionSent(ledger, key), false, key);
+    assert.equal(listed(name), false, `${key} 1.0.0 is not listed`);
+    assert.equal(entryStatus(ledger, { kind: "screen", route: "/", release: key }), undefined, `/ ${key}`);
+    assert.equal(screenSent(ledger, "/", key), false, `/ ${key}`);
+  }
+  // A version the ledger holds as its own is read, whatever its name.
+  assert.equal(entryStatus(ledger, { kind: "component", name: "Card", version: "toString" }), SENT);
+  assert.equal(componentSent(ledger, "Card", "toString"), true);
+  assert.equal(listed({ kind: "component", name: "Card", version: "toString" }), true);
 });

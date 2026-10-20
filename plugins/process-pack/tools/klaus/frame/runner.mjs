@@ -9,6 +9,10 @@
  *
  * One output failing does not stop the others. A failed output keeps its old
  * state, so its next run covers the same releases again.
+ *
+ * A first load (the firstLoad option) is for one output: it covers the newest release even when
+ * the state says that release is covered, and the spending cap does not apply, so every item the
+ * plan lists is written. The Figma output uses it for the data the Klaus plugin applies in one run.
  */
 import { assertAdapter, normalizePlan } from "./adapter.mjs";
 import { applyCap, indexEstimate } from "./cap.mjs";
@@ -58,8 +62,12 @@ function redactDeep(value, redact) {
   return value;
 }
 
+/** No limit: a first load writes every item its plan lists. */
+const NO_CAP = Object.freeze({ maxComponentWrites: Number.POSITIVE_INFINITY, maxRelayTokens: Number.POSITIVE_INFINITY });
+
 async function runOutput({ name, settings, adapter, run }) {
   const { config, inventory, trigger, release, releases, previous, usageById, modelFree, dryRun, env, now, log } = run;
+  const firstLoad = run.firstLoad === name;
   const redact = redactor(settings, env);
 
   if (!adapter) {
@@ -76,7 +84,8 @@ async function runOutput({ name, settings, adapter, run }) {
 
   const entry = previous.outputs[name];
   const unwritten = entry?.unwritten ?? [];
-  const { covered, notes } = releasesToCover({ releases, trigger, release, lastRelease: entry?.lastRelease });
+  // A first load starts from the newest release, as an output with no recorded run does.
+  const { covered, notes } = releasesToCover({ releases, trigger, release, lastRelease: firstLoad ? undefined : entry?.lastRelease });
   if (covered.length === 0 && unwritten.length === 0) {
     return { record: outputRecord(name, { status: "skipped", reason: "up-to-date", warnings: notes }) };
   }
@@ -103,6 +112,7 @@ async function runOutput({ name, settings, adapter, run }) {
     releases: covered,
     unwrittenFromLastRun: unwritten,
     dryRun,
+    firstLoad,
     secret(secretName) {
       if (!settings.secrets.includes(secretName)) {
         throw new Error(`"${secretName}" is not listed under secrets for the ${name} output.`);
@@ -113,11 +123,13 @@ async function runOutput({ name, settings, adapter, run }) {
 
   let step = "plan";
   let planWarning = null;
+  let planWarnings = [];
   let plan;
   let capped;
   let result = { written: [], failed: [], actual: zeroCost() };
   try {
     plan = normalizePlan(await adapter.plan(ctx), name);
+    planWarnings = (plan.warnings ?? []).map((warning) => redact(warning));
     const planned = new Set(plan.items.map((item) => item.id));
     const dropped = unwritten.filter((id) => usageById.has(id) && !planned.has(id));
     if (dropped.length > 0) {
@@ -126,7 +138,7 @@ async function runOutput({ name, settings, adapter, run }) {
     step = "estimate";
     const estimate = indexEstimate(plan, await adapter.estimate(plan, ctx), name);
     step = "cap";
-    capped = applyCap({ items: plan.items, estimate, usageById, cap: config.spendingCap });
+    capped = applyCap({ items: plan.items, estimate, usageById, cap: firstLoad ? NO_CAP : config.spendingCap });
     if (!dryRun && capped.allowed.length > 0) {
       step = "write";
       const raw = await adapter.write({ items: capped.allowed }, ctx);
@@ -146,7 +158,10 @@ async function runOutput({ name, settings, adapter, run }) {
   const deferred = dryRun ? capped.deferred : [...capped.deferred, ...notWritten];
   const failed = result.failed.map((f) => ({ id: f.id, error: redact(f.error) }));
 
-  const warnings = [...notes];
+  const warnings = [...notes, ...planWarnings];
+  if (firstLoad) {
+    warnings.push(`First load: every item the ${name} plan lists for ${ctx.release ?? "the newest release"} ${dryRun ? "would be" : "was"} given to write, and the spending cap was not applied.`);
+  }
   if (planWarning) warnings.push(planWarning);
   const short = settings.secrets.filter((secret) => env[secret] && env[secret].length < 8);
   if (short.length > 0) {
@@ -232,6 +247,7 @@ function readWriteResult(raw, allowed, output) {
  * @param {object} [options.state]      From readState. Defaults to a first run.
  * @param {boolean} [options.modelFree] Skip adapters that need a model.
  * @param {boolean} [options.dryRun]    Plan and estimate only. Nothing is written or recorded.
+ * @param {string} [options.firstLoad]  An enabled output to write in full for the newest release, with no spending cap.
  * @param {Record<string, string | undefined>} [options.env]
  * @param {() => Date} [options.now]
  * @param {(line: string) => void} [options.log]
@@ -241,9 +257,12 @@ function readWriteResult(raw, allowed, output) {
 export async function runKlaus(options) {
   const {
     config, inventory, adapters, releases = [], trigger, release, state = emptyState(),
-    modelFree = false, dryRun = false, env = process.env, now = () => new Date(), log = () => {},
+    modelFree = false, dryRun = false, firstLoad = null, env = process.env, now = () => new Date(), log = () => {},
   } = options;
   if (!TRIGGERS.includes(trigger)) throw new UserError(`Unknown trigger "${trigger}".`);
+  if (firstLoad !== null && firstLoad !== undefined && !(Object.hasOwn(config.outputs, firstLoad) && config.outputs[firstLoad].enabled)) {
+    throw new UserError(`--first-load: ${firstLoad} is not an enabled output in klaus.config.json.`);
+  }
   if (trigger === "release" && !releases.includes(release)) {
     throw new UserError(`Release ${release} is not among the release tags.`);
   }
@@ -260,7 +279,7 @@ export async function runKlaus(options) {
   }
 
   const usageById = new Map(listComponents(inventory).map((c) => [c.name, usageCount(c)]));
-  const run = { config, inventory, trigger, release, releases, previous: state, usageById, modelFree, dryRun, env, now, log };
+  const run = { config, inventory, trigger, release, releases, previous: state, usageById, modelFree, dryRun, firstLoad, env, now, log };
   const nextState = structuredClone(state);
   const outputs = [];
 

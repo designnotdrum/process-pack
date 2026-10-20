@@ -113,6 +113,29 @@ test("running the same release again does nothing", () => {
   assert.deepEqual(stateIn(repo).outputs.storybook.unwritten, []);
 });
 
+test("--first-load writes one output again for the newest release, past the cap; an output that is not enabled exits 2", () => {
+  const repo = makeRepo({ config: { outputs: { storybook: { enabled: true } }, spendingCap: { maxComponentWrites: 1 } } });
+  klaus(repo, "run", "--trigger", "release", "--release", "v1.2.0");
+  assert.deepEqual(stateIn(repo).outputs.storybook.unwritten, ["B", "C"], "the cap of one write deferred two");
+
+  const first = klaus(repo, "run", "--trigger", "manual", "--first-load", "storybook", "--json");
+  assert.equal(first.code, 0, first.err);
+  assert.deepEqual(JSON.parse(first.out).outputs[0].written, ["A", "B", "C"], "every planned item, with no cap");
+  assert.deepEqual(stateIn(repo).outputs.storybook, { ...stateIn(repo).outputs.storybook, lastRelease: "v1.2.0", unwritten: [] });
+  assert.match(klaus(repo, "run", "--trigger", "manual").out, /storybook: skipped \(up-to-date\)/, "the release is covered now");
+
+  const { code, out } = klaus(repo, "run", "--trigger", "manual", "--first-load", "storybook", "--json");
+  assert.equal(code, 0, out);
+  const report = JSON.parse(out);
+  assert.equal(report.outputs[0].status, "ok", "a first load runs although the state says the release is covered");
+  assert.deepEqual(report.outputs[0].written, ["A", "B", "C"]);
+  assert.deepEqual(report.outputs[0].adapter.details.releases, ["v1.2.0"]);
+
+  const refused = klaus(repo, "run", "--trigger", "manual", "--first-load", "figma");
+  assert.equal(refused.code, 2);
+  assert.match(refused.err, /figma is not an enabled output/);
+});
+
 test("a trigger the config does not enable exits 0 and writes nothing", () => {
   const repo = makeRepo();
   const { code, out } = klaus(repo, "run", "--trigger", "schedule");

@@ -19,7 +19,9 @@
  * @property {"component" | "screen"} kind
  *   Further properties are allowed. The adapter reads them back in write.
  *
- * @typedef {{ items: PlanItem[] }} Plan
+ * @typedef {{ items: PlanItem[], warnings?: string[] }} Plan
+ *   warnings are added to the output's warnings in the run report, for something the plan could
+ *   not use and the person should know about.
  *
  * @typedef {object} Estimate
  * @property {Array<{ id: string } & Partial<Cost>>} items  One entry per plan item.
@@ -48,6 +50,8 @@
  * @property {string[]} unwrittenFromLastRun
  *   Ids that an earlier run planned and did not write. The plan must include each one that still exists.
  * @property {boolean} dryRun     True when write will not be called.
+ * @property {boolean} firstLoad  True when the run writes every planned item of the newest release with
+ *   no spending cap (cli.mjs --first-load). The adapter can say so in what it writes and reports.
  * @property {(name: string) => string} secret
  *   Reads a secret from the environment. Only names listed in settings.secrets are readable.
  *
@@ -76,6 +80,9 @@ export function assertAdapter(output, adapter) {
 /** Checks the plan an adapter returned and returns it unchanged. */
 export function normalizePlan(plan, output) {
   if (!plan || !Array.isArray(plan.items)) throw new Error(`${output} plan must be an object with an items array.`);
+  if (plan.warnings !== undefined && (!Array.isArray(plan.warnings) || plan.warnings.some((w) => typeof w !== "string"))) {
+    throw new Error(`${output} plan warnings must be a list of text.`);
+  }
   const seen = new Set();
   for (const item of plan.items) {
     if (!item || typeof item.id !== "string" || item.id === "") throw new Error(`${output} plan has an item without an id.`);
