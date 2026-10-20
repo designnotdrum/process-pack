@@ -33,7 +33,7 @@ import { toPosix } from '../inventory/files.mjs'
 import { buildInventory } from '../inventory/inventory.mjs'
 import { renderMarkdown } from '../inventory/markdown.mjs'
 import { pickVersions, readCaptures } from '../version/version.mjs'
-import { listBody, purposesBody, renderPurposesView, renderStoriesView, renderSummary, storiesBody } from './bodies.mjs'
+import { listBody, plural, purposesBody, renderPurposesView, renderStoriesView, renderSummary, storiesBody } from './bodies.mjs'
 import { readOnboardingConfig } from './config.mjs'
 import { decisionPairs, decisionPictureName } from './decisions.mjs'
 import { attachDecisionPictures, decisionFiles, mergedPictureFiles } from './decisions-pictures.mjs'
@@ -41,6 +41,7 @@ import { renderDuplicatesList } from './duplicates.mjs'
 import { compareToEstimate, comparisonNotes } from './estimate.mjs'
 import { changedFiles, closePullRequest, commit, createPullRequest, currentBranch, editPullRequest, git, gitDir, listPullRequests, pushBranch, remoteTip, resetPaths, run as runProgram, topLevel } from './git.mjs'
 import { checkCommitHooks } from './hook-check.mjs'
+import { countByFile, findHookRewrites } from './hook-rewrites.mjs'
 import { buildPlan } from './plan.mjs'
 import { mkdirPlain, removePlainFile, writePlainFile } from './plain-path.mjs'
 import { obtainPurposes, savedWork } from './purposes-stage.mjs'
@@ -271,7 +272,7 @@ export async function runOnboarding(options) {
   const { listed, start } = earlier
   if (earlier.refresh) holdRefreshToEstimate({ estimate, approve, changes: earlier.refreshFiles.changes })
   if (earlier.note) log(earlier.note)
-  const state = { plan, estimate, base, prs: [], merged: earlier.merged.map((step) => ({ step, ...mergedPullRequest(repo, step) })), refresh: earlier.refresh ? { of: mergedPullRequest(repo, 1), changes: [] } : null, replaced: {}, docsDir: docs, writerLabel: writerLabel(onboarding), checkerLabel: checkerLabel(onboarding), writerCalls: [], writerExecuted: 0, writerReused: 0, writerTokens: 0, checkerRuns: [], checksNotReached: [], purposes: { items: [] }, stories: null, rows: [], notes: [], startedAt: new Date().toISOString() }
+  const state = { plan, estimate, base, prs: [], merged: earlier.merged.map((step) => ({ step, ...mergedPullRequest(repo, step) })), refresh: earlier.refresh ? { of: mergedPullRequest(repo, 1), changes: [] } : null, replaced: {}, docsDir: docs, writerLabel: writerLabel(onboarding), checkerLabel: checkerLabel(onboarding), writerCalls: [], writerExecuted: 0, writerReused: 0, writerTokens: 0, checkerRuns: [], checksNotReached: [], hookRewrites: {}, purposes: { items: [] }, stories: null, rows: [], notes: [], startedAt: new Date().toISOString() }
   if (start > 3) {
     log('Nothing to do: the three pull requests are merged.')
     return { done: true, state, report: null }
@@ -345,9 +346,30 @@ export async function runOnboarding(options) {
     state.prs.push({ step, branch, ...pr })
     log(`Pull request ${step} of 3: ${pr.url}${previous.length ? `, in place of ${previous.map((p) => `#${p.number}`).join(', ')}` : ''}`)
   }
+  /** The text the run wrote since the last commit, by path, so the commit can be compared with it. A picture is not text. */
+  const wroteText = new Map()
   const put = (rel, text, into) => {
     writePlainFile(repo, path.join(repo, rel), text)
     into.push(toPosix(rel))
+    if (typeof text === 'string') wroteText.set(toPosix(rel), text)
+  }
+  /**
+   * Commits a step's files, then names the lines the repo's commit hook rewrote in the commit:
+   * the hook may change the staged files, and the pull request has to say what Klaus did not write.
+   * Every text file goes through `put`, so it is compared. The paths that are not compared are the
+   * files a refresh removes and the pictures, which are not text.
+   */
+  const commitStep = (step, commitOptions) => {
+    const written = new Map(commitOptions.paths.filter((p) => wroteText.has(p)).map((p) => [p, wroteText.get(p)]))
+    // Cleared before the commit, so a commit that fails leaves nothing for the next one.
+    wroteText.clear()
+    const sha = commit(repo, commitOptions)
+    const rewrites = findHookRewrites({ repo, commit: sha, written })
+    state.hookRewrites[step] = rewrites
+    if (rewrites.length > 0) {
+      const files = countByFile(rewrites).length
+      log(`The repo's commit hook rewrote ${plural(rewrites.length, 'line')} in ${plural(files, 'file')} in the commit for pull request ${step}. Klaus did not undo them, and the pull request names them.`)
+    }
   }
 
   let actual
@@ -371,10 +393,10 @@ export async function runOnboarding(options) {
           listPaths.push(rel)
         }
         const of = state.refresh.of.number ? ` merged in #${state.refresh.of.number}` : ''
-        commit(repo, { message: `Refresh the component inventory at 1.0.0 and the duplicates list\n\nWritten by the Klaus onboarding run, run with --refresh. The files${of} are not what this plan writes now, so ${refresh.changes.length} ${refresh.changes.length === 1 ? 'file changes' : 'files change'}. No model ran.`, paths: listPaths, trailers: commitTrailers })
+        commitStep(1, { message: `Refresh the component inventory at 1.0.0 and the duplicates list\n\nWritten by the Klaus onboarding run, run with --refresh. The files${of} are not what this plan writes now, so ${refresh.changes.length} ${refresh.changes.length === 1 ? 'file changes' : 'files change'}. No model ran.`, paths: listPaths, trailers: commitTrailers })
       } else {
         for (const file of listFiles(plan, baseline.inventory, docs)) put(file.rel, file.text, listPaths)
-        commit(repo, { message: 'Add the component inventory at 1.0.0 and the duplicates list\n\nWritten by the Klaus onboarding run. No model ran.', paths: listPaths, trailers: commitTrailers })
+        commitStep(1, { message: 'Add the component inventory at 1.0.0 and the duplicates list\n\nWritten by the Klaus onboarding run. No model ran.', paths: listPaths, trailers: commitTrailers })
       }
       inventoryNow = baseline.inventory
       publish(1, () => listBody(state))
@@ -387,15 +409,14 @@ export async function runOnboarding(options) {
       const purposePaths = []
       for (const file of [...new Set(keep.map((p) => p.file))]) {
         const before = fs.readFileSync(path.join(repo, file), 'utf8')
-        writePlainFile(repo, path.join(repo, file), applyPurposes(plan.ts, path.join(repo, file), before, keep.filter((p) => p.file === file).map((p) => ({ name: p.component.name, useWhen: p.useWhen, notFor: p.notFor }))))
-        purposePaths.push(file)
+        put(file, applyPurposes(plan.ts, path.join(repo, file), before, keep.filter((p) => p.file === file).map((p) => ({ name: p.component.name, useWhen: p.useWhen, notFor: p.notFor }))), purposePaths)
       }
       state.purposes.items = [...items.values()]
       const rebuilt = buildInventory({ root: repo, folders })
       const second = await pickVersions({ root: repo, inventory: rebuilt, baseline: true, captures: caps, ts: plan.ts })
       for (const file of inventoryFiles(second.inventory)) put(file.rel, file.text, purposePaths)
       put(`${docs}/purposes.md`, renderPurposesView(state), purposePaths)
-      commit(repo, { message: `Write ${keep.length} purpose comments, checked against where each component is used\n\nWritten by the Klaus onboarding run. A doc comment that was there keeps all of its text.`, paths: purposePaths, trailers: commitTrailers })
+      commitStep(2, { message: `Write ${keep.length} purpose comments, checked against where each component is used\n\nWritten by the Klaus onboarding run. A doc comment that was there keeps all of its text.`, paths: purposePaths, trailers: commitTrailers })
       inventoryNow = second.inventory
       publish(2, () => purposesBody(state))
     }
@@ -435,7 +456,7 @@ export async function runOnboarding(options) {
     state.rows = compareToEstimate(estimate, actual)
     const refreshNote = state.refresh ? [`The run refreshed the first pull request: ${state.refresh.of.number ? `#${state.refresh.of.number}` : 'it'} was merged with files this plan no longer writes, so pull request 1 is a refresh from ${base} that changes ${state.refresh.changes.length} ${state.refresh.changes.length === 1 ? 'file' : 'files'}, and the second and third are stacked on it.`] : []
     state.notes = [...refreshNote, ...(start > 1 ? [`The run continued at pull request ${start}: ${earlier.merged.map((s) => `pull request ${s}`).join(' and ')} ${earlier.merged.length === 1 ? 'was' : 'were'} already merged.${modelWork ? '' : ' It made no model call, so the model rows are not compared.'}`] : []), ...comparisonNotes(estimate, actual)]
-    commit(repo, { message: `Add ${actual.stories} stories and list the data-bound components with their screens\n\nWritten by the Klaus onboarding run. No model wrote these stories.`, paths: storyPaths, trailers: commitTrailers })
+    commitStep(3, { message: `Add ${actual.stories} stories and list the data-bound components with their screens\n\nWritten by the Klaus onboarding run. No model wrote these stories.`, paths: storyPaths, trailers: commitTrailers })
     publish(3, () => storiesBody(state))
 
     // ---- the bodies again, now that each knows the others' numbers
@@ -468,6 +489,7 @@ export async function runOnboarding(options) {
     alreadyMerged: state.merged,
     refreshed: state.refresh ? [{ step: 1, of: state.refresh.of, changes: state.refresh.changes.map(({ rel, change }) => ({ rel, change })) }] : [],
     pullRequests: state.prs,
+    hookRewrites: state.prs.map((pr) => ({ step: pr.step, count: state.hookRewrites[pr.step]?.length ?? 0, files: countByFile(state.hookRewrites[pr.step] ?? []) })),
     replaced: Object.entries(state.replaced).flatMap(([step, list]) => list.map((pr) => ({ step: Number(step), ...pr }))),
     actual,
     comparison: state.rows,

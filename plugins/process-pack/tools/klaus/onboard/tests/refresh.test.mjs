@@ -16,9 +16,13 @@ const TICKET = 'docs/klaus/tickets/01-merge-primarybutton-into-button.md'
 const OLD_TICKET = 'docs/klaus/tickets/02-merge-oldbutton-into-button.md'
 const prices = async () => ({ ok: true, json: async () => ({ data: [{ id: 'z-ai/glm-5.3-flash', pricing: { prompt: '0.0000000392', completion: '0.0000002' } }] }) })
 
-/** A pre-commit hook that logs what is staged, and with HOOK_MODE=tickets refuses a commit that stages a ticket. */
+/**
+ * A pre-commit hook that logs what is staged. With HOOK_MODE=tickets it refuses a commit that stages a ticket.
+ * With HOOK_MODE=append it adds a line to the duplicates list and stages it again, as a formatter or an autofix would.
+ */
 const HOOK = `#!/bin/sh
 echo "$(git diff --cached --name-status | tr '\\t\\n' ' ;')" >> "$HOOK_FILES_LOG"
+if [ "$HOOK_MODE" = "append" ] && git diff --cached --name-only | grep -q -x docs/klaus/duplicates.md; then printf 'Added by the hook.\\n' >> docs/klaus/duplicates.md; git add docs/klaus/duplicates.md; fi
 if [ "$HOOK_MODE" = "tickets" ] && git diff --cached --name-only | grep -q '/tickets/'; then echo "a ticket is refused here"; exit 1; fi
 exit 0
 `
@@ -244,4 +248,21 @@ test('--refresh is held to the estimate: one that lists no refresh, or other fil
   await assert.rejects(() => run(estimated, { refresh: true }), (e) => e instanceof UserError && /The files a refresh would change are not the ones the estimate lists\. Now: .*03-remove-oldcard-from-web\.md removed/.test(e.message))
   assert.deepEqual(ghCalls().slice(before).filter((c) => c.action !== 'list'), [])
   assert.equal(branches().includes(REFRESH), false)
+})
+
+test('a line the commit hook adds to a file of the refresh is named in the refresh pull request, and counted in the report', async () => {
+  installHook()
+  await run(await estimate())
+  mergeAsAnOlderKlausWroteIt()
+  const { estimated } = await estimateCommand()
+  process.env.HOOK_MODE = 'append'
+  const { code, text } = await runCommand(['--approve', estimated.id, '--refresh'])
+  assert.equal(code, 0, text)
+  const report = readJsonFile(path.join(workFolder(sample.repo), 'report.json'), 'Report')
+  assert.deepEqual(report.hookRewrites.map((r) => [r.step, r.count]), [[1, 1], [2, 0], [3, 0]])
+  assert.deepEqual(report.hookRewrites[0].files, [{ rel: 'docs/klaus/duplicates.md', count: 1 }])
+  const body = ghCalls().filter((c) => c.action === 'edit' && c.number === 4).at(-1).body
+  assert.match(body, /## Lines the repo's commit hook rewrote\n\nThe repo's pre-commit hook rewrote 1 line in 1 file/)
+  assert.match(body, /- `docs\/klaus\/duplicates\.md`, line \d+:\n {2}- before: \(no line\)\n {2}- after: `Added by the hook\.`/)
+  assert.match(sample.git('show', `${REFRESH}:docs/klaus/duplicates.md`), /Added by the hook\./, 'the hook\'s line is in the branch')
 })
