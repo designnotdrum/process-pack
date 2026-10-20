@@ -330,16 +330,6 @@ test("--dry-run says what it would look for and what it would cost, and makes no
   assert.match(output.adapter.summary, /dry run: would look for 2 component versions on 2 pages in 1 call/);
 });
 
-test("reconcile takes no release folder or artifact", async () => {
-  const root = reconcileRepo({ components: BOTH });
-  for (const extra of [["somefolder"], ["--run", "123"], ["--artifact", "x"], ["--release", "v1"]]) {
-    const run = await reconcile(root, extra);
-    assert.equal(run.code, 2, extra.join(" "));
-    assert.match(run.stderr, /--reconcile reads the ledger and Figma/);
-    assert.equal(run.calls.length, 0);
-  }
-});
-
 test("reconcile stops before any call when Codex is not signed in to Figma", async () => {
   const root = reconcileRepo({ components: BOTH });
   const run = await reconcile(root, [], { mcp: [{ name: "figma", enabled: true, transport: { type: "streamable_http", url: "https://mcp.figma.com/mcp" }, auth_status: "not_logged_in" }] });

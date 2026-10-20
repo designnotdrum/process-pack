@@ -180,7 +180,7 @@ test("an output that cannot be planned says why", async () => {
 
 test("the workflow keeps one trigger, the repo's install, the secrets and the Figma parts", () => {
   const { text, kept, secrets } = render(CONFIG);
-  assert.deepEqual(kept.sort(), ["figma-artifact", "figma-build", "release"]);
+  assert.deepEqual(kept.sort(), ["figma-artifact", "figma-build", "figma-first-load", "figma-ledger", "release"]);
   assert.deepEqual(secrets, ["VERCEL_TOKEN", "VERCEL_ORG_ID"]);
   assert.match(text, /^ {2}push:\n {4}tags:\n {6}- "v\*"$/m);
   assert.doesNotMatch(text, /schedule:/);
@@ -447,6 +447,34 @@ function runStep(workflow, name, { repo, event, tag = "", extraEnv = {} }) {
   const read = (file) => Object.fromEntries(readFileSync(file, "utf8").split("\n").filter(Boolean).map((line) => line.split(/=(.*)/s).slice(0, 2)));
   return { status: result.status, output: result.stdout + result.stderr, setEnv: read(files.GITHUB_ENV), outputs: read(files.GITHUB_OUTPUT) };
 }
+
+test("a manual run can ask for the Figma first load, and the Run Klaus step passes the input and the relay's record on", () => {
+  const { text } = render(CONFIG);
+  assert.match(text, /\n {6}figma_first_load:\n {8}description: .+\n {8}type: boolean\n {8}default: false\n/);
+  const step = stepsOf(text).find((candidate) => candidate.name === "Run Klaus");
+  assert.match(step.text, /FIGMA_FIRST_LOAD: \$\{\{ inputs\.figma_first_load \}\}/);
+  assert.match(step.text, /KLAUS_FIGMA_LEDGER: \$\{\{ vars\.KLAUS_FIGMA_LEDGER \}\}/);
+  assert.doesNotMatch(text, /secrets\.KLAUS_FIGMA_LEDGER/, "the record is a variable, not a secret");
+
+  // The step's shell, with a stand-in for the command line that prints what it was given.
+  const klaus = tempDir();
+  write(path.join(klaus, "frame/cli.mjs"), "console.log(JSON.stringify(process.argv.slice(2)));\n");
+  const argsFor = (extraEnv) => {
+    const result = runStep(text, "Run Klaus", { repo: tempDir(), event: "workflow_dispatch", extraEnv: { KLAUS: klaus, KLAUS_CONFIG: "klaus.config.json", DRY_RUN: "false", ...extraEnv } });
+    assert.equal(result.status, 0, result.output);
+    return JSON.parse(result.output.trim().split("\n").at(-1));
+  };
+  assert.deepEqual(argsFor({ FIGMA_FIRST_LOAD: "true" }), ["run", "--model-free", "--config", "klaus.config.json", "--trigger", "manual", "--first-load", "figma"]);
+  assert.deepEqual(argsFor({ FIGMA_FIRST_LOAD: "false" }), ["run", "--model-free", "--config", "klaus.config.json", "--trigger", "manual"]);
+  assert.deepEqual(argsFor({ FIGMA_FIRST_LOAD: "" }), ["run", "--model-free", "--config", "klaus.config.json", "--trigger", "manual"], "a scheduled run has no inputs");
+});
+
+test("without Figma the workflow has no first-load input and passes no Figma record", () => {
+  const config = { ...CONFIG, outputs: { storybook: CONFIG.outputs.storybook, figma: { enabled: false } } };
+  const { text } = render(config, { storybookBuild: undefined });
+  assert.doesNotMatch(text, /figma_first_load|FIGMA_FIRST_LOAD|--first-load|KLAUS_FIGMA_LEDGER/);
+  assert.match(text, /dry_run:/, "the dry-run input stays");
+});
 
 test("a scheduled run ignores a newer tag on an unmerged branch and builds the newest tag that is on main", () => {
   const { repo, git } = gitRepo();

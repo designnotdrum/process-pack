@@ -12,7 +12,7 @@ import { codeFor, newKey } from "../../codegen.mjs";
 import { runCode } from "../../tests/fake-figma.mjs";
 import { newFigma } from "../../tests/helpers.mjs";
 import { reconcileCode } from "../reconcile.mjs";
-import { generatedRepo, ledgerOf, outputOf, relay } from "./helpers.mjs";
+import { generatedRepo, KEY, ledgerOf, outputOf, relay } from "./helpers.mjs";
 
 // The colours Figma holds before the release, and the ones the release sends.
 const OLD_PRIMARY = [10, 20, 30, 1];
@@ -64,7 +64,9 @@ const modeOf = (stdin) => /^const TOKEN_VALUES = "(\w+)";$/m.exec(stdin.toString
 test("two calls, one token change: the older version in the second call keeps the colour it shipped with, and both new versions show the new colour", async () => {
   const { root, folder, seed } = await release();
 
-  const run = await relay(root, [folder], { scenarios: "figma", figmaSeed: seed });
+  // An empty shared record for this file, so a missing KLAUS_FIGMA_LEDGER adds no warning.
+  const variable = JSON.stringify({ version: 2, fileKey: KEY, components: {}, screens: {} });
+  const run = await relay(root, [folder], { scenarios: "figma", figmaSeed: seed, variable });
 
   assert.equal(run.code, 0, run.stderr);
   assert.equal(run.calls.length, 2, "one call a component version");

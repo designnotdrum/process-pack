@@ -7,10 +7,17 @@
  *   gh api repos/<repo>/compare/<base>...<sha>  prints STUB_GH_COMPARE as the status, or "diverged"
  *   gh run download <id> --name <artifact> --dir <dir> [--repo <owner/name>]
  *                                               copies STUB_GH_SOURCE into <dir>, as gh unpacks an artifact
+ *   gh variable get <name> [--repo <owner/name>]
+ *                                               prints the file STUB_GH_VARIABLE names, or fails as gh does
+ *                                               when the variable is not set. STUB_GH_VARIABLE_GET_ERROR
+ *                                               makes it fail with that text instead.
+ *   gh variable set <name> --body <text> [--repo <owner/name>]
+ *                                               writes the text to the file STUB_GH_VARIABLE names.
+ *                                               STUB_GH_VARIABLE_SET_ERROR makes it fail with that text.
  *
  * Every call's arguments are appended to STUB_GH_LOG, one JSON line each.
  */
-import { appendFileSync, cpSync } from "node:fs";
+import { appendFileSync, cpSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const args = process.argv.slice(2);
 if (process.env.STUB_GH_LOG) appendFileSync(process.env.STUB_GH_LOG, `${JSON.stringify(args)}\n`);
@@ -30,6 +37,26 @@ if (args[0] === "api") {
     process.stdout.write(JSON.stringify({ default_branch: process.env.STUB_GH_DEFAULT ?? "main" }));
   } else fail(`stub gh: no answer for ${apiPath}`);
   process.exit(0);
+}
+
+if (args[0] === "variable") {
+  const store = process.env.STUB_GH_VARIABLE;
+  if (args[1] === "get") {
+    if (process.env.STUB_GH_VARIABLE_GET_ERROR) fail(process.env.STUB_GH_VARIABLE_GET_ERROR);
+    // gh's own words for a variable that is not set (gh 2.102.0, variable get).
+    if (!store || !existsSync(store)) fail(`variable ${args[2]} was not found`);
+    process.stdout.write(`${readFileSync(store, "utf8")}\n`);
+    process.exit(0);
+  }
+  if (args[1] === "set") {
+    if (process.env.STUB_GH_VARIABLE_SET_ERROR) fail(process.env.STUB_GH_VARIABLE_SET_ERROR);
+    const at = args.indexOf("--body");
+    if (at === -1 || args[at + 1] === undefined) fail("stub gh: --body is missing");
+    if (!store) fail("stub gh: STUB_GH_VARIABLE is not set");
+    writeFileSync(store, args[at + 1]);
+    process.exit(0);
+  }
+  fail(`stub gh: unexpected arguments ${JSON.stringify(args)}`);
 }
 
 if (args[0] !== "run" || args[1] !== "download") fail(`stub gh: unexpected arguments ${JSON.stringify(args)}`);
