@@ -70,6 +70,49 @@ function replaces(state, step) {
   return [`It replaces ${which}, which an earlier run of this plan opened. The run closed ${old.length === 1 ? 'it' : 'them'} and made this branch again from the plan.`, '']
 }
 
+/** How many rewritten lines a pull request body lists. The rest are counted, and the report has the count for each file. */
+const MAX_REWRITES_SHOWN = 40
+/** The longest line shown whole. A longer one is cut, and says so. */
+const MAX_LINE_SHOWN = 200
+
+/** A line of the repo as an inline code span that keeps its text exactly, even when it holds backticks. */
+function exactLine(text) {
+  if (text === null) return null
+  if (text.trim() === '') return '(a blank line)'
+  const clean = text.replace(/\r/g, '')
+  const shown = clean.length > MAX_LINE_SHOWN ? `${clean.slice(0, MAX_LINE_SHOWN)} (cut here, ${clean.length - MAX_LINE_SHOWN} more characters)` : clean
+  const longest = Math.max(0, ...(shown.match(/`+/g) ?? []).map((run) => run.length))
+  const fence = '`'.repeat(longest + 1)
+  return longest === 0 ? `${fence}${shown}${fence}` : `${fence} ${shown} ${fence}`
+}
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`
+
+/**
+ * The section that names the lines the repo's commit hook rewrote in this pull request's commit
+ * (hook-rewrites.mjs), or nothing when the hook rewrote none. The lines come from the repo, so
+ * they are shown as code.
+ */
+function hookRewrites(state, step) {
+  const found = state.hookRewrites?.[step] ?? []
+  if (found.length === 0) return []
+  const files = new Set(found.map((r) => r.rel)).size
+  const shown = found.slice(0, MAX_REWRITES_SHOWN)
+  const lineOf = (r) => {
+    const spacing = r.before !== null && r.after !== null && r.before.replace(/\s+/g, '') === r.after.replace(/\s+/g, '') ? ', only the spacing changed' : ''
+    return [`- ${code(r.rel)}, line ${r.line}${spacing}:`, `  - before: ${exactLine(r.before) ?? '(no line)'}`, `  - after: ${exactLine(r.after) ?? '(the line was removed)'}`]
+  }
+  return [
+    "## Lines the repo's commit hook rewrote",
+    '',
+    `The repo's pre-commit hook rewrote ${plural(found.length, 'line')} in ${plural(files, 'file')} when this pull request's commit was made. Klaus did not write these changes. Each entry shows the line Klaus wrote and the line that was committed. Klaus did not undo the changes and did not skip the hook.`,
+    '',
+    ...shown.flatMap(lineOf),
+    ...(found.length > shown.length ? ['', `${found.length - shown.length} more are not listed here.`] : []),
+    '',
+  ]
+}
+
 /** How many of the decisions have a picture, for the summary. */
 const pictureWords = (plan) => {
   const drawn = [...(plan.decisionPictures?.values() ?? [])].filter((p) => p.file).length
@@ -88,6 +131,7 @@ export function listBody(state) {
     '',
     'The first of three pull requests that give this repo its Klaus baseline. This one is the list: every component the repo ships, read by a script from the TypeScript compiler and the imports. No model ran. Every entry starts at version 1.0.0.',
     '',
+    ...hookRewrites(state, 1),
     state.refresh ? '## What the first pull request holds' : '## What changed',
     '',
     '- `inventory.json` and `INVENTORY.md` at the repo root.',
@@ -122,6 +166,7 @@ export function purposesBody(state) {
     '',
     'The second of three pull requests. It writes a purpose comment above each component that had none. A component that had a doc comment not in the "Use when" and "Not for" form keeps all of its text, and the two lines are added to it. Each purpose was then checked against the places the component is used, its own comment and the comments elsewhere that name it.',
     '',
+    ...hookRewrites(state, 2),
     '## Who did it',
     '',
     `- Writer: ${state.writerLabel}.`,
@@ -156,6 +201,7 @@ export function storiesBody(state) {
     '',
     'The third of three pull requests. It adds a story for each component that had none and shows no live data. A component that shows live data is not drawn alone, because it would need a signed-in user and a server. It is listed with the screens it appears on instead. No model wrote these stories.',
     '',
+    ...hookRewrites(state, 3),
     `## Stories written (${written.length})`,
     '',
     written.length === 0 ? 'None.' : table(['Component', 'Story file'], written.map((i) => [code(i.name), code(i.storyFile)])),
@@ -226,7 +272,10 @@ export function renderPurposesView(state) {
 export function renderSummary(state) {
   const lines = ['Onboarding run finished.', '']
   for (const pr of state.merged ?? []) lines.push(`  Pull request ${pr.step} of 3: already merged${pr.url ? `, ${pr.url}` : ''}`)
-  for (const pr of state.prs) lines.push(`  Pull request ${pr.step} of 3: ${pr.url}${state.replaced?.[pr.step]?.length ? `, in place of ${state.replaced[pr.step].map((p) => `#${p.number}`).join(', ')}` : ''}`)
+  for (const pr of state.prs) {
+    const rewritten = state.hookRewrites?.[pr.step]?.length ?? 0
+    lines.push(`  Pull request ${pr.step} of 3: ${pr.url}${state.replaced?.[pr.step]?.length ? `, in place of ${state.replaced[pr.step].map((p) => `#${p.number}`).join(', ')}` : ''}${rewritten > 0 ? `, the repo's commit hook rewrote ${plural(rewritten, 'line')}` : ''}`)
+  }
   lines.push('', renderComparison(state.rows))
   for (const note of state.notes ?? []) lines.push('', note)
   const out = state.rows.filter((r) => r.within === false)
