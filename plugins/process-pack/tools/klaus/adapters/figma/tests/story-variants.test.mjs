@@ -98,8 +98,22 @@ test("#86 label step 3: a prop left to the component's default takes the value w
   // Two sizes draw one class list: the Size match is not unique, so Size is a guess. Variant still matches.
   const same = [...cells, { key: { Variant: "outline", Size: "sm" }, classes: ["btn", "btn-outline", "h-10"] }];
   assert.deepEqual(storyKey(axes, { props: {}, classes: ["btn", "btn-outline", "h-10"], cells: same }), { key: { Variant: "outline", Size: "sm" }, from: { Variant: "classes", Size: "first" } });
-  // A class the axes' story never draws, such as a story's own w-full, matches no cell.
-  assert.deepEqual(storyKey(axes, { props: {}, classes: ["btn", "btn-primary", "h-10", "w-full"], cells }).from, { Variant: "first", Size: "first" });
+  // A class unlike every cell's, but one the cells draw, matches none.
+  assert.deepEqual(storyKey(axes, { props: {}, classes: ["btn", "btn-primary", "btn-outline", "h-10"], cells }).from, { Variant: "first", Size: "first" });
+});
+
+test("#86 label step 3 leaves out classes no cell draws, as Button's Full Width and Loading carry btn-full and btn-loading from props that are not axes", () => {
+  const cells = [
+    { key: { Variant: "primary", Size: "sm" }, classes: ["btn", "btn-primary", "btn-sm"] },
+    { key: { Variant: "primary", Size: "md" }, classes: ["btn", "btn-primary", "btn-md"] },
+    { key: { Variant: "outline", Size: "md" }, classes: ["btn", "btn-outline", "btn-md"] },
+  ];
+  const axes = AXES.slice(0, 2);
+  assert.deepEqual(storyKey(axes, { props: { width: "full" }, classes: ["btn", "btn-full", "btn-md", "btn-primary"], cells }), { key: { Variant: "primary", Size: "md" }, from: { Variant: "classes", Size: "classes" } });
+  assert.deepEqual(storyKey(axes, { props: { loading: true }, classes: ["btn", "btn-loading", "btn-md", "btn-primary"], cells }).from, { Variant: "classes", Size: "classes" });
+  // With the extra class left out, a list two sizes share still matches two cells: Variant matches, Size stays a guess.
+  const shared = [...cells, { key: { Variant: "outline", Size: "sm" }, classes: ["btn", "btn-outline", "btn-md"] }];
+  assert.deepEqual(storyKey(axes, { props: {}, classes: ["btn", "btn-outline", "btn-md", "w-full"], cells: shared }).from, { Variant: "classes", Size: "first" });
 });
 
 test("#86 label step 4: with nothing to go by, the axis's first value, marked as a guess", () => {

@@ -171,7 +171,9 @@ export function storyValues(entries) {
  *            story can set a prop inside its render, as Meridian's Alert Destructive sets its variant
  *   classes  the prop is unset, so the component uses its own default: the value whose cells in the
  *            axes' story draw the component's root element with the same class list as the story's
- *            root element, when exactly one value does
+ *            root element, when exactly one value does. Classes no cell's root draws are left out
+ *            of the story's list first: they come from props that are not axes, such as Button's
+ *            width and loading (btn-full, btn-loading), and the label is only about the axes
  *   first    the axis's first value, a guess, which the run report names
  *
  * The State axis takes the first of its states set to true, from the args and then the rendered
@@ -189,7 +191,9 @@ export function storyKey(axes, { args = {}, props = null, classes = null, cells 
   const key = {};
   const from = {};
   const classKey = (list) => [...new Set(list)].sort().join(" ");
-  const twins = classes ? cells.filter((cell) => Array.isArray(cell.classes) && classKey(cell.classes) === classKey(classes)) : [];
+  const drawn = new Set(cells.flatMap((cell) => (Array.isArray(cell.classes) ? cell.classes : [])));
+  const own = classes ? classKey(classes.filter((name) => drawn.has(name))) : null;
+  const twins = own === null ? [] : cells.filter((cell) => Array.isArray(cell.classes) && classKey(cell.classes) === own);
   const valueIn = (axis, source) => {
     if (!source) return undefined;
     if (!axis.prop) return axis.values.find((state) => state !== "default" && source[state] === true);
