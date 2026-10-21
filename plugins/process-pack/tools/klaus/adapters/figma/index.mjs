@@ -30,8 +30,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { selectComponents } from "../../frame/components.mjs";
 import { writeJsonFile } from "../../frame/json-file.mjs";
-import { packUnits } from "./batch.mjs";
-import { captureComponent, captureScreen, openStorybook, readStoryIndex, storyCandidates } from "./capture.mjs";
+import { codeChars, packUnits } from "./batch.mjs";
+import { MAX_AXIS_VALUES } from "./data-file.mjs";
+import { captureComponent, captureScreen, componentStories, openStorybook, readStoryIndex, storyCandidates } from "./capture.mjs";
 import { anyVersionSent, componentSent, entryOf, GENERATED, readLedger, recordEntry, screenSent } from "./ledger.mjs";
 import { screenRoutes, uploadFor } from "./screens.mjs";
 import { ignoredWarning, mergeMarks, parseSharedLedger, SHARED_LEDGER_VARIABLE, sentOnlyInShared, sentOnlySentence, sentOnlyWarning, usableMarks } from "./shared-ledger.mjs";
@@ -140,6 +141,8 @@ export function createAdapter(browser = {}, { env } = {}) {
           page: pageFor(entry.name, options),
           description: describe(entry.purpose),
           axes: axesOf(entry, options),
+          // How many stories it has, each a variant beside the axes'. Unknown without a build.
+          storyCount: stories ? Math.max(1, componentStories(stories, entry.name).length) : 1,
         });
       }
 
@@ -175,7 +178,7 @@ export function createAdapter(browser = {}, { env } = {}) {
       return {
         items: plan.items.map((item) => {
           if (item.kind === "component") {
-            const variants = item.axes.reduce((n, axis) => n * axis.values.length, 1) * (1 + options.states.length);
+            const variants = item.axes.reduce((n, axis) => n * axis.values.length, 1) * (1 + options.states.length) + (item.storyCount ?? 1) - 1;
             const data = DATA_CHARS_PER_COMPONENT + DATA_CHARS_PER_VARIANT * variants;
             return { id: item.id, calls: perCall, tokens: Math.ceil(shared + data * TOKENS_PER_CODE_CHAR), usd: 0 };
           }
@@ -196,6 +199,9 @@ export function createAdapter(browser = {}, { env } = {}) {
 
       const components = plan.items.filter((item) => item.kind === "component");
       const screens = plan.items.filter((item) => item.kind === "screen");
+      const config = { collection: options.collectionName, mode: MODE_NAME };
+      // The stories each component left out, and why: "same", "failed" or "size".
+      const storiesLeftOut = [];
 
       if (components.length > 0) {
         let storybook;
@@ -208,9 +214,10 @@ export function createAdapter(browser = {}, { env } = {}) {
           try {
             for (const item of components) {
               try {
-                const unit = await buildComponent(storybook, item, options, readComponent);
+                const { unit, leftOut } = await buildComponent(storybook, item, options, readComponent, config);
                 units.push(unit);
                 warnings.push(...unit.warnings);
+                storiesLeftOut.push(...leftOut.map((story) => ({ component: item.name, ...story })));
               } catch (error) {
                 failed.push({ id: item.id, error: error.message });
               }
@@ -244,7 +251,6 @@ export function createAdapter(browser = {}, { env } = {}) {
         }
       }
 
-      const config = { collection: options.collectionName, mode: MODE_NAME };
       const { files, tooLarge } = packUnits(units, { config, perFile: options.componentsPerCall });
       for (const { unit, chars } of tooLarge) {
         const advice = unit.kind === "screen" ? "Use a screenshot for this screen instead of editableScreens." : "Narrow outputs.figma.options.axes or states.";
@@ -269,7 +275,9 @@ export function createAdapter(browser = {}, { env } = {}) {
       }
       const everyFile = afterUploads ? [...files, afterUploads] : files;
       // Data only. Whatever sends a file to Figma builds its code from the runtime in its own checkout.
-      for (const file of everyFile) writeJsonFile(path.join(directory, file.name), file.data);
+      // Compact, because data-file.mjs refuses a file over 100,000 characters, and indenting a set
+      // near the 50,000 character call limit took it to 128,000 (LoopCard with its stories, 2026-10-21).
+      for (const file of everyFile) writeJsonFile(path.join(directory, file.name), file.data, { compact: true });
 
       // What relaying these files will cost. No relay has run yet, so this is the measured rate.
       // A first load is the plugin's, which spends nothing.
@@ -295,6 +303,7 @@ export function createAdapter(browser = {}, { env } = {}) {
         uploads,
         afterUploads: afterUploads ? { name: afterUploads.name, chars: afterUploads.chars } : null,
         warnings: [...new Set(warnings)],
+        storiesLeftOut,
       };
       // The Klaus plugin applies a first load. The relay refuses to send one (relay/README.md).
       if (ctx.firstLoad) manifest.firstLoad = true;
@@ -326,16 +335,18 @@ export function createAdapter(browser = {}, { env } = {}) {
       const { manifest, directory } = run;
       const parts = [`${manifest.files.reduce((n, f) => n + f.units.length, 0)} in ${manifest.files.length} data file${manifest.files.length === 1 ? "" : "s"}`];
       if (manifest.uploads.length > 0) parts.push(`${manifest.uploads.length} screenshot${manifest.uploads.length === 1 ? "" : "s"} to upload`);
-      const details = { directory, manifest: `${directory}/manifest.json`, files: manifest.files, uploads: manifest.uploads.length, warnings: manifest.warnings, sharedLedger };
+      const leftOut = manifest.storiesLeftOut ?? [];
+      const details = { directory, manifest: `${directory}/manifest.json`, files: manifest.files, uploads: manifest.uploads.length, warnings: manifest.warnings, storiesLeftOut: leftOut, sharedLedger };
+      const storyNote = leftOut.length === 0 ? "" : ` ${leftOut.length} ${leftOut.length === 1 ? "story was" : "stories were"} left out of the sets, named in details.storiesLeftOut.`;
       if (manifest.firstLoad) {
         return {
-          summary: `Figma first load for the Klaus plugin in ${directory}: ${parts.join(" and ")}, with no spending cap. Apply the klaus-figma artifact with the plugin, then run the relay with --reconcile --run <this run's id>. The relay does not send a first load.${variableNote}`,
+          summary: `Figma first load for the Klaus plugin in ${directory}: ${parts.join(" and ")}, with no spending cap. Apply the klaus-figma artifact with the plugin, then run the relay with --reconcile --run <this run's id>. The relay does not send a first load.${storyNote}${variableNote}`,
           links,
           details: { ...details, firstLoad: true },
         };
       }
       return {
-        summary: `Figma data is ready for the relay in ${directory}: ${parts.join(" and ")}.${variableNote}`,
+        summary: `Figma data is ready for the relay in ${directory}: ${parts.join(" and ")}.${storyNote}${variableNote}`,
         links,
         details,
       };
@@ -343,7 +354,16 @@ export function createAdapter(browser = {}, { env } = {}) {
   };
 }
 
-async function buildComponent(storybook, item, options, readComponent) {
+/**
+ * One component version as a unit, and the stories it left out.
+ *
+ * Each story beside the one the axes come from adds a variant. A set must fit one relay call:
+ * at most MAX_CODE_CHARS of the relay's code (packUnits) and MAX_VARIANTS variants. When the stories
+ * take it past either, it keeps the stories that fit, in the index's order, and the others are left
+ * out with the reason "size". A set too large without its stories is left as it is, and packUnits
+ * fails it with its size, as before.
+ */
+export async function buildComponent(storybook, item, options, readComponent, config) {
   const states = options.states;
   const variants = item.axes.reduce((n, axis) => n * axis.values.length, 1) * (1 + states.length);
   if (variants > MAX_VARIANTS) {
@@ -357,7 +377,22 @@ async function buildComponent(storybook, item, options, readComponent) {
     icons: options.icons,
     story: options.stories[item.name],
   });
-  return buildComponentUnit({ item, capture, options });
+  const leftOut = (capture.leftOut ?? []).map(({ id, name, reason }) => ({ id, name, reason }));
+  const stories = capture.stories ?? [];
+  const build = (kept) => buildComponentUnit({ item, capture: { ...capture, stories: kept }, options });
+  const fits = (unit) => unit.cells.length <= MAX_VARIANTS && unit.axes.every((axis) => axis.values.length <= MAX_AXIS_VALUES) && codeChars([unit], config) <= MAX_CODE_CHARS;
+  const whole = build(stories);
+  if (stories.length === 0 || fits(whole)) return { unit: whole, leftOut };
+  if (!fits(build([]))) return { unit: whole, leftOut };
+  const kept = [];
+  const cut = [];
+  for (const story of stories) {
+    if (fits(build([...kept, story]))) kept.push(story);
+    else cut.push(story);
+  }
+  const unit = build(kept);
+  unit.warnings.push(`${item.name}: the stories ${cut.map((story) => story.name).join(", ")} were left out, because with them the set would not fit one relay call (${MAX_CODE_CHARS} characters of code and ${MAX_VARIANTS} variants).`);
+  return { unit, leftOut: [...leftOut, ...cut.map(({ id, name }) => ({ id, name, reason: "size" }))] };
 }
 
 /** The file key from a key or a Figma URL, or null when the target is neither. */

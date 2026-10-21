@@ -23,7 +23,7 @@ test("the number of components in a file is a setting", () => {
 });
 
 test("a file is closed before the next unit would take the relay's code past 50,000 characters", () => {
-  // Each description is 10,000 characters, about 13,400 once the relay encodes it. The runtime adds about 21,800.
+  // Each description is 10,000 characters, about 13,400 once the relay encodes it. The runtime adds about 22,100.
   const units = Array.from({ length: 7 }, (_, i) => tinyUnit(`C${i}`, { description: "d".repeat(10000) }));
   const { files, tooLarge } = packUnits(units, { config: CONFIG });
   assert.equal(tooLarge.length, 0);
@@ -61,10 +61,10 @@ test("the limit counts characters the way Figma does, so non-ASCII text is writt
   assert.ok(files[0].code.includes("\\u00e9"));
 });
 
-test("real component sets pack about nine to a file under the limit, and every file runs", async () => {
+test("real component sets pack about eight to a file under the limit, and every file runs", async () => {
   const units = Array.from({ length: 12 }, (_, i) => ({ ...buttonUnit({ page: `Page ${i}` }), id: `Button${i}`, name: `Button${i}` }));
   const { files } = packUnits(units, { config: CONFIG });
-  assert.ok(files[0].units.length >= 8, `a full call holds ${files[0].units.length}`);
+  assert.ok(files[0].units.length >= 7, `a full call holds ${files[0].units.length}`);
   assert.deepEqual(files.flatMap((f) => f.units.map((u) => u.id)), units.map((u) => u.id));
   for (const file of files) assert.ok(file.chars <= MAX_CODE_CHARS, `${file.name} has ${file.chars} characters`);
 
@@ -77,9 +77,9 @@ test("real component sets pack about nine to a file under the limit, and every f
   assert.deepEqual(written, Array(12).fill("written"));
 });
 
-test("an 18-variant Button is small enough that eight of them fit in one relay call", () => {
+test("an 18-variant Button is small enough that seven of them fit in one relay call", () => {
   const unit = buttonUnit();
-  const { files } = packUnits(Array.from({ length: 8 }, () => unit), { config: CONFIG });
+  const { files } = packUnits(Array.from({ length: 7 }, () => unit), { config: CONFIG });
   assert.equal(files.length, 1);
   assert.ok(files[0].chars < MAX_CODE_CHARS);
 });

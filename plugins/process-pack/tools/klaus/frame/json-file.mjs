@@ -29,13 +29,14 @@ export function readJsonFile(file, what = "File") {
 
 /**
  * Writes a JSON file through a temporary file, so a crash cannot leave half a
- * file for the next reader. Creates the folder if it is missing.
+ * file for the next reader. Creates the folder if it is missing. It is indented
+ * for people to read, unless compact is set.
  */
-export function writeJsonFile(file, value) {
+export function writeJsonFile(file, value, { compact = false } = {}) {
   mkdirSync(path.dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.tmp`;
   try {
-    writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`);
+    writeFileSync(temp, `${compact ? JSON.stringify(value) : JSON.stringify(value, null, 2)}\n`);
     renameSync(temp, file);
   } catch (error) {
     try {

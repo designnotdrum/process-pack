@@ -40,6 +40,9 @@ export const TOKENS_PER_EDITABLE_SCREEN = relayCallTokens(MAX_CODE_CHARS);
 
 export const STATES = Object.freeze(["loading", "disabled"]);
 
+/** The Figma variant property that holds a component's stories, on a component with more than one. */
+export const STORY = "Story";
+
 /** The one mode the variable collection has. */
 export const MODE_NAME = "Light";
 

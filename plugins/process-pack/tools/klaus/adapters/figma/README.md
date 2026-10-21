@@ -9,7 +9,7 @@ The values come from the browser's computed styles, not from the CSS files. On M
 | Step | What the adapter does |
 |---|---|
 | `plan` | Lists the components whose current version is not sent yet, and the screens to write for this release. A component with no story in the Storybook build is left out. It counts a version as sent when its own ledger or the `KLAUS_FIGMA_LEDGER` variable says so (see "The ledger"). |
-| `estimate` | Costs a component version at the relay's measured rate: 71,000 relay tokens a call plus 1.4 a character of code, about 108,000 for a Button-sized version, and one call. The code's size is the runtime plus about 1,600 characters and 160 a variant, as the relay encodes it. A screenshot upload and an editable screen are costed apart (unverified, there is no measurement). |
+| `estimate` | Costs a component version at the relay's measured rate: 71,000 relay tokens a call plus 1.4 a character of code, about 108,000 for a Button-sized version, and one call. The code's size is the runtime plus about 1,600 characters and 160 a variant, as the relay encodes it. Each story of the component beside the first counts as one variant. A screenshot upload and an editable screen are costed apart (unverified, there is no measurement). |
 | `write` | Reads each story in a static Storybook build, builds the data, packs it into files of one component version each (`componentsPerCall`) whose code is at most 50,000 characters, and lists the screenshots to upload. It sends nothing. |
 | `report` | Says where the files are and links the Figma file. |
 
@@ -19,8 +19,8 @@ The values come from the browser's computed styles, not from the CSS files. On M
 
 | File | Holds |
 |---|---|
-| `figma-001.json`, `figma-002.json`, ... | Data, no code. Each file is one `use_figma` call and holds one component version, unless `componentsPerCall` says more. |
-| `manifest.json` | The file key, each data file with the length of its code and its units, the ledger entry of each unit, the uploads, the retention file, and warnings. `firstLoad: true` on a first load (see "The first load"). |
+| `figma-001.json`, `figma-002.json`, ... | Data, no code. Each file is one `use_figma` call and holds one component version, unless `componentsPerCall` says more. It is written without indentation: `data-file.mjs` refuses a file over 100,000 characters, and an indented file for a set near the call limit came to 128,000. |
+| `manifest.json` | The file key, each data file with the length of its code and its units, the ledger entry of each unit, the uploads, the retention file, warnings, and the stories left out of the sets (`storiesLeftOut`, see "Stories"). `firstLoad: true` on a first load (see "The first load"). |
 | `figma-retention.json` | Present when there are screenshots. Run it after the uploads. It keeps the last N versions of each screen. |
 
 A data file holds the call's variable collection, its colour tokens and its units, as JSON (`codegen.mjs` `dataFor`). Whatever sends it reads it with `data-file.mjs`, which refuses anything that is not the generator's shape, checks that it writes only to the collection and pages the repo's settings name, and builds the code with `codegen.mjs` `codeFor`. So an artifact from CI never supplies code. The relay passes `codeFor` a key, which encodes every string in the data so the relaying model cannot read it; the plugin passes none.
@@ -107,12 +107,30 @@ The reader (`capture.mjs` and `capture-browser.mjs`) draws the whole component, 
 - **Filters.** A `drop-shadow()` in `filter`, such as PrimaRing's glow, is drawn as a drop shadow that shows through what the element leaves transparent. Chrome blurs `drop-shadow(0 0 6px)` as `box-shadow` blurs 12px (measured, 2026-10-21), so its blur is doubled. Any other filter function is left out with a warning that names it.
 - **A margin on the cross axis.** Auto layout has no margins, and its padding cannot be negative. A child of an auto layout with a margin on the cross axis, such as AttachFileToCardsModal's checkbox with `mt-0.5` or a menu separator's `-mx-1`, sits in a frame named `margin` of its margin box, the size flex lays it out at, and is placed in it where the browser put it. The parent keeps its auto layout and its spacing, and the frame fills where the child did.
 
-What a component costs grows with what it draws. On Meridian's 82 components with a story, the relay's code for one component came to a median of 22,044 characters (20,565 before the reader read the whole component) and at most 32,250, for an open DropdownMenu. The manifest lists each file's length (`files[].chars`).
+- **A story that is still changing.** After a story draws, and after an overlay opens, the reader stops style sheet transitions and animations and waits until nothing drawn moves, resizes or fades for three frames, for 1.5 seconds at most (`waitForStill`). Without the wait, Meridian's AlignmentToolbar was read in the middle of a fade driven from script, at opacity 0 in one load and 0.64 in the next, and React Flow's BaseHandle was read as its handle in one load and as the whole pane in the next. A story that changes later, such as LinkCardNode's link label once its image fails to load, is still read as it is when it first stops changing.
+
+What a component costs grows with what it draws. On Meridian's 82 components with a story, the relay's code for one component came to a median of 22,044 characters (20,565 before the reader read the whole component) and at most 32,250, for an open DropdownMenu. With every story drawn, the median is 27,786 and the largest is 47,982, DropdownMenu again (Storybook build at Meridian 4132f3ee8, 2026-10-21). The manifest lists each file's length (`files[].chars`).
+
+## Stories
+
+Every story of a component is drawn, each as a variant of its set.
+
+- **The Story property.** A component with more than one story drawn gets a variant property named `Story`, first among its properties. Its values are the stories' names from the Storybook index, the story the axes are read from first and the others in the index's order.
+- **The story the axes come from** is the first story whose args change what is drawn (`storyCandidates`, Primary, Default, Playground or Base first). It keeps every combination of the axes, as before, with `Story` set to its name.
+- **Every other story adds one variant.** It is read at its own args, with no URL args: the story's `initialArgs`, which URL args do not change. Its other properties take the story's arg where it sets an axis prop to one of that axis's values, and the axis's first value otherwise. The State property takes the first of `loading` and `disabled` that the story sets to true. A story that sets a prop inside its own render, and not as an arg, such as Meridian's Alert Destructive, gets the axis's first value (`Variant=default`), so its name says more than its properties do.
+- **A story that draws the same adds nothing.** When a story's drawing is the same as a variant already in the set, wherever each sits on the page and with a pixel of tolerance on each box's place and size, it is left out. Meridian's three SmallButton Variant stories draw exactly what the Variant property already draws, so SmallButton keeps no `Story` property.
+- **A story that fails to render** is left out with a warning, as before.
+- **A set that would not fit one relay call** keeps the stories that fit, in the index's order, and leaves out the others. The bound is the one `packUnits` applies to a unit alone: at most 50,000 characters of the relay's code, and at most 256 variants and 100 values of a property, as `data-file.mjs` allows. A set too large without its other stories fails with its size, as before. Meridian's Command leaves out Long List, and LoopCard Dark Mode.
+- **Names.** Figma reads a comma or an equals sign in a variant's name as the end of a value and marks the variant broken (a probe in a scratch file, 2026-10-21), so in a Story value a comma becomes a semicolon and an equals sign a colon. Two stories of one component with the same name, from two stories files, as Meridian's two DropdownMenu files both have Default, get their titles after their names.
+- **Layout.** The first story's variants keep the grid of the other properties. Each other story's variant sits on a row of its own below it. Figma takes a set whose variants do not cover every combination of the properties (a probe in a scratch file, 2026-10-21).
+- **The report.** Every story left out is named with its reason, `same`, `failed` or `size`, in the manifest and the run report (`details.storiesLeftOut`), and in a warning. The summary says how many.
+
+A component's version and the ledger are keyed on its name and version, and the relay's reconcile step, the plugin and the generated code find a set by its name, `<component> <version>`, so the new property changes none of them. A component with one story is drawn as before, with no `Story` property.
 
 ## What lands in Figma
 
 - One variable collection, `Tokens` by default, with one mode and one colour variable per token the components use. Each variable has the CSS variable as its WEB code syntax, for example `hsl(var(--primary))`. Which token a colour comes from is found by changing each token on the page and seeing which colours move, so two tokens with the same colour stay two variables.
-- One component set per component version, named `Button 1.1.0`, with variants named `Variant=primary, Size=md`. Fills, strokes, text fills and shadow colours are bound to the variables. Layout is auto layout, as the prototype's.
+- One component set per component version, named `Button 1.1.0`, with variants named `Variant=primary, Size=md`, or `Story=Primary, Variant=primary, Size=md` for a component with more than one story. Fills, strokes, text fills and shadow colours are bound to the variables. Layout is auto layout, as the prototype's.
 - A colour with transparency, such as Tailwind's `bg-primary/10`, keeps its opacity on a paint bound to a variable. Figma resets that opacity to 1 when a bound paint is first assigned to a node, so the code assigns it a second time (a probe in a scratch file showed both, 2026-10-21). A shadow colour bound to a variable loses its alpha the same way and is assigned twice too (probe, 2026-10-21).
 - Symbols that DM Sans and similar fonts have no glyph for, the Arrows block (U+2190 to U+21FF, such as ⇧) and the Miscellaneous Technical block (U+2300 to U+23FF, such as ⌘), are set in Inter in the style nearest the text's weight. Text the plugin writes in the Figma desktop app keeps no fallback glyphs, so they would draw blank.
 - When a new version is written, the previous set moves to the `Older versions` page. A set is never overwritten and never deleted. A version lower than the latest goes straight to `Older versions`. A pre-release such as `1.1.0-rc.1` is lower than `1.1.0`.
@@ -134,7 +152,7 @@ All of them sit under `outputs.figma.options` in `klaus.config.json` and all hav
 | `states` | `[]` | `"loading"` and `"disabled"` add a `State` property. It is off by default so the variants keep the prototype's `Variant=..., Size=...` names. |
 | `icons` | `false` | Adds a hidden icon layer behind a `Show icon` property, from the icon a story draws. |
 | `label` | `true` | Puts the component's name in the text layer. |
-| `stories` | `{}` | Story ids by component name, when the automatic pick is wrong. |
+| `stories` | `{}` | Story ids by component name, for the story the axes are read from, when the automatic pick is wrong. The component's other stories are still drawn. |
 | `componentsPerCall` | `1` | Components in one data file, and so in one relay call. A bulk load can set up to 50. A file is also cut where its code would pass 50,000 characters. |
 | `editableScreens` | `false` | Write screens as editable layers. Needs `screensBaseUrl`. |
 | `screensBaseUrl`, `screensStorageState` | empty | The running app, and a Playwright storage state for a signed-in app. |
@@ -145,7 +163,8 @@ All of them sit under `outputs.figma.options` in `klaus.config.json` and all hav
 ## Limits
 
 - Playwright is resolved from the repo the build is for, so the repo must have `@playwright/test` and a browser installed.
-- A component is drawn from one story that renders from its args, with its variant props set from the story URL. Add a story like that, or name one in `stories`, for a component that has none.
+- A component's axes are read from one story that renders from its args, with its variant props set from the story URL. Add a story like that, or name one in `stories`, for a component that has none. Its other stories add one variant each, read at their own args.
+- A story that draws the component more than once, such as Button's Variants, is drawn as the first one, because the reader reads the component's first instance in the story.
 - Only the light theme is read. A repo with a dark theme gets one mode.
 - Background images (`url()`), repeating and conic gradients, gradients drawn as a pattern and gradient text are left out, and a warning says so. A gradient's stop colours are not bound to tokens.
 - A box shadow on a box without a fill is cast by what the box holds in Figma, its border and text, where CSS casts it from the whole box. Figma draws a spread only on a frame with a fill that clips.
@@ -158,6 +177,8 @@ node --test "plugins/process-pack/tools/klaus/adapters/figma/**/*.test.mjs"
 ```
 
 The tests run the generated code against a small stand-in for the Plugin API (`tests/fake-figma.mjs`). It does what a scratch Figma file did in probes on 2026-10-21: a bound paint loses its opacity on its first assignment, and fill in a frame that hugs leaves the node at its own size. One test reads a real Storybook build in a real browser when `KLAUS_TEST_STORYBOOK` points at a build and `KLAUS_TEST_REPO` at a repo with Playwright installed. Without them it is skipped.
+
+`tests/story-variants.test.mjs` covers process-pack issue #86: the `Story` property and its values, a story's args mapped onto the axes, a story that draws the same as a variant, a story that fails to render, the size bound, the layout, and a set near the call limit written as a data file the reader takes. Its browser test reads a chip with five stories in the stand-in Storybook build.
 
 `tests/drawing.test.mjs` covers the six drawing faults of process-pack issue #83: uneven spacing, fill and hug, transparent colours, symbols in fonts without them, a component that is one `<svg>`, and ellipsis text. It also covers what issue #85 added to the reader: box shadows, gradients, filters, a margin on the cross axis and an svg attribute a style sheet overrides. Its browser tests use the same stand-in Storybook build and `KLAUS_TEST_REPO` as the next paragraph.
 

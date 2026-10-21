@@ -32,18 +32,55 @@ export function listCustomProperties() {
 }
 
 /**
- * What the story declares: the names of its args with their types, and whether its children arg is
- * markup rather than text. Storybook's preview keeps the rendered story on window.__STORYBOOK_PREVIEW__.
+ * What the story declares: the names of its args with their types, whether its children arg is
+ * markup rather than text, and its own args (initialArgs), which a story URL's args do not change
+ * (read from Meridian's build, 2026-10-21). Storybook's preview keeps the rendered story on window.__STORYBOOK_PREVIEW__.
  * A build without it gives no args, and the label rule keeps its old meaning.
  */
 export function storyFacts() {
   const story = window.__STORYBOOK_PREVIEW__?.currentRender?.story;
   const argTypes = story?.argTypes ?? {};
   const children = story?.initialArgs?.children;
+  // The story's own args, which URL args do not change. Only text, numbers and true or false: what an axis can hold.
+  const initialArgs = Object.fromEntries(Object.entries(story?.initialArgs ?? {}).filter(([, value]) => ["string", "number", "boolean"].includes(typeof value)));
   return {
     args: Object.keys(argTypes).map((name) => ({ name, type: argTypes[name]?.type?.name ?? null })),
     childrenIsMarkup: children !== undefined && children !== null && typeof children !== "string" && typeof children !== "number",
+    initialArgs,
   };
+}
+
+/**
+ * Waits until nothing the page draws moves, resizes or fades for `frames` frames in a row, or for
+ * `timeout` milliseconds at most. A story can still be changing when it first draws: a fade driven
+ * from script, which a style sheet cannot stop (Meridian's AlignmentToolbar read at opacity 0 in one
+ * load and 0.64 in the next), or React Flow drawing a node only once it has measured it (BaseHandle
+ * read as its 16px handle in one load and as the 558px pane in the next, 2026-10-21).
+ *
+ * @param {{ frames: number, timeout: number }} arg
+ * @returns {Promise<boolean>} false when it was still changing at the timeout.
+ */
+export async function waitForStill({ frames, timeout }) {
+  const look = () =>
+    [...document.body.querySelectorAll("*")]
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return `${rect.x.toFixed(1)},${rect.y.toFixed(1)},${rect.width.toFixed(1)},${rect.height.toFixed(1)},${style.opacity},${style.visibility},${style.transform}`;
+      })
+      .join(";");
+  const frame = () => new Promise((done) => requestAnimationFrame(() => done()));
+  const end = performance.now() + timeout;
+  let last = look();
+  let still = 0;
+  while (performance.now() < end) {
+    await frame();
+    const now = look();
+    still = now === last ? still + 1 : 0;
+    if (still >= frames) return true;
+    last = now;
+  }
+  return false;
 }
 
 /**

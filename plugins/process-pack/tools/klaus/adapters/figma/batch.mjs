@@ -14,6 +14,17 @@ import { MAX_CODE_CHARS } from "./settings.mjs";
 const HEADER_ROOM = 120;
 
 /**
+ * The most characters of code the relay can send for these units in one file: its encoded code,
+ * which is longer than the plain code, with a header of the greatest length, so a file never comes
+ * out over the limit once its real header is in.
+ * @param {object[]} units
+ * @param {{ collection: string, mode: string }} config
+ */
+export function codeChars(units, config) {
+  return codeFor(dataFor({ units, config, header: "x".repeat(HEADER_ROOM) }), { key: [...SIZING_KEY] }).length;
+}
+
+/**
  * @param {object[]} units
  * @param {object} options
  * @param {{ collection: string, mode: string }} options.config
@@ -24,11 +35,8 @@ const HEADER_ROOM = 120;
  *   chars is the length of the relay's encoded code, the most use_figma will be sent.
  */
 export function packUnits(units, { config, perFile = 10, maxChars = MAX_CODE_CHARS }) {
-  // Sized with a header of the greatest length, so a file never comes out over the limit once its real header is in.
   // Each size call renders only the file being filled, which holds at most perFile units.
-  const placeholder = "x".repeat(HEADER_ROOM);
-  // Sized by the relay's encoded code, which is longer than the plain code.
-  const size = (group) => codeFor(dataFor({ units: group, config, header: placeholder }), { key: [...SIZING_KEY] }).length;
+  const size = (group) => codeChars(group, config);
   const groups = [];
   const tooLarge = [];
   let current = [];

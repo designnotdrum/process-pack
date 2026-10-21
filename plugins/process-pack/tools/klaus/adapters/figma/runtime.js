@@ -496,18 +496,24 @@ async function buildSet(U, page, created) {
   created.push(set);
   set.name = name;
   set.description = U.description;
+  // A first property named Story holds the component's stories. The first story's variants are the
+  // grid of the other properties, and each other story's one variant sits on a row of its own below.
+  // The spec lists the first story's variants first and the others in their order.
+  const story = U.axes[0].name === "Story" ? 1 : 0;
+  const axes = U.axes.slice(story);
+  const grid = [];
+  const below = [];
+  for (const p of parts) (story && p.at[0] ? below : grid).push(p);
   // Rows are the first axis. Columns run through the other axes, the last one fastest.
-  const rest = U.axes.slice(1);
   const column = function (at) {
-    if (U.axes.length === 1) return at[0];
     let index = 0;
-    for (let i = 0; i < rest.length; i++) index = index * rest[i].values.length + at[i + 1];
-    return index;
+    for (let i = 1; i < axes.length; i++) index = index * axes[i].values.length + at[story + i];
+    return axes.length === 1 ? at[story] : index;
   };
-  const row = function (at) { return U.axes.length === 1 ? 0 : at[0]; };
+  const row = function (at) { return axes.length > 1 ? at[story] : 0; };
   const widths = {};
   const heights = {};
-  for (const p of parts) {
+  for (const p of grid) {
     widths[column(p.at)] = Math.max(widths[column(p.at)] || 0, p.component.width);
     heights[row(p.at)] = Math.max(heights[row(p.at)] || 0, p.component.height);
   }
@@ -517,11 +523,18 @@ async function buildSet(U, page, created) {
   Object.keys(widths).map(Number).sort(function (a, b) { return a - b; }).forEach(function (c) { xs[c] = x; x += widths[c] + 32; });
   let y = 24;
   Object.keys(heights).map(Number).sort(function (a, b) { return a - b; }).forEach(function (r) { ys[r] = y; y += heights[r] + 16; });
-  for (const p of parts) {
+  for (const p of grid) {
     p.component.x = xs[column(p.at)];
     p.component.y = ys[row(p.at)];
   }
-  set.resizeWithoutConstraints(x - 32 + 24, y - 16 + 24);
+  let right = x - 32;
+  for (const p of below) {
+    p.component.x = 24;
+    p.component.y = y;
+    y += p.component.height + 16;
+    right = Math.max(right, 24 + p.component.width);
+  }
+  set.resizeWithoutConstraints(right + 24, y - 16 + 24);
   return set;
 }
 

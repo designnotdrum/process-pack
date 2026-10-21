@@ -25,6 +25,8 @@ export class DataError extends Error {}
 /** The most a data file may hold. A call carries at most 50,000 characters of code, so data is well under this. */
 const MAX_BYTES = 2 * MAX_CODE_CHARS;
 const MAX_UNITS = 50;
+/** The most values one variant property may have. */
+export const MAX_AXIS_VALUES = 100;
 const MAX_NODES = 20000;
 const MAX_DEPTH = 64;
 const VERSION = /^\d+(\.\d+)*([-+][0-9A-Za-z.-]+)?$/;
@@ -215,7 +217,7 @@ function component(unit, where, tokenCount) {
   axes.forEach((axis, i) => {
     object(axis, `${where}.axes[${i}]`, ["name", "values"]);
     name(axis.name, `${where}.axes[${i}].name`);
-    list(axis.values, `${where}.axes[${i}].values`, 100).forEach((v, j) => name(v, `${where}.axes[${i}].values[${j}]`));
+    list(axis.values, `${where}.axes[${i}].values`, MAX_AXIS_VALUES).forEach((v, j) => name(v, `${where}.axes[${i}].values[${j}]`));
   });
   oneOf(unit.iconProperty, [0, 1], `${where}.iconProperty`);
   const nodeCount = drawing(unit, where, tokenCount);

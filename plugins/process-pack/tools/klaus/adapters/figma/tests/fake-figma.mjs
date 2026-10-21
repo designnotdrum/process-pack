@@ -202,7 +202,19 @@ export function createFigma({ pages = ["Button"], fonts = { "DM Sans": ["Regular
     },
     combineAsVariants(components, parent) {
       const set = new Node("COMPONENT_SET");
-      for (const component of components) set.appendChild(component);
+      for (const component of components) {
+        // Figma reads a variant's name as "Property=value" pairs split at commas, and trims each part.
+        // A part that is not one property and one value, as a comma or an equals sign inside a value
+        // makes it, marks the variant broken: its name gets a leading "=" and it has no properties
+        // (a probe in a scratch file, 2026-10-21).
+        const pairs = component.name.split(",").map((part) => part.split("=").map((side) => side.trim()));
+        if (pairs.every((pair) => pair.length === 2 && pair[0] !== "")) component.variantProperties = Object.fromEntries(pairs);
+        else {
+          component.name = `=${component.name}`;
+          component.variantProperties = null;
+        }
+        set.appendChild(component);
+      }
       parent.appendChild(set);
       return set;
     },
