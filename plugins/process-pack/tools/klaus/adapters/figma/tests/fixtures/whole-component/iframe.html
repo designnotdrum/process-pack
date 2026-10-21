@@ -160,6 +160,36 @@
           const story = { component: Panel, argTypes: { children: { name: "children" } }, initialArgs: { children: { $$typeof: "react.element" } } };
           commit([component(Decorator, [host(wrapper, [component(Panel, [host(panel)]), host(main)])])], story);
         },
+
+        // A command item: an icon with a right margin, its label, and a shortcut pushed to the right edge by an auto margin.
+        "fixture-row--default"() {
+          const row = h("div", "display: flex; align-items: center; width: 300px; padding: 6px 8px; box-sizing: border-box");
+          row.insertAdjacentHTML("beforeend", '<svg width="16" height="16" viewBox="0 0 16 16" style="margin-right: 8px; opacity: 0.5"><circle cx="8" cy="8" r="6" fill="currentColor"/></svg>');
+          row.append(h("span", "", "Profile"), h("span", "margin-left: auto; font-size: 12px", "⌘P"));
+          root.append(row);
+        },
+
+        // A ring drawn as one svg, with a gradient in its defs. A style sheet gives the circle no fill
+        // and its stroke width, and one stop's colour is a var(), as Meridian's PrimaRing does.
+        "fixture-ring--default"() {
+          const sheet = document.createElement("style");
+          sheet.textContent = ".ring { fill: none; stroke-width: 3px; }";
+          document.head.append(sheet);
+          root.insertAdjacentHTML(
+            "beforeend",
+            '<svg width="32" height="32" viewBox="0 0 32 32" style="display: block"><defs><linearGradient id="ring" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="var(--ring-core, #4a5ae8)"/><stop offset="1" stop-color="#a855f7"/></linearGradient></defs><circle class="ring" cx="16" cy="16" r="14" stroke="url(#ring)"/></svg>',
+          );
+        },
+
+        // A modal's column: a footer that stretches across it, with a line of text that grows and is cut
+        // with an ellipsis, and a button. Under it a box that does not stretch and a box 100% wide.
+        "fixture-footer--default"() {
+          const note = h("p", "flex: 1 1 0%; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap", "Choose cards or sections to attach this file to");
+          const footer = h("footer", "display: flex; align-items: center; gap: 8px; padding: 12px 16px", note, h("button", "", "Attach"));
+          const narrow = h("div", "align-self: flex-start; padding: 4px", "Narrow");
+          const full = h("div", "width: 100%", "Full");
+          root.append(h("div", "display: flex; flex-direction: column; width: 320px", footer, narrow, full));
+        },
       };
       stories[id]();
     </script>

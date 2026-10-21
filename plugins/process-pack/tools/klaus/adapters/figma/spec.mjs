@@ -13,10 +13,13 @@
  *         g gap, p padding [top, right, bottom, left], fw fh the width or height is fixed (a
  *         missing one hugs), r radius, f fill, sw stroke weight, sc stroke colour, o opacity,
  *         clip the box clips what it holds, ap placed by its x y inside an auto layout parent,
- *         as a box the browser positions absolutely is
+ *         as a box the browser positions absolutely is, gw gh the box fills its auto layout
+ *         parent's width or height, as a box that grows or stretches in the browser does
  *   text  k "t"  v the words, ff family, wt weight, fs size, lh line height, ls letter spacing,
  *         c colour, td "U" underline, tt "U" upper case, x y w position and width when the parent
- *         is not an auto layout, wrap the text wraps at width w, in an auto layout too
+ *         is not an auto layout, wrap the text is w wide and wraps there, in an auto layout too,
+ *         tr the text is w wide on one line and cut with an ellipsis, gw it fills its auto layout
+ *         parent's width
  *   icon  k "v"  s position in the svg table, w h size, x y position, hid hidden, n name, c colour
  *         to draw its lines and fills in, o opacity, ap as for a box
  *
@@ -126,7 +129,8 @@ class Builder {
   build(node, parent) {
     if (node.kind === "text") return [this.text(node, parent), []];
     if (node.kind === "svg") return [this.icon(node, parent), []];
-    if (isBareWrapper(node) && parent) return this.build(node.children[0], parent);
+    // The wrapper is drawn as its text. Its width and how it sits in its parent go to the text.
+    if (isBareWrapper(node) && parent) return [this.text(node.children[0], parent, node), []];
     return this.box(node, parent);
   }
 
@@ -137,7 +141,38 @@ class Builder {
     return outOfFlow(node) ? { ...at, ap: 1 } : {};
   }
 
-  text(node, parent) {
+  /**
+   * Whether a box fills its auto layout parent, on each axis. It fills the parent's main axis when
+   * it grows (flex-grow). It fills the counter axis when it stretches (align-self stretch, its own
+   * or the parent's align-items, with an auto width or height) or is sized as a percentage, and the
+   * browser drew it as wide as the parent's content box there. A box with a margin on that axis is
+   * narrower than the content box, so it keeps its own size.
+   */
+  fills(node, parent) {
+    if (!parent?.flow || this.absolute || outOfFlow(node)) return {};
+    const out = {};
+    const [main, counter] = parent.column ? ["gh", "gw"] : ["gw", "gh"];
+    if (node.grow > 0) out[main] = 1;
+    if (node.size) {
+      const across = parent.column ? 0 : 1;
+      const align = !node.alignSelf || node.alignSelf === "auto" ? parent.node.alignItems : node.alignSelf;
+      const stretched = ["normal", "stretch"].includes(align) && node.size[across] === "auto";
+      const size = parent.column ? node.w : node.h;
+      const room = parent.column ? parent.content.w : parent.content.h;
+      if ((stretched || node.size[across] === "%") && Math.abs(size - room) <= 1) out[counter] = 1;
+    }
+    return out;
+  }
+
+  /**
+   * A run of text. wrapper is the box it stands for, when the box only wraps it (isBareWrapper).
+   *
+   * The text is drawn at its own width, unless the browser gave it another one: a wrapper that grows
+   * or stretches keeps its width and fills its parent, a text area's text takes the text area's
+   * content width, and text the browser cuts with an ellipsis takes the width up to the clipping
+   * box's content edge, on one line.
+   */
+  text(node, parent, wrapper = null) {
     const lines = Math.max(1, Math.round(node.h / node.lineHeight));
     const high = round(lines * node.lineHeight);
     const flowed = parent?.flow && !this.absolute;
@@ -153,15 +188,49 @@ class Builder {
     if (node.letterSpacing) entry.ls = node.letterSpacing;
     if (/underline/.test(node.decoration)) entry.td = "U";
     if (node.transform === "uppercase") entry.tt = "U";
+
+    let width = null;
+    let fill = false;
+    // A wrapper as wide as its own text, such as one in a column only as wide as that text, is
+    // drawn at the text's own width: Figma's glyphs can be a little wider than the browser's.
+    if (wrapper && Math.abs(wrapper.w - node.w) > 1) {
+      fill = this.fills(wrapper, parent).gw === 1;
+      if (fill) width = wrapper.w;
+    }
+    if (parent?.node.tag === "textarea") {
+      width = node.w;
+      fill = Boolean(flowed);
+    }
+    // The box that cuts the text with an ellipsis: the wrapper, or the box the text sits in. The text
+    // is cut where the browser cut it, or where it fills a box wider than itself. Text that fits a
+    // box of its own width keeps its own width, because Figma's glyphs can be a little wider than
+    // the browser's and a fixed width would cut it.
+    const cutter = wrapper?.ellipsis ? wrapper : !wrapper && parent?.node?.ellipsis ? parent.node : null;
+    let cut = false;
+    if (cutter) {
+      const edge = cutter.x + cutter.w - cutter.padding[1] - cutter.borderWidth[1];
+      if (width !== null || node.x + node.w > edge + 0.5) {
+        width = round(edge - node.x);
+        cut = true;
+      }
+    }
+
     if (!flowed && parent) {
       // The browser reports the glyph box, which sits in the middle of the line box.
-      Object.assign(entry, { x: round(node.x - parent.x), y: round(node.y - parent.y - (high - node.h) / 2), w: node.w });
-      if (lines > 1) entry.wrap = 1;
+      Object.assign(entry, { x: round(node.x - parent.x), y: round(node.y - parent.y - (high - node.h) / 2), w: width ?? node.w });
+      if (lines > 1 || (width !== null && !cut)) entry.wrap = 1;
     } else if (flowed && lines > 1) {
       // Text that wraps in an auto layout wraps at the width the browser wrapped it at: a column's
       // content width, or the text's own width in a row.
-      Object.assign(entry, { w: parent.inner ?? node.w, wrap: 1 });
+      Object.assign(entry, { w: width ?? parent.inner ?? node.w, wrap: 1 });
+    } else if (flowed && width !== null) {
+      Object.assign(entry, { w: width, wrap: 1 });
     }
+    if (cut) {
+      delete entry.wrap;
+      entry.tr = 1;
+    }
+    if (flowed && fill) entry.gw = 1;
     if (!entry.c) entry.c = [-1, 0, 0, 0, 1];
     return this.nodes.add(entry);
   }
@@ -173,16 +242,23 @@ class Builder {
   }
 
   box(node, parent) {
-    const flex = /flex/.test(node.display) && !this.absolute;
     const column = node.direction.startsWith("column");
     const reverse = node.direction.endsWith("reverse");
-    const inner = column ? round(node.w - node.padding[1] - node.padding[3] - node.borderWidth[1] - node.borderWidth[3]) : null;
-    const self = { x: node.x, y: node.y, flow: flex, inner };
-    let children = node.children.map((child) => ({ child, tree: this.build(child, self) }));
+    // The spacing comes before the children. A flex box whose children are not evenly spaced is
+    // drawn as a box that is not flex, with every child placed by position, and how a child is
+    // built depends on which of the two its parent is.
+    const laid = /flex/.test(node.display) && !this.absolute ? this.spacing(node, column, reverse) : null;
+    const flex = laid !== null && laid.even;
+    const content = {
+      w: round(node.w - node.padding[1] - node.padding[3] - node.borderWidth[1] - node.borderWidth[3]),
+      h: round(node.h - node.padding[0] - node.padding[2] - node.borderWidth[0] - node.borderWidth[2]),
+    };
+    const self = { x: node.x, y: node.y, flow: flex, inner: column ? content.w : null, column, node, content };
+    let children = node.children.map((child) => this.build(child, self));
     if (reverse) children = children.reverse();
 
     const entry = { k: "b", n: node.tag, w: node.w, h: node.h };
-    Object.assign(entry, this.place(node, parent));
+    Object.assign(entry, this.place(node, parent), this.fills(node, parent));
     let padding = node.padding;
     if (flex) {
       entry.L = column ? "V" : "H";
@@ -190,10 +266,15 @@ class Builder {
       const counter = COUNTER_ALIGN[node.alignItems];
       if (primary) entry.pa = primary;
       if (counter) entry.ca = counter;
-      const laid = this.spacing(node, column, reverse);
       if (laid.spacing) entry.g = laid.spacing;
       Object.assign(entry, this.sizing(node, column, laid.spacing, laid.padding));
       padding = laid.padding;
+      // A child that fills this box on an axis fixes the box on that axis. FILL in a frame that
+      // hugs leaves the child at its own size in Figma.
+      for (const [id] of children) {
+        if (this.nodes.items[id].gw) entry.fw = 1;
+        if (this.nodes.items[id].gh) entry.fh = 1;
+      }
     }
     if (padding.some((p) => p !== 0)) entry.p = padding;
 
@@ -212,13 +293,19 @@ class Builder {
     if (node.opacity < 1) entry.o = Math.round(node.opacity * 1000) / 1000;
     if (node.clip) entry.clip = 1;
 
-    return [this.nodes.add(entry), children.map((c) => c.tree)];
+    return [this.nodes.add(entry), children];
   }
 
   /**
-   * The spacing and padding of a flex box in Figma. Auto layout has no margins, so the margins
-   * between its children, such as Tailwind's space-y, join the gap when every pair is the same
-   * distance apart, and the first and last child's outer margins join the padding.
+   * The spacing and padding of a flex box in Figma, and whether auto layout can draw it at all.
+   *
+   * Auto layout has no margins, so the margins between its children, such as Tailwind's space-y,
+   * join the gap, and the first and last child's outer margins join the padding. Auto layout has
+   * one spacing for every pair, so that works only when every pair of children is the same distance
+   * apart where the browser put them. A row with mr-2 on an icon and ml-auto on a shortcut is not:
+   * then `even` is false, and the box places its children by position instead. The distances are
+   * read from the children's boxes, so a margin the reader does not see, or an auto margin, counts
+   * too. Space-between spreads its children evenly by itself and keeps the gap.
    */
   spacing(node, column, reverse) {
     const gap = column ? node.gap[0] : node.gap[1];
@@ -228,13 +315,26 @@ class Builder {
     // Margin sides, as [top, right, bottom, left] positions: before and after a child on the main axis.
     const [before, after] = column ? [0, 2] : [3, 1];
     const between = kids.slice(1).map((kid, i) => round(gap + margin(kids[i])[after] + margin(kid)[before]));
-    const spacing = between.length > 0 && between.every((s) => Math.abs(s - between[0]) < 0.5) ? between[0] : gap;
+    const fromMargins = between.length > 0 && between.every((s) => Math.abs(s - between[0]) < 0.5) ? between[0] : null;
     const padding = node.padding.slice();
     if (kids.length > 0) {
       padding[before] = round(Math.max(0, padding[before] + margin(kids[0])[before]));
       padding[after] = round(Math.max(0, padding[after] + margin(kids.at(-1))[after]));
     }
-    return { spacing, padding };
+    // Where a child starts and ends on the main axis. Text reports its glyph box, which sits in the
+    // middle of its line box, and its line box is what takes up room.
+    const span = (kid) => {
+      if (!column) return [kid.x, kid.x + kid.w];
+      if (kid.kind !== "text") return [kid.y, kid.y + kid.h];
+      const high = Math.max(1, Math.round(kid.h / kid.lineHeight)) * kid.lineHeight;
+      const top = kid.y - (high - kid.h) / 2;
+      return [top, top + high];
+    };
+    const drawn = kids.slice(1).map((kid, i) => round(span(kid)[0] - span(kids[i])[1]));
+    if (drawn.length === 0 || PRIMARY_ALIGN[node.justifyContent] === "B") return { even: true, spacing: fromMargins ?? gap, padding };
+    if (Math.max(...drawn) - Math.min(...drawn) > 1) return { even: false };
+    const spacing = fromMargins !== null && Math.abs(fromMargins - drawn[0]) <= 1 ? fromMargins : round(drawn.reduce((a, b) => a + b, 0) / drawn.length);
+    return { even: true, spacing, padding };
   }
 
   /**
@@ -268,6 +368,39 @@ export function describe(purpose) {
   return [useWhen && `Use when: ${useWhen}.`, notFor && `Not for: ${notFor}.`].filter(Boolean).join(" ");
 }
 
+/**
+ * A variant's root is drawn as a frame. A component whose root is an icon, such as a ring drawn as
+ * one <svg>, is that icon in a frame of its size.
+ */
+function asRoot(tree) {
+  if (tree.kind === "box") return tree;
+  return {
+    kind: "box",
+    tag: tree.kind === "svg" ? "svg" : "span",
+    x: tree.x,
+    y: tree.y,
+    w: tree.w,
+    h: tree.h,
+    display: "block",
+    position: "static",
+    direction: "row",
+    alignItems: "normal",
+    justifyContent: "normal",
+    gap: [0, 0],
+    padding: [0, 0, 0, 0],
+    margin: [0, 0, 0, 0],
+    borderWidth: [0, 0, 0, 0],
+    borderStyle: "none",
+    borderColor: [0, 0, 0, 0],
+    radius: [0, 0, 0, 0],
+    background: [0, 0, 0, 0],
+    backgroundImage: false,
+    opacity: 1,
+    clip: false,
+    children: [tree],
+  };
+}
+
 /** The first run of text in a captured tree. */
 function firstText(node) {
   if (node.kind === "text") return node;
@@ -294,7 +427,7 @@ export function buildComponentUnit({ item, capture, options }) {
   const spinnerIndex = capture.spinner ? builder.svgs.add(capture.spinner.html) : -1;
 
   const cells = capture.cells.map((cell) => {
-    const [id, children] = builder.build(cell.tree, null);
+    const [id, children] = builder.build(asRoot(cell.tree), null);
     // An icon is drawn in the colour of the words beside it, so it shows on every variant.
     const loading = cell.key.State === "loading" && spinnerIndex >= 0;
     const words = hasIcon || loading ? firstText(cell.tree) : null;

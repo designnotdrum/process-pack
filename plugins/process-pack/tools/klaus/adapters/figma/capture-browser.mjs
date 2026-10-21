@@ -313,9 +313,51 @@ export function readStory(arg) {
       };
     }
 
+    const marginOf = (style) => [style.marginTop, style.marginRight, style.marginBottom, style.marginLeft].map((v) => round(number(v)));
+
+    // SVG paint properties a style sheet can set, which copied markup loses: [name, inherited, initial value].
+    const SVG_PAINT = [
+      ["fill", true],
+      ["fill-opacity", true],
+      ["stroke", true],
+      ["stroke-width", true],
+      ["stroke-opacity", true],
+      ["stroke-dasharray", true],
+      ["stroke-linecap", true],
+      ["stroke-linejoin", true],
+      ["opacity", false, "1"],
+      ["stop-color", false, "rgb(0, 0, 0)"],
+      ["stop-opacity", false, "1"],
+    ];
+
+    /**
+     * Writes into a copied <svg> the paint the browser drew it with, where a style sheet set it, such
+     * as a ring whose class gives it fill: none, or where an attribute holds a var(). An attribute
+     * without a var() stays as it is. An inherited value is written only where it differs from the
+     * parent's, so an icon whose paths inherit the svg's stroke grows by nothing. The svg's own
+     * opacity is left out: the icon carries it, and Figma would apply it twice.
+     */
+    function inlinePaint(svg, clone) {
+      const originals = [svg, ...svg.querySelectorAll("*")];
+      const copies = [clone, ...clone.querySelectorAll("*")];
+      originals.forEach((element, i) => {
+        const style = getComputedStyle(element);
+        const parent = element.parentElement ? getComputedStyle(element.parentElement) : null;
+        for (const [name, inherited, initial] of SVG_PAINT) {
+          if (i === 0 && name === "opacity") continue;
+          const attribute = element.getAttribute(name);
+          if (attribute !== null && !attribute.includes("var(")) continue;
+          const value = style.getPropertyValue(name);
+          if (attribute === null && value === (inherited ? parent?.getPropertyValue(name) : initial)) continue;
+          copies[i].setAttribute(name, value.replace(/(\d)px/g, "$1"));
+        }
+      });
+    }
+
     function iconBox(svg, style) {
       const rect = svg.getBoundingClientRect();
       const clone = svg.cloneNode(true);
+      inlinePaint(svg, clone);
       clone.setAttribute("width", String(round(rect.width)));
       clone.setAttribute("height", String(round(rect.height)));
       const [r, g, b] = colorOf(style.color);
@@ -329,7 +371,25 @@ export function readStory(arg) {
         h: round(rect.height),
         position: style.position,
         opacity: number(style.opacity),
+        // An icon's margin, such as mr-2, is part of the spacing between it and the next child.
+        margin: marginOf(style),
       };
+    }
+
+    /**
+     * How the style sheet sized a box, width then height: "auto", "%" for a percentage, "px" for a
+     * length, or another keyword or "calc". getComputedStyle gives pixels for all of them; Chrome's
+     * computedStyleMap keeps auto and percentages. Null in a browser without it.
+     */
+    function specifiedSize(element) {
+      if (typeof element.computedStyleMap !== "function") return null;
+      const map = element.computedStyleMap();
+      return ["width", "height"].map((name) => {
+        const value = map.get(name);
+        if (typeof CSSKeywordValue !== "undefined" && value instanceof CSSKeywordValue) return value.value;
+        if (typeof CSSUnitValue !== "undefined" && value instanceof CSSUnitValue) return value.unit === "percent" ? "%" : "px";
+        return "calc";
+      });
     }
 
     /** A box for a rectangle that draws nothing itself, such as the frame around an overlay and its trigger. */
@@ -379,7 +439,7 @@ export function readStory(arg) {
         justifyContent: style.justifyContent,
         gap: [round(number(style.rowGap)), round(number(style.columnGap))],
         padding: [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft].map((v) => round(number(v))),
-        margin: [style.marginTop, style.marginRight, style.marginBottom, style.marginLeft].map((v) => round(number(v))),
+        margin: marginOf(style),
         borderWidth: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth].map((v) => round(number(v))),
         borderStyle: style.borderTopStyle,
         borderColor: colorOf(style.borderTopColor),
@@ -388,6 +448,14 @@ export function readStory(arg) {
         backgroundImage: style.backgroundImage !== "none",
         opacity: number(style.opacity),
         clip: style.overflowX !== "visible" || style.overflowY !== "visible",
+        // How it sits in a flex parent: flex-grow, and align-self as written ("auto" follows the
+        // parent's align-items). With its specified size, spec.mjs tells a box that fills its parent
+        // from one that hugs its content.
+        grow: number(style.flexGrow),
+        alignSelf: style.alignSelf,
+        size: specifiedSize(element),
+        // It cuts its text with an ellipsis: text-overflow ellipsis, on one line, in a box that clips.
+        ellipsis: style.textOverflow === "ellipsis" && style.overflowX !== "visible" && (style.whiteSpace === "nowrap" || style.textWrapMode === "nowrap"),
         watchIndex: watch(element),
         children: [],
       };
@@ -434,12 +502,19 @@ export function readStory(arg) {
       }
     }
 
+    /** A part is read as a box, or as an icon when it is itself an <svg>, such as a ring drawn as one svg. */
+    function partOf(part, depth) {
+      if (part.tagName.toLowerCase() !== "svg") return box(part, depth);
+      count += 1;
+      return iconBox(part, getComputedStyle(part));
+    }
+
     // One part is the component's own box. Several, such as a trigger and its open overlay, sit in a
     // box that draws nothing and holds them all.
     let tree;
-    if (parts.length === 1) tree = box(parts[0], 1);
+    if (parts.length === 1) tree = partOf(parts[0], 1);
     else {
-      const read = parts.map((part) => box(part, 2));
+      const read = parts.map((part) => partOf(part, 2));
       // What a part draws can reach past its own box, as a panel moved down from its positioned
       // wrapper does. Only a box that clips keeps its children inside it.
       const rects = [];
