@@ -10,6 +10,14 @@
     "fixture-row--default": { "id": "fixture-row--default", "type": "story", "title": "Fixture/Row", "name": "Default", "importPath": "./Row.stories.js" },
     "fixture-ring--default": { "id": "fixture-ring--default", "type": "story", "title": "Fixture/Ring", "name": "Default", "importPath": "./Ring.stories.js" },
     "fixture-footer--default": { "id": "fixture-footer--default", "type": "story", "title": "Fixture/Footer", "name": "Default", "importPath": "./Footer.stories.js" },
-    "fixture-gaps--default": { "id": "fixture-gaps--default", "type": "story", "title": "Fixture/Gaps", "name": "Default", "importPath": "./Gaps.stories.js" }
+    "fixture-gaps--default": { "id": "fixture-gaps--default", "type": "story", "title": "Fixture/Gaps", "name": "Default", "importPath": "./Gaps.stories.js" },
+    "fixture-portal--default": { "id": "fixture-portal--default", "type": "story", "title": "Fixture/Portal", "name": "Default", "importPath": "./Portal.stories.js" },
+    "fixture-chip--default": { "id": "fixture-chip--default", "type": "story", "title": "Fixture/Chip", "name": "Default", "importPath": "./Chip.stories.js" },
+    "fixture-chip--bold-loud": { "id": "fixture-chip--bold-loud", "type": "story", "title": "Fixture/Chip", "name": "Bold, loud", "importPath": "./Chip.stories.js" },
+    "fixture-chip--huge": { "id": "fixture-chip--huge", "type": "story", "title": "Fixture/Chip", "name": "Huge", "importPath": "./Chip.stories.js" },
+    "fixture-chip--again": { "id": "fixture-chip--again", "type": "story", "title": "Fixture/Chip", "name": "Again", "importPath": "./Chip.stories.js" },
+    "fixture-chip--broken": { "id": "fixture-chip--broken", "type": "story", "title": "Fixture/Chip", "name": "Broken", "importPath": "./Chip.stories.js" },
+    "fixture-chip--set-in-render": { "id": "fixture-chip--set-in-render", "type": "story", "title": "Fixture/Chip", "name": "Set in render", "importPath": "./Chip.stories.js" },
+    "fixture-chip--own-default": { "id": "fixture-chip--own-default", "type": "story", "title": "Fixture/Chip", "name": "Own default", "importPath": "./Chip.stories.js" }
   }
 }

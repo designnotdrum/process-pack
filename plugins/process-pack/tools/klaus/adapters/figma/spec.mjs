@@ -4,7 +4,7 @@
  *
  * The unit is small on purpose. Every distinct box, text and icon is stored
  * once in a table, and each variant is a tree of table positions, so a set of
- * 30 variants costs a few kilobytes and about 10 sets fit in one 50,000
+ * 30 variants costs a few kilobytes and about seven 18-variant sets fit in one 50,000
  * character call.
  *
  * Short keys in a node, to keep the code small:
@@ -36,7 +36,7 @@
  * [position, r, g, b, a] with the position from 0 to 1.
  */
 
-import { OLDER_VERSIONS_PAGE } from "./settings.mjs";
+import { OLDER_VERSIONS_PAGE, STORY } from "./settings.mjs";
 
 const SCOPES = {
   background: ["FRAME_FILL", "SHAPE_FILL"],
@@ -657,15 +657,25 @@ function firstText(node) {
  */
 export function buildComponentUnit({ item, capture, options }) {
   const builder = new Builder({ tokens: capture.tokens });
-  const axes = capture.axes.map((axis) => ({ name: axis.name, values: axis.values.map(String) }));
+  // A component with more than one story drawn gets a Story property first. The story the axes were
+  // read from is its first value, and each other story adds one variant.
+  const stories = capture.stories ?? [];
+  const storyAxis = stories.length > 0 ? [{ name: STORY, values: [capture.storyValue, ...stories.map((story) => story.value)] }] : [];
+  const axes = [...storyAxis, ...capture.axes.map((axis) => ({ name: axis.name, values: axis.values.map(String) }))];
   const hasIcon = options.icons && capture.icon;
   const iconIndex = hasIcon ? builder.svgs.add(capture.icon.html) : -1;
   const spinnerIndex = capture.spinner ? builder.svgs.add(capture.spinner.html) : -1;
+  const at = (key) => capture.axes.map((axis) => axis.values.map(String).indexOf(String(key[axis.name])));
+  const variants = [
+    ...capture.cells.map((cell) => ({ ...cell, at: storyAxis.length > 0 ? [0, ...at(cell.key)] : at(cell.key), story: false })),
+    ...stories.map((story, i) => ({ key: story.key, tree: story.tree, at: [i + 1, ...at(story.key)], story: true })),
+  ];
 
-  const cells = capture.cells.map((cell) => {
+  const cells = variants.map((cell) => {
     const [id, children] = builder.build(asRoot(cell.tree), null);
-    // An icon is drawn in the colour of the words beside it, so it shows on every variant.
-    const loading = cell.key.State === "loading" && spinnerIndex >= 0;
+    // An icon is drawn in the colour of the words beside it, so it shows on every variant. A story
+    // draws its own spinner, so only the axes' loading variants get one.
+    const loading = !cell.story && cell.key.State === "loading" && spinnerIndex >= 0;
     const words = hasIcon || loading ? firstText(cell.tree) : null;
     const ink = words ? builder.tokens.paint(words.color, words.bind?.color, "icon") : null;
     const extra = [];
@@ -680,7 +690,7 @@ export function buildComponentUnit({ item, capture, options }) {
     // An icon sits before the words, or after them when the story drew it last.
     const trailing = hasIcon && capture.icon.position === "trailing";
     const merged = trailing ? [...children, ...extra] : [...extra, ...children];
-    return [capture.axes.map((axis, i) => axis.values.map(String).indexOf(String(cell.key[axis.name]))), [id, merged]];
+    return [cell.at, [id, merged]];
   });
 
   return {

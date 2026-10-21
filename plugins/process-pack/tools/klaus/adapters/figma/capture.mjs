@@ -12,7 +12,8 @@ import fs from "node:fs";
 import http from "node:http";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { findIcons, listCustomProperties, markComponent, readStory, storyFacts } from "./capture-browser.mjs";
+import { findIcons, listCustomProperties, markComponent, readStory, storyFacts, waitForStill } from "./capture-browser.mjs";
+import { STORY } from "./settings.mjs";
 
 /** Root children that draw nothing. A story's root can start with one, so they are skipped. */
 const NOT_DRAWN = ["STYLE", "SCRIPT", "LINK", "META", "TEMPLATE", "NOSCRIPT"];
@@ -120,19 +121,134 @@ export function readStoryIndex(directory) {
 const simple = (text) => String(text).toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /**
- * The story ids that belong to a component, best guess first. A story belongs to it when the last
+ * The stories that belong to a component, in the index's order. A story belongs to it when the last
  * part of its title or the name of its stories file is the component's name.
  */
-export function storyCandidates(entries, component, override) {
-  if (override) return [override];
+export function componentStories(entries, component) {
   const wanted = simple(component);
-  const mine = entries.filter((entry) => {
+  return entries.filter((entry) => {
     const title = simple(String(entry.title ?? "").split("/").at(-1));
     const file = simple(path.basename(String(entry.importPath ?? "")).replace(/\.stories\.[a-z]+$/i, ""));
     return title === wanted || file === wanted;
   });
+}
+
+/** The story ids that belong to a component, best guess first for the story the axes are read from. */
+export function storyCandidates(entries, component, override) {
+  if (override) return [override];
+  const mine = componentStories(entries, component);
   const first = /^(primary|default|playground|base)$/i;
   return [...mine.filter((e) => first.test(e.name)), ...mine.filter((e) => !first.test(e.name))].map((e) => e.id);
+}
+
+/**
+ * A story's name as a value of the Story property. Figma reads a comma or an equals sign in a
+ * variant's name as the end of a value and marks the variant broken (a probe in a scratch file,
+ * 2026-10-21), so a comma becomes a semicolon and an equals sign a colon. Figma trims the value.
+ */
+export function storyValue(name) {
+  const value = String(name).replace(/,/g, ";").replace(/=/g, ":").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+  return value === "" ? "Story" : value.slice(0, 100);
+}
+
+/**
+ * The Story values of a component's stories, in their order, each one different. Two stories of one
+ * component can have the same name when they come from two stories files, as Meridian's two
+ * DropdownMenu files both have Default. Those are told apart by their titles.
+ */
+export function storyValues(entries) {
+  const plain = entries.map((entry) => storyValue(entry.name));
+  const titled = entries.map((entry, i) => (plain.filter((v) => v === plain[i]).length > 1 ? storyValue(`${entry.name} (${entry.title})`) : plain[i]));
+  return titled.map((value, i) => (titled.indexOf(value) === i ? value : storyValue(`${value} ${entries[i].id}`)));
+}
+
+/**
+ * Where a story's one variant sits among the axes, and how each axis value was found. For each axis,
+ * in this order:
+ *
+ *   arg      the story's own arg (initialArgs), when it sets the axis prop to one of the axis's values
+ *   props    the prop React rendered the story's component with, when it is one of the values: a
+ *            story can set a prop inside its render, as Meridian's Alert Destructive sets its variant
+ *   classes  the prop is unset, so the component uses its own default: the value whose cells in the
+ *            axes' story draw the component's root element with the same class list as the story's
+ *            root element, when exactly one value does. Classes no cell's root draws are left out
+ *            of the story's list first: they come from props that are not axes, such as Button's
+ *            width and loading (btn-full, btn-loading), and the label is only about the axes
+ *   first    the axis's first value, a guess, which the run report names
+ *
+ * The State axis takes the first of its states set to true, from the args and then the rendered
+ * props. Rendered props without either state are the default state.
+ *
+ * @param {Array<{ prop: string | null, name: string, values: Array<string | number> }>} axes
+ * @param {object} story
+ * @param {Record<string, unknown>} [story.args]   The story's initialArgs.
+ * @param {Record<string, unknown> | null} [story.props]  What markComponent read from the component's fiber.
+ * @param {string[] | null} [story.classes]  The class list of the story's root element.
+ * @param {Array<{ key: Record<string, unknown>, classes: string[] }>} [story.cells]  The axes' story's cells.
+ * @returns {{ key: Record<string, string | number>, from: Record<string, "arg" | "props" | "classes" | "first"> }}
+ */
+export function storyKey(axes, { args = {}, props = null, classes = null, cells = [] } = {}) {
+  const key = {};
+  const from = {};
+  const classKey = (list) => [...new Set(list)].sort().join(" ");
+  const drawn = new Set(cells.flatMap((cell) => (Array.isArray(cell.classes) ? cell.classes : [])));
+  const own = classes ? classKey(classes.filter((name) => drawn.has(name))) : null;
+  const twins = own === null ? [] : cells.filter((cell) => Array.isArray(cell.classes) && classKey(cell.classes) === own);
+  const valueIn = (axis, source) => {
+    if (!source) return undefined;
+    if (!axis.prop) return axis.values.find((state) => state !== "default" && source[state] === true);
+    const value = source[axis.prop];
+    return value === undefined || value === null ? undefined : axis.values.find((v) => String(v) === String(value));
+  };
+  for (const axis of axes) {
+    const set = (value, how) => {
+      key[axis.name] = value;
+      from[axis.name] = how;
+    };
+    const fromArgs = valueIn(axis, args);
+    if (fromArgs !== undefined) {
+      set(fromArgs, "arg");
+      continue;
+    }
+    const fromProps = valueIn(axis, props) ?? (props && !axis.prop ? axis.values[0] : undefined);
+    if (fromProps !== undefined) {
+      set(fromProps, "props");
+      continue;
+    }
+    const matched = [...new Set(twins.map((cell) => cell.key[axis.name]))].filter((value) => value !== undefined);
+    if (matched.length === 1) set(matched[0], "classes");
+    else set(axis.values[0], "first");
+  }
+  return { key, from };
+}
+
+/** Where and how big a node is. Two reads of one story can differ in these by a fraction of a pixel. */
+const GEOMETRY = ["x", "y", "w", "h"];
+
+/**
+ * True when two read trees draw the same, wherever each sits on its page. Every value must be equal,
+ * except a node's place and size, which may differ by up to a pixel once both trees start at 0, 0:
+ * React Flow's canvas zoom moves the boxes the reader measures between two loads of one story (two
+ * reads of Meridian's AlignmentToolbar were 83.62 and 83.38 wide, 2026-10-21).
+ */
+export function sameDrawing(a, b) {
+  const near = (p, q) => Math.abs(p - q) <= 1;
+  const same = (p, q, origin) => {
+    if (Array.isArray(p) || Array.isArray(q)) return Array.isArray(p) && Array.isArray(q) && p.length === q.length && p.every((v, i) => same(v, q[i], origin));
+    if (p === null || q === null || typeof p !== "object" || typeof q !== "object") return p === q;
+    const keys = Object.keys(p);
+    if (keys.length !== Object.keys(q).length || keys.some((key) => !(key in q))) return false;
+    // Only a drawn node, which has a kind, is placed on the page. A shadow's x and y are offsets.
+    const placed = typeof p.kind === "string";
+    return keys.every((key) => {
+      if (placed && GEOMETRY.includes(key) && typeof p[key] === "number" && typeof q[key] === "number") {
+        const shift = key === "x" ? origin[0] : key === "y" ? origin[1] : [0, 0];
+        return near(p[key] - shift[0], q[key] - shift[1]);
+      }
+      return same(p[key], q[key], origin);
+    });
+  };
+  return same(a, b, [[a.x ?? 0, b.x ?? 0], [a.y ?? 0, b.y ?? 0]]);
 }
 
 /** A story's args as the Storybook URL setting. Only simple values are allowed in a URL. */
@@ -179,12 +295,18 @@ export async function openStorybook({ root, directory, globals }) {
         if (parameter) query.push(`args=${parameter}`);
         await page.goto(`http://127.0.0.1:${port}/iframe.html?${query.join("&")}`);
         // A story can put a <style> or <script> first in the root. waitForSelector would wait for
-        // that first match to become visible, which never happens, so wait for any drawn child.
+        // that first match to become visible, which never happens, so wait for any drawn child. A
+        // dialog open from the start draws only in a portal on the body and leaves the root empty, so
+        // a drawn element there that is not Storybook's own counts too (Meridian's
+        // TaskFormDialogPresentation Open By Default timed out without it, 2026-10-21).
         await page.waitForFunction(
           (skip) => {
             if (document.body.classList.contains("sb-show-errordisplay")) return true;
+            const drawn = (el) => !skip.includes(el.tagName) && el.getClientRects().length > 0;
             const root = document.querySelector("#storybook-root");
-            return [...(root?.children ?? [])].some((el) => !skip.includes(el.tagName) && el.getClientRects().length > 0);
+            if ([...(root?.children ?? [])].some(drawn)) return true;
+            const storybooks = (el) => el === root || el.id.startsWith("storybook-") || [...el.classList].some((name) => name.startsWith("sb-"));
+            return [...document.body.children].some((el) => !storybooks(el) && drawn(el));
           },
           NOT_DRAWN,
           { timeout: 30000 },
@@ -194,6 +316,7 @@ export async function openStorybook({ root, directory, globals }) {
           throw new Error(`The story ${id} failed to render: ${message.trim()}`);
         }
         await page.evaluate(() => document.fonts.ready);
+        await settle(page);
       },
       async close() {
         try {
@@ -223,6 +346,18 @@ export const READ = Object.freeze({ maxDepth: 40, maxNodes: 600 });
 
 /** Turns transitions and animations off until the next page load, so an overlay opens at once. */
 const FREEZE = "*,*::before,*::after{transition:none!important;animation:none!important}";
+
+/** How long a story may take to stop changing after it draws: three still frames, within 1.5 seconds. */
+const STILL = Object.freeze({ frames: 3, timeout: 1500 });
+
+/**
+ * Stops style sheet transitions and animations, as readStory does, and waits until nothing drawn
+ * still moves or fades (waitForStill), so two loads of one story read the same.
+ */
+export async function settle(page) {
+  await page.addStyleTag({ content: FREEZE });
+  return page.evaluate(waitForStill, STILL);
+}
 
 /**
  * Opens a closed overlay the component drew, such as a popover, a select or a dialog, and marks the
@@ -254,9 +389,9 @@ export async function openComponent(page, name) {
     // An overlay moves focus into its content, which would draw a field focused and its text
     // selected. The component is drawn at rest.
     await page.evaluate(() => document.activeElement?.blur?.());
-    // An overlay is placed in the frames after it opens.
-    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+    // An overlay is placed in the frames after it opens, and can fade in from script.
     await page.evaluate(() => document.fonts.ready);
+    await page.evaluate(waitForStill, STILL);
   } catch (error) {
     warning = `${name}: its trigger did not open (${String(error.message).split("\n")[0]}), so it is drawn closed.`;
   }
@@ -266,7 +401,13 @@ export async function openComponent(page, name) {
 }
 
 /**
- * Reads one component: every combination of its variant props, drawn by one story.
+ * Reads one component: every combination of its variant props, drawn by one story, and one variant
+ * for each of the component's other stories.
+ *
+ * The other stories are read at their own args, with no URL args, in the index's order. A story
+ * that draws the same as a variant already read adds nothing, and one that fails to render is left
+ * out. Both are listed in leftOut and named in a warning. The capture's stories are empty for a
+ * component with one story, and then it is drawn with no Story property.
  *
  * @param {Awaited<ReturnType<typeof openStorybook>>} storybook
  * @param {object} request
@@ -365,7 +506,6 @@ export async function captureComponent(storybook, request) {
     classLists.push(read.classes);
     cells.push({ key: Object.fromEntries(allAxes.map((axis, i) => [axis.name, combination[i]])), tree: read.tree });
   }
-  warnings.push(...openWarnings);
   if (truncated) {
     warnings.push(`${name} draws more than ${READ.maxNodes} elements or ${READ.maxDepth} levels, so the reader stopped there and the drawing is cut short.`);
   }
@@ -387,7 +527,47 @@ export async function captureComponent(storybook, request) {
     }
     if (!icon) warnings.push(`${name}: no story draws an icon inside it, so no icon layer was made.`);
   }
-  return { component: name, story, axes: allAxes, tokens, cells, icon, spinner, warnings };
+
+  // The component's other stories, one variant each.
+  const own = componentStories(storybook.entries, name);
+  const first = storybook.entries.find((entry) => entry.id === story) ?? { id: story, name: story, title: "" };
+  const others = own.filter((entry) => entry.id !== story);
+  const stories = [];
+  const leftOut = [];
+  if (others.length > 0 && allAxes.some((axis) => axis.name === STORY)) {
+    warnings.push(`${name}: a variant prop is already named ${STORY}, so its other stories are not drawn.`);
+  } else if (others.length > 0) {
+    const values = storyValues([first, ...others]);
+    // The axes' story's cells with the class list of their root element, for storyKey.
+    const mainCells = cells.map((cell, i) => ({ key: cell.key, classes: classLists[i] }));
+    for (const [i, entry] of others.entries()) {
+      try {
+        await storybook.show(entry.id);
+        const opened = await openComponent(page, `${name}, story ${entry.name}`);
+        if (opened) openWarnings.add(opened);
+        const { initialArgs } = await page.evaluate(storyFacts);
+        // Marks the parts again, as openComponent left them, and reads the props the component was rendered with.
+        const { props } = await page.evaluate(markComponent);
+        const read = await page.evaluate(readStory, { candidates: propertyNames, withTokens: false, ...READ });
+        if (read.error) throw new Error(read.error);
+        if (read.truncated) {
+          warnings.push(`${name} draws more than ${READ.maxNodes} elements or ${READ.maxDepth} levels in its story ${entry.name}, so the reader stopped there and that variant is cut short.`);
+        }
+        if ([...cells, ...stories].some((cell) => sameDrawing(cell.tree, read.tree))) {
+          leftOut.push({ id: entry.id, name: entry.name, reason: "same" });
+          warnings.push(`${name}: the story ${entry.name} draws the same as a variant already in the set, so it adds none.`);
+          continue;
+        }
+        const { key, from } = storyKey(allAxes, { args: initialArgs, props, classes: read.classes, cells: mainCells });
+        stories.push({ id: entry.id, name: entry.name, value: values[i + 1], key, from, tree: read.tree });
+      } catch (error) {
+        leftOut.push({ id: entry.id, name: entry.name, reason: "failed" });
+        warnings.push(`Story ${entry.id} was skipped: ${error.message}`);
+      }
+    }
+  }
+  warnings.push(...openWarnings);
+  return { component: name, story, storyValue: storyValues([first, ...others])[0], axes: allAxes, tokens, cells, stories, leftOut, icon, spinner, warnings };
 }
 
 /**

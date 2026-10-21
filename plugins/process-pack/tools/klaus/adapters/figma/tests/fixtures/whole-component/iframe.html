@@ -49,7 +49,7 @@
       }
       const host = (element, children = []) => link(fiber({ tag: 5, stateNode: element, elementType: element.tagName.toLowerCase() }), children);
       const portal = (children) => link(fiber({ tag: 4, stateNode: { containerInfo: document.body } }), children);
-      const component = (type, children) => link(fiber({ tag: 0, elementType: type, type }), children);
+      const component = (type, children, memoizedProps = null) => link(fiber({ tag: 0, elementType: type, type, memoizedProps }), children);
       const fiberRoot = {};
       /** Puts a new current tree on the root, as a React commit does. The container keeps its first fiber. */
       function commit(children, story) {
@@ -215,7 +215,47 @@
           icon.insertAdjacentHTML("beforeend", '<svg class="thin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: block"><path d="M5 12h14"/></svg>');
           root.append(h("div", "display: flex; flex-direction: column; align-items: flex-start; gap: 16px", card, nudge, dot, picture, glow, blurred, row, icon));
         },
+
+        // A chip drawn from its args, and its other stories (process-pack #86): one at an axis value with
+        // a comma in its name, one whose variant is not an axis value, one that draws the same as the
+        // default story's bold variant, one that fails to render, one whose render sets its variant
+        // rather than an arg, and one that leaves its variant to the chip's own default, bold.
+        "fixture-chip--default": chip({ children: "Chip" }),
+        "fixture-chip--bold-loud": chip({ variant: "bold", children: "Loud" }),
+        "fixture-chip--huge": chip({ variant: "huge", children: "Huge" }),
+        "fixture-chip--again": chip({ children: "Chip" }),
+        // A dialog open from the start: it draws only in a portal on the body, and the story root stays empty.
+        "fixture-portal--default"() {
+          function Portal() {}
+          const panel = h("div", "position: fixed; left: 40px; top: 40px; width: 240px; padding: 16px; background: rgb(255, 255, 255); border: 1px solid rgb(204, 204, 204)", "Open from the start");
+          document.body.append(panel);
+          commit([component(Portal, [portal([host(panel)])])], { component: Portal, argTypes: {}, initialArgs: {} });
+        },
+        "fixture-chip--broken"() {
+          document.body.classList.add("sb-show-errordisplay");
+          document.body.append(h("div", "", Object.assign(h("pre", ""), { className: "sb-errordisplay", textContent: "Chip exploded" })));
+        },
+        "fixture-chip--set-in-render": chip({ children: "Inside" }, { variant: "bold" }),
+        "fixture-chip--own-default": chip({ children: "Own default" }),
       };
+
+      /**
+       * A story of the chip: its own args under the URL's, as Storybook merges them, then the props its
+       * render sets itself. The chip is rendered with those props, and is bold when no variant is set.
+       */
+      function chip(initialArgs, inRender = {}) {
+        return () => {
+          function Chip() {}
+          const props = { ...initialArgs, ...args, ...inRender };
+          const variant = props.variant ?? "bold";
+          const bold = variant === "bold";
+          const element = h("span", `display: inline-block; padding: 2px 8px; border-radius: 9px; background: ${bold ? "rgb(17, 17, 17)" : "rgb(238, 238, 238)"}; color: ${bold ? "rgb(255, 255, 255)" : "rgb(17, 17, 17)"}`, String(props.children));
+          element.className = `chip chip-${variant}`;
+          root.append(element);
+          const argTypes = { variant: { name: "variant", type: { name: "string" } }, children: { name: "children", type: { name: "string" } } };
+          commit([component(Chip, [host(element)], props)], { component: Chip, argTypes, initialArgs });
+        };
+      }
       stories[id]();
     </script>
   </body>
