@@ -171,7 +171,7 @@ function writeTokenValues(tokens, complete) {
   }
 }
 
-/** A paint without its variable binding, in the colour the variable has now. */
+/** A paint or an effect without its variable binding, in the colour the variable has now. */
 function plainPaint(paint) {
   if (!paint.boundVariables || !paint.boundVariables.color) return paint;
   const copy = Object.assign({}, paint);
@@ -180,14 +180,14 @@ function plainPaint(paint) {
 }
 
 /**
- * Freezes a set that is moving to Older versions: every bound fill and stroke, on the set and
- * on everything inside it, becomes the plain colour it has at this moment. The set keeps looking
- * the way it shipped when a token changes later. The note says so on its description.
+ * Freezes a set that is moving to Older versions: every bound fill, stroke and shadow colour, on the
+ * set and on everything inside it, becomes the plain colour it has at this moment. The set keeps
+ * looking the way it shipped when a token changes later. The note says so on its description.
  */
 function freeze(root, shipped) {
   const nodes = [root].concat(root.findAll(function () { return true; }));
   nodes.forEach(function (node) {
-    ["fills", "strokes"].forEach(function (key) {
+    ["fills", "strokes", "effects"].forEach(function (key) {
       const paints = node[key];
       if (!Array.isArray(paints)) return;
       if (paints.some(function (p) { return p.boundVariables && p.boundVariables.color; })) node[key] = paints.map(plainPaint);
@@ -215,6 +215,42 @@ function setPaints(node, key, paints) {
   if (paints.some(function (p) { return p.boundVariables && p.opacity < 1; })) {
     node[key] = node[key].map(function (held, i) { return Object.assign({}, held, { opacity: paints[i].opacity === undefined ? 1 : paints[i].opacity }); });
   }
+}
+
+/**
+ * Effects from the data (spec.mjs): kind 0 a box shadow, which is not drawn under the node, 1 an
+ * inner shadow, 2 a drop-shadow() filter, which shows through what the node leaves transparent.
+ */
+function effectsOf(U, list) {
+  return list.map(function (e) {
+    const c = e[5];
+    const effect = { type: e[0] === 1 ? "INNER_SHADOW" : "DROP_SHADOW", color: { r: c[1] / 255, g: c[2] / 255, b: c[3] / 255, a: c[4] }, offset: { x: e[1], y: e[2] }, radius: e[3], spread: e[4], visible: true, blendMode: "NORMAL" };
+    if (e[0] !== 1) effect.showShadowBehindNode = e[0] === 2;
+    const variable = c[0] >= 0 ? VARIABLES[U.tk[c[0]]] : null;
+    return variable ? figma.variables.setBoundVariableForEffect(effect, "color", variable) : effect;
+  });
+}
+
+/**
+ * Sets a node's effects. A shadow colour bound to a variable loses its alpha on its first assignment
+ * and keeps it on the second, as a bound paint loses its opacity (probe in a scratch file,
+ * 2026-10-21). So a bound colour with an alpha below 1 is assigned a second time, as setPaints does.
+ */
+function setEffects(node, effects) {
+  node.effects = effects;
+  if (effects.some(function (e) { return e.boundVariables && e.color.a < 1; })) {
+    node.effects = node.effects.map(function (held, i) { return Object.assign({}, held, { color: Object.assign({}, held.color, { a: effects[i].color.a }) }); });
+  }
+}
+
+/** A gradient paint from the data: [kind, transform, stops], kind 0 linear and 1 radial. */
+function gradientOf(g) {
+  const t = g[1];
+  return {
+    type: g[0] === 1 ? "GRADIENT_RADIAL" : "GRADIENT_LINEAR",
+    gradientTransform: [[t[0], t[1], t[2]], [t[3], t[4], t[5]]],
+    gradientStops: g[2].map(function (s) { return { position: s[0], color: { r: s[1] / 255, g: s[2] / 255, b: s[3] / 255, a: s[4] } }; }),
+  };
 }
 
 // Code points Inter draws and a web font such as DM Sans often has no glyph for: Arrows (U+2190 to
@@ -284,6 +320,7 @@ function makeIcon(U, n, parent) {
     });
   }
   if (n.o !== undefined) icon.opacity = n.o;
+  if (n.ef) setEffects(icon, effectsOf(U, n.ef));
   if (n.hid) icon.visible = false;
   return icon;
 }
@@ -291,9 +328,11 @@ function makeIcon(U, n, parent) {
 async function fillBox(U, tree, f) {
   const n = U.nodes[tree[0]];
   f.name = n.n || "box";
-  setPaints(f, "fills", n.f ? [paintOf(U, n.f)] : []);
-  setPaints(f, "strokes", n.sc ? [paintOf(U, n.sc)] : []);
-  if (n.sc) {
+  // Gradients go over the background colour, and a gradient border under the border's colour.
+  setPaints(f, "fills", (n.f ? [paintOf(U, n.f)] : []).concat((n.gr || []).map(gradientOf)));
+  setPaints(f, "strokes", (n.sg || []).map(gradientOf).concat(n.sc ? [paintOf(U, n.sc)] : []));
+  if (n.ef) setEffects(f, effectsOf(U, n.ef));
+  if (n.sc || n.sg) {
     f.strokeAlign = "INSIDE";
     if (Array.isArray(n.sw)) {
       f.strokeTopWeight = n.sw[0];
@@ -324,7 +363,7 @@ async function fillBox(U, tree, f) {
     f.paddingLeft = p[3];
     f.primaryAxisAlignItems = PRIMARY[n.pa] || "MIN";
     f.counterAxisAlignItems = COUNTER[n.ca] || "MIN";
-    if (n.sc) f.strokesIncludedInLayout = true;
+    if (n.sc || n.sg) f.strokesIncludedInLayout = true;
   }
   const made = [];
   for (const child of tree[1]) {

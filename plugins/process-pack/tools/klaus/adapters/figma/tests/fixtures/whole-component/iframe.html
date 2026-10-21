@@ -190,6 +190,31 @@
           const full = h("div", "width: 100%", "Full");
           root.append(h("div", "display: flex; flex-direction: column; width: 320px", footer, narrow, full));
         },
+
+        // What process-pack #85 reads: box shadows, background gradients, filters, a margin on a row's
+        // cross axis, and an svg attribute that a style sheet overrides.
+        "fixture-gaps--default"() {
+          const sheet = document.createElement("style");
+          sheet.textContent = ":root { --ring-ink: rgb(74, 90, 232); } .thin { stroke-width: 1.5px; } .glow { display: block; filter: drop-shadow(rgba(139, 92, 246, 0.3) 0px 0px 6px); }";
+          document.head.append(sheet);
+          // Tailwind's shadow list: two transparent placeholders, an inset ring in a token's colour, and two soft shadows.
+          const card = h("div", "width: 200px; height: 60px; background: rgb(255, 255, 255); border-radius: 8px; box-shadow: 0 0 #0000, 0 0 #0000, inset 0 0 0 1px var(--ring-ink), 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1)");
+          // A gradient border, as AnswerNudgeCard draws it: a white layer on the padding box over a gradient on the border box.
+          const nudge = h("div", "width: 200px; height: 60px; box-sizing: border-box; border: 1px solid transparent; border-radius: 12px; background: linear-gradient(rgb(255, 255, 255), rgb(255, 255, 255)) padding-box, linear-gradient(135deg, rgb(59, 75, 212) 0%, rgb(124, 58, 237) 50%, rgb(139, 111, 232) 100%) border-box");
+          // A dot drawn with a radial gradient, and a box whose background is two images, one with a bracket in its quoted url.
+          const dot = h("div", "width: 40px; height: 20px; background-image: radial-gradient(circle at 25% 50%, rgb(16, 185, 129) 0%, rgb(16, 185, 129) 40%, transparent 41%)");
+          const picture = h("div", "width: 20px; height: 20px; background-image: url('data:text/plain,a)b'), url(data:image/gif;base64,R0lGODlhAQABAAAAACw=)");
+          // Filters: a glow on an svg, as PrimaRing's, and two filters Klaus does not draw.
+          const glow = h("div", "");
+          glow.insertAdjacentHTML("beforeend", '<svg class="glow" width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="rgb(124, 58, 237)"/></svg>');
+          const blurred = h("div", "width: 20px; height: 20px; background: rgb(0, 0, 0); filter: blur(2px) grayscale(1)");
+          // A checkbox 2px below the top of its row, as AttachFileToCardsModal's.
+          const row = h("label", "display: flex; align-items: flex-start; gap: 12px; width: 200px", h("span", "margin-top: 2px; width: 16px; height: 16px; flex: none; box-sizing: border-box; border: 1px solid rgb(0, 0, 0)"), h("span", "", "Attach to card"));
+          // A lucide icon whose stroke-width attribute a style sheet overrides, as Tailwind's stroke-[1.5] does.
+          const icon = h("div", "");
+          icon.insertAdjacentHTML("beforeend", '<svg class="thin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: block"><path d="M5 12h14"/></svg>');
+          root.append(h("div", "display: flex; flex-direction: column; align-items: flex-start; gap: 16px", card, nudge, dot, picture, glow, blurred, row, icon));
+        },
       };
       stories[id]();
     </script>

@@ -91,9 +91,45 @@ function paint(value, where, tokenCount) {
   number(value[4], `${where}[4]`, 0, 1);
 }
 
-const BOX_KEYS = ["k", "n", "w", "h", "x", "y", "L", "pa", "ca", "g", "fw", "fh", "p", "f", "sw", "sc", "r", "o", "clip", "ap", "gw", "gh"];
+const BOX_KEYS = ["k", "n", "w", "h", "x", "y", "L", "pa", "ca", "g", "fw", "fh", "p", "f", "sw", "sc", "r", "o", "clip", "ap", "gw", "gh", "ef", "gr", "sg"];
 const TEXT_KEYS = ["k", "v", "ff", "wt", "fs", "lh", "ls", "td", "tt", "c", "x", "y", "w", "wrap", "tr", "gw"];
-const ICON_KEYS = ["k", "s", "w", "h", "x", "y", "hid", "n", "c", "ap", "o"];
+const ICON_KEYS = ["k", "s", "w", "h", "x", "y", "hid", "n", "c", "ap", "o", "ef"];
+const MAX_EFFECTS = 16;
+const MAX_GRADIENTS = 16;
+const MAX_STOPS = 64;
+
+/** [kind, x, y, blur, spread, colour]: kind 0 a drop shadow, 1 an inner shadow, 2 a drop shadow drawn behind the node. */
+function effects(value, where, tokenCount) {
+  list(value, where, MAX_EFFECTS).forEach((effect, i) => {
+    const at = `${where}[${i}]`;
+    if (!Array.isArray(effect) || effect.length !== 6) fail(at, "must be an effect: [kind, x, y, blur, spread, colour].");
+    whole(effect[0], `${at}[0]`, 0, 2);
+    number(effect[1], `${at}[1]`, -10000, 10000);
+    number(effect[2], `${at}[2]`, -10000, 10000);
+    number(effect[3], `${at}[3]`, 0, 10000);
+    number(effect[4], `${at}[4]`, -10000, 10000);
+    paint(effect[5], `${at}[5]`, tokenCount);
+  });
+}
+
+/** [kind, transform, stops]: kind 0 linear, 1 radial, the transform as six numbers, each stop [position, red, green, blue, alpha]. */
+function gradients(value, where) {
+  list(value, where, MAX_GRADIENTS).forEach((gradient, i) => {
+    const at = `${where}[${i}]`;
+    if (!Array.isArray(gradient) || gradient.length !== 3) fail(at, "must be a gradient: [kind, transform, stops].");
+    whole(gradient[0], `${at}[0]`, 0, 1);
+    if (!Array.isArray(gradient[1]) || gradient[1].length !== 6) fail(`${at}[1]`, "must be a transform of six numbers.");
+    gradient[1].forEach((n, j) => number(n, `${at}[1][${j}]`));
+    const stops = list(gradient[2], `${at}[2]`, MAX_STOPS);
+    if (stops.length < 2) fail(`${at}[2]`, "must hold at least two stops.");
+    stops.forEach((stop, j) => {
+      if (!Array.isArray(stop) || stop.length !== 5) fail(`${at}[2][${j}]`, "must be a stop: [position, red, green, blue, alpha].");
+      number(stop[0], `${at}[2][${j}][0]`, 0, 1);
+      for (let c = 1; c <= 3; c++) whole(stop[c], `${at}[2][${j}][${c}]`, 0, 255);
+      number(stop[4], `${at}[2][${j}][4]`, 0, 1);
+    });
+  });
+}
 
 function node(value, where, { tokenCount, svgCount }) {
   if (!isObject(value)) fail(where, "must be an object.");
@@ -124,6 +160,7 @@ function node(value, where, { tokenCount, svgCount }) {
     if ("ap" in value) flag(value.ap, `${where}.ap`);
     if ("o" in value) number(value.o, `${where}.o`, 0, 1);
     if ("c" in value) paint(value.c, `${where}.c`, tokenCount);
+    if ("ef" in value) effects(value.ef, `${where}.ef`, tokenCount);
     return;
   }
   if ("L" in value) oneOf(value.L, ["H", "V"], `${where}.L`);
@@ -140,6 +177,9 @@ function node(value, where, { tokenCount, svgCount }) {
   if ("sw" in value) sides(value.sw, `${where}.sw`);
   if ("r" in value) sides(value.r, `${where}.r`);
   if ("o" in value) number(value.o, `${where}.o`, 0, 1);
+  if ("ef" in value) effects(value.ef, `${where}.ef`, tokenCount);
+  if ("gr" in value) gradients(value.gr, `${where}.gr`);
+  if ("sg" in value) gradients(value.sg, `${where}.sg`);
 }
 
 /** [node index, [child trees]], each index pointing at a node, no deeper than MAX_DEPTH. */

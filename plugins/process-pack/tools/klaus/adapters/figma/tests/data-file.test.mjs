@@ -59,6 +59,29 @@ test("unknown keys, kinds and out-of-range values are refused", () => {
   }
 });
 
+test("effects and gradients pass in the generator's shape, and anything else in them is refused", () => {
+  const ink = [-1, 0, 0, 0, 0.1];
+  const gradient = [0, [1, 0, 0, 0, 1, 0], [[0, 255, 0, 0, 1], [1, 0, 0, 255, 1]]];
+  const unit = { ...tinyUnit("Shadow"), nodes: [{ k: "b", n: "box", w: 10, h: 10, ef: [[0, 0, 1, 3, -1, ink], [2, 0, 0, 12, 0, ink]], gr: [gradient], sg: [gradient] }] };
+  const data = copy(packUnits([unit], { config: CONFIG }).files[0].data);
+  readData(JSON.stringify(data));
+  const cases = [
+    [(n) => { n.ef[0][0] = 3; }, /ef\[0\]\[0\] must be a whole number from 0 to 2/],
+    [(n) => { n.ef[0][3] = -1; }, /ef\[0\]\[3\] must be a number from 0/],
+    [(n) => { n.ef[0][5] = [7, 0, 0, 0, 1]; }, /ef\[0\]\[5\]\[0\] must be a whole number from -1 to -1/],
+    [(n) => { n.ef[0].push("x"); }, /ef\[0\] must be an effect/],
+    [(n) => { n.gr[0][0] = 2; }, /gr\[0\]\[0\] must be a whole number from 0 to 1/],
+    [(n) => { n.gr[0][1] = [1, 0, 0]; }, /gr\[0\]\[1\] must be a transform of six numbers/],
+    [(n) => { n.sg[0][2] = [[0, 0, 0, 0, 1]]; }, /sg\[0\]\[2\] must hold at least two stops/],
+    [(n) => { n.gr[0][2][0][0] = 1.5; }, /gr\[0\]\[2\]\[0\]\[0\] must be a number from 0 to 1/],
+  ];
+  for (const [change, pattern] of cases) {
+    const bad = copy(data);
+    change(bad.units[0].nodes[0]);
+    refused(bad, pattern);
+  }
+});
+
 test("a node or SVG index that points nowhere, and a tree nested too deep, are refused", () => {
   const unit = tinyUnit("Deep");
   unit.nodes.push({ k: "v", s: 0, w: 1, h: 1 });
