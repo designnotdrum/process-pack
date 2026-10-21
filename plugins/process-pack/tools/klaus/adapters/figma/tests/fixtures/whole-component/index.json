@@ -6,6 +6,9 @@
     "fixture-field--default": { "id": "fixture-field--default", "type": "story", "title": "Fixture/Field", "name": "Default", "importPath": "./Field.stories.js" },
     "fixture-popover--default": { "id": "fixture-popover--default", "type": "story", "title": "Fixture/Popover", "name": "Default", "importPath": "./Popover.stories.js" },
     "fixture-dialog--default": { "id": "fixture-dialog--default", "type": "story", "title": "Fixture/Dialog", "name": "Default", "importPath": "./Dialog.stories.js" },
-    "fixture-panel--default": { "id": "fixture-panel--default", "type": "story", "title": "Fixture/Panel", "name": "Default", "importPath": "./Panel.stories.js" }
+    "fixture-panel--default": { "id": "fixture-panel--default", "type": "story", "title": "Fixture/Panel", "name": "Default", "importPath": "./Panel.stories.js" },
+    "fixture-row--default": { "id": "fixture-row--default", "type": "story", "title": "Fixture/Row", "name": "Default", "importPath": "./Row.stories.js" },
+    "fixture-ring--default": { "id": "fixture-ring--default", "type": "story", "title": "Fixture/Ring", "name": "Default", "importPath": "./Ring.stories.js" },
+    "fixture-footer--default": { "id": "fixture-footer--default", "type": "story", "title": "Fixture/Footer", "name": "Default", "importPath": "./Footer.stories.js" }
   }
 }

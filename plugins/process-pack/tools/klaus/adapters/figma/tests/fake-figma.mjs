@@ -2,11 +2,20 @@
  * A small stand-in for the Figma Plugin API, enough to run the generated code
  * in a test. It keeps a tree of nodes, pages and variables, and it refuses the
  * same things Figma refuses that the generated code could trip on: text
- * written before its font is loaded, and a second current-page switch. As in
- * Figma, every new node starts on the current page.
+ * written before its font is loaded, FILL on a node whose parent is not an auto
+ * layout, and a second current-page switch. As in Figma, every new node starts
+ * on the current page.
+ *
+ * It also does what Figma did in probes in a scratch file on 2026-10-21:
+ *   - A paint bound to a variable, assigned where the node held no bound paint, reads back with an
+ *     opacity of 1. Assigned again, where the node's paint is bound already, it keeps its opacity.
+ *   - FILL in a parent that hugs on that axis is accepted and leaves the node at its own size.
  */
 
 let counter = 0;
+
+/** Figma's value for a property that differs across a text's characters. */
+export const MIXED = Symbol("mixed");
 
 /**
  * Turns a paint bound to a variable into the paint Figma shows: the same paint with the variable's
@@ -28,9 +37,35 @@ class Node {
     this.height = 100;
     this.visible = true;
     // Fills and strokes are stored as written and read back with bound colours resolved, as Figma does.
+    // A bound paint loses its opacity where the node held no bound paint (see the header).
     for (const key of ["fills", "strokes"]) {
       let stored = [];
-      Object.defineProperty(this, key, { enumerable: true, get: () => stored.map(resolvePaint), set: (paints) => (stored = paints) });
+      const store = (paints) => {
+        stored = paints.map((paint, i) => (paint.boundVariables?.color && !stored[i]?.boundVariables?.color ? { ...paint, opacity: 1 } : paint));
+      };
+      Object.defineProperty(this, key, { enumerable: true, get: () => stored.map(resolvePaint), set: store });
+    }
+    for (const [key, axis] of [["layoutSizingHorizontal", "width"], ["layoutSizingVertical", "height"]]) {
+      let sizing = "FIXED";
+      Object.defineProperty(this, key, {
+        enumerable: true,
+        get: () => sizing,
+        set: (value) => {
+          const auto = this.parent && this.parent.layoutMode && this.parent.layoutMode !== "NONE";
+          if (value === "FILL" && (!auto || this.layoutPositioning === "ABSOLUTE")) throw new Error("FILL can only be set on children of auto-layout frames");
+          sizing = value;
+          if (value !== "FILL") return;
+          // Figma sizes the node to its parent only when the parent is fixed on that axis. A stroke
+          // counts as padding when the parent includes strokes in its layout.
+          const parent = this.parent;
+          const main = (parent.layoutMode === "HORIZONTAL") === (axis === "width");
+          const fixed = (main ? parent.primaryAxisSizingMode : parent.counterAxisSizingMode) === "FIXED";
+          const stroke = (side) => (parent.strokesIncludedInLayout ? parent[`stroke${side}Weight`] ?? parent.strokeWeight ?? 0 : 0);
+          const inset = (a, b) => (parent[`padding${a}`] ?? 0) + (parent[`padding${b}`] ?? 0) + stroke(a) + stroke(b);
+          if (fixed && !main) this[axis] = parent[axis] - (axis === "width" ? inset("Left", "Right") : inset("Top", "Bottom"));
+          if (fixed && main) this.layoutGrow = 1;
+        },
+      });
     }
     Object.assign(this, extra);
   }
@@ -100,6 +135,7 @@ export function createFigma({ pages = ["Button"], fonts = { "DM Sans": ["Regular
   };
   const figma = {
     root,
+    mixed: MIXED,
     currentPage: root.children[0],
     calls: { createPage: 0 },
     createPage() {
@@ -109,15 +145,40 @@ export function createFigma({ pages = ["Button"], fonts = { "DM Sans": ["Regular
     createFrame: () => onPage(new Node("FRAME", { clipsContent: true })),
     createComponent: () => onPage(new Node("COMPONENT")),
     createText() {
-      const text = onPage(new Node("TEXT", { characters: "", width: 10, height: 20 }));
+      const text = onPage(new Node("TEXT", { width: 10, height: 20 }));
+      // The font of each character, as Figma keeps it.
+      let fonts = [];
+      let characters = "";
       let font = null;
-      Object.defineProperty(text, "fontName", {
-        get: () => font,
+      const check = (value) => {
+        if (!loaded.has(`${value.family}/${value.style}`)) throw new Error(`Cannot write to node with unloaded font "${value.family} ${value.style}"`);
+      };
+      const range = (start, end) => {
+        const slice = fonts.slice(start, end);
+        return slice.every((f) => f === slice[0]) ? slice[0] ?? font : MIXED;
+      };
+      Object.defineProperty(text, "characters", {
+        enumerable: true,
+        get: () => characters,
         set(value) {
-          if (!loaded.has(`${value.family}/${value.style}`)) throw new Error(`Cannot write to node with unloaded font "${value.family} ${value.style}"`);
-          font = value;
+          characters = value;
+          fonts = Array.from({ length: value.length }, () => font);
         },
       });
+      Object.defineProperty(text, "fontName", {
+        get: () => (characters.length === 0 ? font : range(0, characters.length)),
+        set(value) {
+          check(value);
+          font = value;
+          fonts = fonts.map(() => value);
+        },
+      });
+      text.setRangeFontName = (start, end, value) => {
+        if (start < 0 || end > characters.length || start >= end) throw new Error(`The range ${start} to ${end} is outside the text.`);
+        check(value);
+        for (let i = start; i < end; i++) fonts[i] = value;
+      };
+      text.getRangeFontName = range;
       return text;
     },
     createNodeFromSvg(svg) {

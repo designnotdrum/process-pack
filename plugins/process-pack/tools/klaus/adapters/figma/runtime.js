@@ -204,22 +204,64 @@ function paintOf(U, c) {
   return c[4] < 1 ? Object.assign({}, bound, { opacity: c[4] }) : bound;
 }
 
+/**
+ * Sets a node's fills or strokes. Figma resets the opacity of a paint bound to a variable to 1 when
+ * the node held no bound paint there, and keeps it when the node's paint is bound already (probe in
+ * a scratch file, 2026-10-21). So a bound paint with an opacity below 1 is assigned a second time,
+ * from what the node holds, with its opacity put back.
+ */
+function setPaints(node, key, paints) {
+  node[key] = paints;
+  if (paints.some(function (p) { return p.boundVariables && p.opacity < 1; })) {
+    node[key] = node[key].map(function (held, i) { return Object.assign({}, held, { opacity: paints[i].opacity === undefined ? 1 : paints[i].opacity }); });
+  }
+}
+
+// Code points Inter draws and a web font such as DM Sans often has no glyph for: Arrows (U+2190 to
+// U+21FF, such as shift U+21E7) and Miscellaneous Technical (U+2300 to U+23FF, such as command
+// U+2318, option U+2325 and delete U+232B). Text the plugin writes in the Figma desktop app keeps no
+// fallback glyphs, so these draw blank. Numbers, not a pattern, because the code holds no backslash.
+const SYMBOLS = [[8592, 8703], [8960, 9215]];
+
+/** Sets each run of symbol characters in Inter, in the style nearest the text's weight. */
+async function symbolsInInter(t, weight) {
+  const chars = t.characters;
+  let start = -1;
+  // One step past the end, where charCodeAt gives NaN, which is no symbol, so a last run closes.
+  for (let i = 0; i <= chars.length; i++) {
+    const code = chars.charCodeAt(i);
+    const symbol = SYMBOLS.some(function (r) { return code >= r[0] && code <= r[1]; });
+    if (symbol && start < 0) start = i;
+    if (!symbol && start >= 0) {
+      t.setRangeFontName(start, i, await fontFor("Inter", weight));
+      start = -1;
+    }
+  }
+}
+
 async function makeText(U, n, parent) {
   const t = figma.createText();
   parent.appendChild(t);
-  t.fontName = await fontFor(n.ff, n.wt);
+  const font = await fontFor(n.ff, n.wt);
+  t.fontName = font;
   t.characters = n.v;
   t.fontSize = n.fs;
   t.lineHeight = { unit: "PIXELS", value: n.lh };
   t.letterSpacing = { unit: "PIXELS", value: n.ls || 0 };
   if (n.td) t.textDecoration = "UNDERLINE";
   if (n.tt) t.textCase = "UPPER";
-  t.fills = [paintOf(U, n.c)];
-  if (n.wrap) {
+  setPaints(t, "fills", [paintOf(U, n.c)]);
+  if (font.family !== "Inter") await symbolsInInter(t, n.wt);
+  if (n.wrap || n.tr) {
     t.resize(Math.max(n.w, 1), t.height);
     t.textAutoResize = "HEIGHT";
   } else {
     t.textAutoResize = "WIDTH_AND_HEIGHT";
+  }
+  if (n.tr) {
+    // The browser cuts it with an ellipsis at the clipping box's content edge, on one line.
+    t.textTruncation = "ENDING";
+    t.maxLines = 1;
   }
   return t;
 }
@@ -237,8 +279,8 @@ function makeIcon(U, n, parent) {
     // Draw the icon in the colour given, whatever colour the story drew it in.
     const paint = paintOf(U, n.c);
     icon.findAll(function (x) { return x.type !== "FRAME" && "strokes" in x; }).forEach(function (x) {
-      if (x.strokes.length > 0) x.strokes = [paint];
-      if (x.fills.length > 0) x.fills = [paint];
+      if (x.strokes.length > 0) setPaints(x, "strokes", [paint]);
+      if (x.fills.length > 0) setPaints(x, "fills", [paint]);
     });
   }
   if (n.o !== undefined) icon.opacity = n.o;
@@ -249,8 +291,8 @@ function makeIcon(U, n, parent) {
 async function fillBox(U, tree, f) {
   const n = U.nodes[tree[0]];
   f.name = n.n || "box";
-  f.fills = n.f ? [paintOf(U, n.f)] : [];
-  f.strokes = n.sc ? [paintOf(U, n.sc)] : [];
+  setPaints(f, "fills", n.f ? [paintOf(U, n.f)] : []);
+  setPaints(f, "strokes", n.sc ? [paintOf(U, n.sc)] : []);
   if (n.sc) {
     f.strokeAlign = "INSIDE";
     if (Array.isArray(n.sw)) {
@@ -284,9 +326,11 @@ async function fillBox(U, tree, f) {
     f.counterAxisAlignItems = COUNTER[n.ca] || "MIN";
     if (n.sc) f.strokesIncludedInLayout = true;
   }
+  const made = [];
   for (const child of tree[1]) {
     const node = await makeNode(U, child, f);
     const c = U.nodes[child[0]];
+    made.push([node, c]);
     // A child the browser positions absolutely stays out of its auto layout parent's flow.
     if (n.L && c.ap) node.layoutPositioning = "ABSOLUTE";
     if ((!n.L || c.ap) && c.x !== undefined) {
@@ -299,6 +343,12 @@ async function fillBox(U, tree, f) {
     const column = n.L === "V";
     f.primaryAxisSizingMode = (column ? n.fh : n.fw) ? "FIXED" : "AUTO";
     f.counterAxisSizingMode = (column ? n.fw : n.fh) ? "FIXED" : "AUTO";
+    // A child that grows or stretches in the browser fills this frame. It is set once the frame is
+    // fixed on that axis (spec.mjs fixes it), because FILL in a frame that hugs does nothing.
+    for (const m of made) {
+      if (m[1].gw) m[0].layoutSizingHorizontal = "FILL";
+      if (m[1].gh) m[0].layoutSizingVertical = "FILL";
+    }
   }
   return f;
 }
