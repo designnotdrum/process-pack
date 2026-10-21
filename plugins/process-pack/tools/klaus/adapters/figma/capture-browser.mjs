@@ -327,7 +327,7 @@ export function readStory(arg) {
           if (c === quote) quote = null;
         } else if (c === '"' || c === "'") quote = c;
         else if (c === "(") depth += 1;
-        else if (c === ")") depth -= 1;
+        else if (c === ")") depth = Math.max(0, depth - 1);
         else if (depth === 0 && (separator === " " ? /\s/.test(c) : c === separator)) {
           parts.push(text.slice(start, i));
           start = i + 1;
@@ -680,8 +680,10 @@ export function readStory(arg) {
         properties.forEach(([key, property], column) => {
           if (style[property] !== before[index][column]) (found[index][key] ??= []).push(token.name);
         });
-        if (beforeShadows[index].length > 0) {
-          shadowInks(style).forEach((ink, i) => {
+        const afterShadows = beforeShadows[index].length > 0 ? shadowInks(style) : [];
+        // By place in the list, so only when the list kept its length.
+        if (afterShadows.length === beforeShadows[index].length) {
+          afterShadows.forEach((ink, i) => {
             if (ink !== beforeShadows[index][i]) ((found[index].shadows ??= [])[i] ??= []).push(token.name);
           });
         }

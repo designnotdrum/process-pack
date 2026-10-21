@@ -454,9 +454,10 @@ test("#85 2. stop positions follow CSS: missing ones spread evenly, lengths alon
   assert.deepEqual(radial[2].map((s) => s.slice(0, 1).concat(s[4])), [[0, 1], [0.4, 1], [0.41, 0]]);
 });
 
-test("#85 2. a repeating or conic gradient, a gradient drawn as a pattern, and gradient text stay out with warnings that name them", () => {
+test("#85 2. a repeating or conic gradient, a gradient drawn as a pattern, gradient text and a position Klaus does not read stay out with warnings that name them", () => {
   const layer = (fields) => ({ name: "linear-gradient", stops: [stop(RED), stop(BLUE)], clip: "border-box", origin: "padding-box", size: "auto", ...fields });
-  const layers = [layer({ name: "repeating-linear-gradient" }), layer({ name: "conic-gradient" }), layer({ size: "16px 16px" }), layer({ clip: "text" })];
+  const radial = { name: "radial-gradient", shape: "circle", extent: null, radii: [], at: ["calc(50% + 4px)", "50%"] };
+  const layers = [layer({ name: "repeating-linear-gradient" }), layer({ name: "conic-gradient" }), layer({ size: "16px 16px" }), layer({ clip: "text" }), layer(radial)];
   const unit = unitOf("Patterns", box({ w: 100, h: 40, backgroundImage: true, layers }));
   assert.equal(treeOf(unit).node.gr, undefined);
   assert.deepEqual(unit.warnings, [
@@ -464,6 +465,7 @@ test("#85 2. a repeating or conic gradient, a gradient drawn as a pattern, and g
     "div: the background conic-gradient() was left out.",
     "div: a background linear-gradient() at background-size 16px 16px was left out.",
     "div: a background linear-gradient() clipped to the text was left out.",
+    "div: a background radial-gradient() with a position or size Klaus does not read was left out.",
   ]);
 });
 

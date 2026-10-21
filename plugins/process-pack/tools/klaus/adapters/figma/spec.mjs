@@ -283,13 +283,15 @@ class Builder {
 
   /**
    * Whether everything a box holds lies inside it, the shadows and glows of what it holds too, so
-   * that making it clip changes nothing that is drawn.
+   * that making it clip changes nothing that is drawn. A blur's faint edge is counted out to three
+   * standard deviations: one and a half times a box shadow's blur, and three times a drop-shadow()
+   * filter's, whose blur is a standard deviation (see effects).
    */
   holds(node) {
     const [left, top, right, bottom] = [node.x - 0.5, node.y - 0.5, node.x + node.w + 0.5, node.y + node.h + 0.5];
     const inside = (kid) => {
-      const shadows = (kid.shadows ?? []).filter((s) => !s.inset).map((s) => Math.max(Math.abs(s.x), Math.abs(s.y)) + s.blur + s.spread);
-      const glows = (kid.filter ?? []).filter((f) => f.name === "drop-shadow").map((f) => Math.max(Math.abs(f.x), Math.abs(f.y)) + 2 * f.blur);
+      const shadows = (kid.shadows ?? []).filter((s) => !s.inset).map((s) => Math.max(Math.abs(s.x), Math.abs(s.y)) + 1.5 * s.blur + s.spread);
+      const glows = (kid.filter ?? []).filter((f) => f.name === "drop-shadow").map((f) => Math.max(Math.abs(f.x), Math.abs(f.y)) + 3 * f.blur);
       const reach = Math.max(0, ...shadows, ...glows);
       if (kid.x - reach < left || kid.y - reach < top || kid.x + kid.w + reach > right || kid.y + kid.h + reach > bottom) return false;
       return kid.kind !== "box" || kid.clip || kid.children.every(inside);
@@ -319,7 +321,12 @@ class Builder {
       else if (layer.name !== "linear-gradient" && layer.name !== "radial-gradient") this.warnings.add(`${node.tag}: the background ${layer.name}() was left out.`);
       else if (!/^(auto|auto auto|100% 100%|cover|contain)$/.test(layer.size)) this.warnings.add(`${node.tag}: a background ${layer.name}() at background-size ${layer.size} was left out.`);
       else if (layer.clip === "text") this.warnings.add(`${node.tag}: a background ${layer.name}() clipped to the text was left out.`);
-      else if (layer.stops.length > 0) drawn.push([layer, this.gradient(node, layer)]);
+      else if (layer.stops.length > 0) {
+        const paint = this.gradient(node, layer);
+        // A position or size the spec does not read, such as calc(), gives no number.
+        if ([...paint[1], ...paint[2].flat()].every(Number.isFinite)) drawn.push([layer, paint]);
+        else this.warnings.add(`${node.tag}: a background ${layer.name}() with a position or size Klaus does not read was left out.`);
+      }
     }
     const bordered = node.borderStyle !== "none" && node.borderWidth.some((w) => w > 0) && node.borderColor[3] < 1;
     const underBorder = bordered && drawn.some(([layer]) => layer.clip !== "border-box");
