@@ -100,7 +100,12 @@ export async function waitForStill({ frames, timeout }) {
  * tooltip's, which is hovered. A popup trigger deeper inside a part, such as a select in a form,
  * is left closed.
  *
- * @returns {{ via: "component" | "root", parts: number, trigger: "click" | "hover" | null }}
+ * It also returns the props React rendered the story's component with (its fiber's memoizedProps),
+ * the ones that are text, numbers or true or false, or null without React or a component. A story
+ * can set a prop inside its own render rather than as an arg, as Meridian's Alert Destructive sets
+ * its variant.
+ *
+ * @returns {{ via: "component" | "root", parts: number, trigger: "click" | "hover" | null, props: Record<string, string | number | boolean> | null }}
  */
 export function markComponent() {
   const notDrawn = ["STYLE", "SCRIPT", "LINK", "META", "TEMPLATE", "NOSCRIPT"];
@@ -127,6 +132,9 @@ export function markComponent() {
     return out;
   }
 
+  /** The props React rendered the story's component with, once fromReact has found it. */
+  let rendered = null;
+
   /** The elements React drew for the story's component, in order, through portals too. */
   function fromReact() {
     const component = window.__STORYBOOK_PREVIEW__?.currentRender?.story?.component;
@@ -146,6 +154,7 @@ export function markComponent() {
       if (fiber.child) stack.push(fiber.child);
     }
     if (!match) return null;
+    rendered = match.memoizedProps ?? null;
     const elements = [];
     // A portal's fiber (tag 4) is not an element. Its children are, wherever they are in the document.
     const walk = (fiber) => {
@@ -187,7 +196,8 @@ export function markComponent() {
   else parts = parts.filter((element) => !backdrop(element));
 
   parts.forEach((element, i) => element.setAttribute("data-klaus-part", String(i)));
-  return { via, parts: parts.length, trigger: click ? "click" : hover ? "hover" : null };
+  const props = rendered && typeof rendered === "object" ? Object.fromEntries(Object.entries(rendered).filter(([, value]) => ["string", "number", "boolean"].includes(typeof value))) : null;
+  return { via, parts: parts.length, trigger: click ? "click" : hover ? "hover" : null, props };
 }
 
 /**

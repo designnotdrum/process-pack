@@ -202,6 +202,8 @@ export function createAdapter(browser = {}, { env } = {}) {
       const config = { collection: options.collectionName, mode: MODE_NAME };
       // The stories each component left out, and why: "same", "failed" or "size".
       const storiesLeftOut = [];
+      // The axis values of story variants that are the axis's first value only because nothing said otherwise.
+      const storyAxisGuesses = [];
 
       if (components.length > 0) {
         let storybook;
@@ -214,10 +216,11 @@ export function createAdapter(browser = {}, { env } = {}) {
           try {
             for (const item of components) {
               try {
-                const { unit, leftOut } = await buildComponent(storybook, item, options, readComponent, config);
+                const { unit, leftOut, guesses } = await buildComponent(storybook, item, options, readComponent, config);
                 units.push(unit);
                 warnings.push(...unit.warnings);
                 storiesLeftOut.push(...leftOut.map((story) => ({ component: item.name, ...story })));
+                storyAxisGuesses.push(...guesses.map((guess) => ({ component: item.name, ...guess })));
               } catch (error) {
                 failed.push({ id: item.id, error: error.message });
               }
@@ -304,6 +307,7 @@ export function createAdapter(browser = {}, { env } = {}) {
         afterUploads: afterUploads ? { name: afterUploads.name, chars: afterUploads.chars } : null,
         warnings: [...new Set(warnings)],
         storiesLeftOut,
+        storyAxisGuesses,
       };
       // The Klaus plugin applies a first load. The relay refuses to send one (relay/README.md).
       if (ctx.firstLoad) manifest.firstLoad = true;
@@ -336,8 +340,13 @@ export function createAdapter(browser = {}, { env } = {}) {
       const parts = [`${manifest.files.reduce((n, f) => n + f.units.length, 0)} in ${manifest.files.length} data file${manifest.files.length === 1 ? "" : "s"}`];
       if (manifest.uploads.length > 0) parts.push(`${manifest.uploads.length} screenshot${manifest.uploads.length === 1 ? "" : "s"} to upload`);
       const leftOut = manifest.storiesLeftOut ?? [];
-      const details = { directory, manifest: `${directory}/manifest.json`, files: manifest.files, uploads: manifest.uploads.length, warnings: manifest.warnings, storiesLeftOut: leftOut, sharedLedger };
-      const storyNote = leftOut.length === 0 ? "" : ` ${leftOut.length} ${leftOut.length === 1 ? "story was" : "stories were"} left out of the sets, named in details.storiesLeftOut.`;
+      const guessed = manifest.storyAxisGuesses ?? [];
+      const details = { directory, manifest: `${directory}/manifest.json`, files: manifest.files, uploads: manifest.uploads.length, warnings: manifest.warnings, storiesLeftOut: leftOut, storyAxisGuesses: guessed, sharedLedger };
+      const guessedStories = new Set(guessed.map((guess) => `${guess.component}/${guess.id}`)).size;
+      const storyNote = [
+        leftOut.length === 0 ? "" : ` ${leftOut.length} ${leftOut.length === 1 ? "story was" : "stories were"} left out of the sets, named in details.storiesLeftOut.`,
+        guessedStories === 0 ? "" : ` ${guessedStories} story ${guessedStories === 1 ? "variant has" : "variants have"} an axis value that is a guess, named in details.storyAxisGuesses.`,
+      ].join("");
       if (manifest.firstLoad) {
         return {
           summary: `Figma first load for the Klaus plugin in ${directory}: ${parts.join(" and ")}, with no spending cap. Apply the klaus-figma artifact with the plugin, then run the relay with --reconcile --run <this run's id>. The relay does not send a first load.${storyNote}${variableNote}`,
@@ -382,17 +391,29 @@ export async function buildComponent(storybook, item, options, readComponent, co
   const build = (kept) => buildComponentUnit({ item, capture: { ...capture, stories: kept }, options });
   const fits = (unit) => unit.cells.length <= MAX_VARIANTS && unit.axes.every((axis) => axis.values.length <= MAX_AXIS_VALUES) && codeChars([unit], config) <= MAX_CODE_CHARS;
   const whole = build(stories);
-  if (stories.length === 0 || fits(whole)) return { unit: whole, leftOut };
-  if (!fits(build([]))) return { unit: whole, leftOut };
-  const kept = [];
-  const cut = [];
-  for (const story of stories) {
-    if (fits(build([...kept, story]))) kept.push(story);
-    else cut.push(story);
+  let unit = whole;
+  let kept = stories;
+  if (stories.length > 0 && !fits(whole) && fits(build([]))) {
+    kept = [];
+    const cut = [];
+    for (const story of stories) {
+      if (fits(build([...kept, story]))) kept.push(story);
+      else cut.push(story);
+    }
+    unit = build(kept);
+    unit.warnings.push(`${item.name}: the stories ${cut.map((story) => story.name).join(", ")} were left out, because with them the set would not fit one relay call (${MAX_CODE_CHARS} characters of code and ${MAX_VARIANTS} variants).`);
+    leftOut.push(...cut.map(({ id, name }) => ({ id, name, reason: "size" })));
   }
-  const unit = build(kept);
-  unit.warnings.push(`${item.name}: the stories ${cut.map((story) => story.name).join(", ")} were left out, because with them the set would not fit one relay call (${MAX_CODE_CHARS} characters of code and ${MAX_VARIANTS} variants).`);
-  return { unit, leftOut: [...leftOut, ...cut.map(({ id, name }) => ({ id, name, reason: "size" }))] };
+  // An axis value no arg, rendered prop or class list gave is the axis's first value: a guess, named here.
+  const guesses = [];
+  for (const story of kept) {
+    const axes = Object.keys(story.from ?? {}).filter((axis) => story.from[axis] === "first");
+    if (axes.length === 0) continue;
+    guesses.push(...axes.map((axis) => ({ id: story.id, name: story.name, axis, value: story.key[axis] })));
+    const labels = axes.map((axis) => `${axis}=${story.key[axis]}`).join(", ");
+    unit.warnings.push(`${item.name}: the story ${story.name} does not say its ${axes.join(" or ")}, so its variant is labelled ${labels}, the first value, as a guess.`);
+  }
+  return { unit, leftOut, guesses };
 }
 
 /** The file key from a key or a Figma URL, or null when the target is neither. */

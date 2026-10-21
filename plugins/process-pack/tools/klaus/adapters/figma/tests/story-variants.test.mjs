@@ -40,7 +40,7 @@ function withStories(stories) {
   return { ...buttonCapture(), storyValue: "Primary", stories, leftOut: [] };
 }
 
-const story = (name, key, words = name) => ({ id: `button--${name.toLowerCase().replace(/\W+/g, "-")}`, name, value: storyValue(name), key, tree: storyTree(words) });
+const story = (name, key, words = name, from = Object.fromEntries(Object.keys(key).map((axis) => [axis, "arg"]))) => ({ id: `button--${name.toLowerCase().replace(/\W+/g, "-")}`, name, value: storyValue(name), key, from, tree: storyTree(words) });
 
 test("#86 a story's name is a Story value Figma accepts: commas become semicolons and equals signs colons", () => {
   assert.equal(storyValue("First run, cannot create"), "First run; cannot create");
@@ -60,16 +60,50 @@ test("#86 two stories of one component with the same name are told apart by thei
   assert.deepEqual(storyCandidates(index, "DropdownMenu"), ["shadcn-ui-dropdown-menu--default", "ui-dropdownmenu--default", "shadcn-ui-dropdown-menu--simple"], "the pick for the axes still puts Default first");
 });
 
-test("#86 a story's args are mapped onto the axes: its own value where it is one, the axis's first value otherwise", () => {
-  const axes = [
-    { prop: "variant", name: "Variant", values: ["primary", "outline"] },
-    { prop: "size", name: "Size", values: ["sm", "md"] },
-    { prop: "count", name: "Count", values: [1, 2] },
-    { prop: null, name: "State", values: ["default", "loading", "disabled"] },
+const AXES = [
+  { prop: "variant", name: "Variant", values: ["primary", "outline"] },
+  { prop: "size", name: "Size", values: ["sm", "md"] },
+  { prop: "count", name: "Count", values: [1, 2] },
+  { prop: null, name: "State", values: ["default", "loading", "disabled"] },
+];
+
+test("#86 label step 1: a story's own arg sets an axis when it is one of the axis's values", () => {
+  assert.deepEqual(storyKey(AXES, { args: { variant: "outline", size: "md", count: 2, disabled: true } }), {
+    key: { Variant: "outline", Size: "md", Count: 2, State: "disabled" },
+    from: { Variant: "arg", Size: "arg", Count: "arg", State: "arg" },
+  });
+  const { key, from } = storyKey(AXES, { args: { variant: "huge", count: "2", loading: true, disabled: true } });
+  assert.deepEqual([key.Count, from.Count, key.State, from.State], [2, "arg", "loading", "arg"], "a number given as text, and the first state set");
+  assert.notEqual(from.Variant, "arg", "huge is not one of the values");
+});
+
+test("#86 label step 2: without an arg, the prop the story's component was rendered with, as Alert Destructive sets its variant in its render", () => {
+  const { key, from } = storyKey(AXES, { args: {}, props: { variant: "outline", size: "huge", disabled: true } });
+  assert.deepEqual([key.Variant, from.Variant], ["outline", "props"]);
+  assert.deepEqual([key.State, from.State], ["disabled", "props"]);
+  assert.notEqual(from.Size, "props", "huge is not one of the values");
+  assert.deepEqual(storyKey(AXES, { args: { variant: "primary" }, props: { variant: "outline" } }).key.Variant, "primary", "an arg comes first");
+  assert.deepEqual(storyKey([AXES[3]], { props: {} }), { key: { State: "default" }, from: { State: "props" } }, "rendered with neither state is the default state");
+});
+
+test("#86 label step 3: a prop left to the component's default takes the value whose cell draws the same root class list, when exactly one does", () => {
+  const cells = [
+    { key: { Variant: "primary", Size: "sm" }, classes: ["btn", "btn-primary", "h-8"] },
+    { key: { Variant: "primary", Size: "md" }, classes: ["btn", "btn-primary", "h-10"] },
+    { key: { Variant: "outline", Size: "sm" }, classes: ["btn", "btn-outline", "h-8"] },
+    { key: { Variant: "outline", Size: "md" }, classes: ["btn", "btn-outline", "h-10"] },
   ];
-  assert.deepEqual(storyKey(axes, { variant: "outline", size: "md", count: 2, disabled: true }), { Variant: "outline", Size: "md", Count: 2, State: "disabled" });
-  assert.deepEqual(storyKey(axes, { variant: "huge", count: "2", loading: true, disabled: true }), { Variant: "primary", Size: "sm", Count: 2, State: "loading" });
-  assert.deepEqual(storyKey(axes, {}), { Variant: "primary", Size: "sm", Count: 1, State: "default" });
+  const axes = AXES.slice(0, 2);
+  assert.deepEqual(storyKey(axes, { props: {}, classes: ["h-10", "btn-outline", "btn"], cells }), { key: { Variant: "outline", Size: "md" }, from: { Variant: "classes", Size: "classes" } });
+  // Two sizes draw one class list: the Size match is not unique, so Size is a guess. Variant still matches.
+  const same = [...cells, { key: { Variant: "outline", Size: "sm" }, classes: ["btn", "btn-outline", "h-10"] }];
+  assert.deepEqual(storyKey(axes, { props: {}, classes: ["btn", "btn-outline", "h-10"], cells: same }), { key: { Variant: "outline", Size: "sm" }, from: { Variant: "classes", Size: "first" } });
+  // A class the axes' story never draws, such as a story's own w-full, matches no cell.
+  assert.deepEqual(storyKey(axes, { props: {}, classes: ["btn", "btn-primary", "h-10", "w-full"], cells }).from, { Variant: "first", Size: "first" });
+});
+
+test("#86 label step 4: with nothing to go by, the axis's first value, marked as a guess", () => {
+  assert.deepEqual(storyKey(AXES, {}), { key: { Variant: "primary", Size: "sm", Count: 1, State: "default" }, from: { Variant: "first", Size: "first", Count: "first", State: "first" } });
 });
 
 test("#86 a drawing is the same wherever it sits on the page, and not the same with other words", () => {
@@ -197,6 +231,16 @@ test("#86 stories that would take the set past one relay call are left out, the 
   assert.deepEqual(small.leftOut.map((s) => s.reason), ["same"]);
 });
 
+test("#86 a story variant whose axis value is a guess is named, and one left out for its size is not", async () => {
+  const options = { ...OPTIONS, states: [], label: false, stories: {} };
+  const guessed = { ...story("Full Width", { Variant: "primary", Size: "sm" }, "Full Width"), from: { Variant: "first", Size: "classes" } };
+  const huge = { ...story("Huge", { Variant: "primary", Size: "sm" }, `Huge ${"w".repeat(30000)}`), from: { Variant: "first", Size: "first" } };
+  const { unit, guesses } = await buildComponent(null, { ...item(), axes: [] }, options, async () => withStories([guessed, huge]), CONFIG);
+  assert.deepEqual(unit.axes[0].values, ["Primary", "Full Width"]);
+  assert.deepEqual(guesses, [{ id: "button--full-width", name: "Full Width", axis: "Variant", value: "primary" }]);
+  assert.ok(unit.warnings.some((w) => w === "Button: the story Full Width does not say its Variant, so its variant is labelled Variant=primary, the first value, as a guess."), unit.warnings.join("\n"));
+});
+
 test("#86 stories past 256 variants, or past 100 values of the Story property, are left out", async () => {
   const options = { ...OPTIONS, states: [], label: false, stories: {} };
   // One drawing for every variant, so the code stays small and only the counts bind.
@@ -257,6 +301,23 @@ test("#86 write names the stories left out in the manifest and the run report, a
   const report = figma.report({ written: result.written, failed: [] }, ctx);
   assert.deepEqual(report.details.storiesLeftOut, manifest.storiesLeftOut);
   assert.match(report.summary, /2 stories were left out of the sets, named in details\.storiesLeftOut\./);
+  assert.deepEqual(manifest.storyAxisGuesses, []);
+  assert.doesNotMatch(report.summary, /a guess/);
+
+  // A story variant whose Variant and Size are guesses is one story named in the report.
+  const guessing = { ...capture, stories: [{ ...capture.stories[0], from: { Variant: "first", Size: "first" } }] };
+  const again = createAdapter({ async openStorybook() { return { entries: [], async close() {} }; }, async captureComponent() { return guessing; } }, { env: {} });
+  const root2 = mkdtempSync(path.join(tmpdir(), "klaus-figma-"));
+  const ctx2 = { ...ctx, root: root2 };
+  await again.write(await again.plan(ctx2), ctx2);
+  const manifest2 = JSON.parse(readFileSync(path.join(root2, ".klaus/figma/v1.0.0/manifest.json"), "utf8"));
+  assert.deepEqual(manifest2.storyAxisGuesses, [
+    { component: "Button", id: "button--with-icons", name: "With Icons", axis: "Variant", value: "outline" },
+    { component: "Button", id: "button--with-icons", name: "With Icons", axis: "Size", value: "lg" },
+  ]);
+  const report2 = again.report({ written: ["Button"], failed: [] }, ctx2);
+  assert.deepEqual(report2.details.storyAxisGuesses, manifest2.storyAxisGuesses);
+  assert.match(report2.summary, /1 story variant has an axis value that is a guess, named in details\.storyAxisGuesses\./);
 });
 
 test("#86 a set near the call limit is written as a data file the relay's reader takes", async () => {
@@ -304,11 +365,16 @@ test("#86 the reader draws each other story at its own args, leaves out one that
   assert.equal(capture.story, "fixture-chip--default");
   assert.equal(capture.storyValue, "Default");
   assert.equal(capture.cells.length, 2, "the axes' story keeps both its cells");
-  assert.deepEqual(capture.stories.map((s) => [s.value, s.key]), [["Bold; loud", { Variant: "bold" }], ["Huge", { Variant: "plain" }]]);
+  assert.deepEqual(capture.stories.map((s) => [s.value, s.key.Variant, s.from.Variant]), [
+    ["Bold; loud", "bold", "arg"],
+    ["Huge", "plain", "first"],
+    ["Set in render", "bold", "props"],
+    ["Own default", "bold", "classes"],
+  ], "an arg, a value that is no axis value and so a guess, a prop set in the render, and the chip's own default found by its classes");
   const words = (tree) => tree.children.map((c) => c.text);
-  assert.deepEqual(capture.stories.map((s) => words(s.tree)), [["Loud"], ["Huge"]], "each story at its own args, with no URL args");
-  assert.deepEqual(capture.leftOut.map((s) => [s.id, s.reason]), [["fixture-chip--plain-again", "same"], ["fixture-chip--broken", "failed"]]);
-  assert.ok(capture.warnings.some((w) => /Chip: the story Plain again draws the same as a variant already in the set/.test(w)), capture.warnings.join("\n"));
+  assert.deepEqual(capture.stories.map((s) => words(s.tree)), [["Loud"], ["Huge"], ["Inside"], ["Own default"]], "each story at its own args, with no URL args");
+  assert.deepEqual(capture.leftOut.map((s) => [s.id, s.reason]), [["fixture-chip--again", "same"], ["fixture-chip--broken", "failed"]]);
+  assert.ok(capture.warnings.some((w) => /Chip: the story Again draws the same as a variant already in the set/.test(w)), capture.warnings.join("\n"));
   assert.ok(capture.warnings.some((w) => /Story fixture-chip--broken was skipped: .*Chip exploded/.test(w)), capture.warnings.join("\n"));
 });
 

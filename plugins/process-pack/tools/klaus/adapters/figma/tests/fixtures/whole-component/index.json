@@ -15,7 +15,9 @@
     "fixture-chip--default": { "id": "fixture-chip--default", "type": "story", "title": "Fixture/Chip", "name": "Default", "importPath": "./Chip.stories.js" },
     "fixture-chip--bold-loud": { "id": "fixture-chip--bold-loud", "type": "story", "title": "Fixture/Chip", "name": "Bold, loud", "importPath": "./Chip.stories.js" },
     "fixture-chip--huge": { "id": "fixture-chip--huge", "type": "story", "title": "Fixture/Chip", "name": "Huge", "importPath": "./Chip.stories.js" },
-    "fixture-chip--plain-again": { "id": "fixture-chip--plain-again", "type": "story", "title": "Fixture/Chip", "name": "Plain again", "importPath": "./Chip.stories.js" },
-    "fixture-chip--broken": { "id": "fixture-chip--broken", "type": "story", "title": "Fixture/Chip", "name": "Broken", "importPath": "./Chip.stories.js" }
+    "fixture-chip--again": { "id": "fixture-chip--again", "type": "story", "title": "Fixture/Chip", "name": "Again", "importPath": "./Chip.stories.js" },
+    "fixture-chip--broken": { "id": "fixture-chip--broken", "type": "story", "title": "Fixture/Chip", "name": "Broken", "importPath": "./Chip.stories.js" },
+    "fixture-chip--set-in-render": { "id": "fixture-chip--set-in-render", "type": "story", "title": "Fixture/Chip", "name": "Set in render", "importPath": "./Chip.stories.js" },
+    "fixture-chip--own-default": { "id": "fixture-chip--own-default", "type": "story", "title": "Fixture/Chip", "name": "Own default", "importPath": "./Chip.stories.js" }
   }
 }

@@ -163,21 +163,59 @@ export function storyValues(entries) {
 }
 
 /**
- * Where a story's one variant sits among the axes, from the story's own args. An axis takes the
- * story's arg when it is one of the axis's values, and the axis's first value otherwise. The State
- * axis takes the first of its states whose arg the story sets to true.
+ * Where a story's one variant sits among the axes, and how each axis value was found. For each axis,
+ * in this order:
+ *
+ *   arg      the story's own arg (initialArgs), when it sets the axis prop to one of the axis's values
+ *   props    the prop React rendered the story's component with, when it is one of the values: a
+ *            story can set a prop inside its render, as Meridian's Alert Destructive sets its variant
+ *   classes  the prop is unset, so the component uses its own default: the value whose cells in the
+ *            axes' story draw the component's root element with the same class list as the story's
+ *            root element, when exactly one value does
+ *   first    the axis's first value, a guess, which the run report names
+ *
+ * The State axis takes the first of its states set to true, from the args and then the rendered
+ * props. Rendered props without either state are the default state.
+ *
+ * @param {Array<{ prop: string | null, name: string, values: Array<string | number> }>} axes
+ * @param {object} story
+ * @param {Record<string, unknown>} [story.args]   The story's initialArgs.
+ * @param {Record<string, unknown> | null} [story.props]  What markComponent read from the component's fiber.
+ * @param {string[] | null} [story.classes]  The class list of the story's root element.
+ * @param {Array<{ key: Record<string, unknown>, classes: string[] }>} [story.cells]  The axes' story's cells.
+ * @returns {{ key: Record<string, string | number>, from: Record<string, "arg" | "props" | "classes" | "first"> }}
  */
-export function storyKey(axes, args) {
-  return Object.fromEntries(
-    axes.map((axis) => {
-      if (axis.prop) {
-        const value = args[axis.prop];
-        const found = value === undefined || value === null ? undefined : axis.values.find((v) => String(v) === String(value));
-        return [axis.name, found ?? axis.values[0]];
-      }
-      return [axis.name, axis.values.find((state) => state !== "default" && args[state] === true) ?? axis.values[0]];
-    }),
-  );
+export function storyKey(axes, { args = {}, props = null, classes = null, cells = [] } = {}) {
+  const key = {};
+  const from = {};
+  const classKey = (list) => [...new Set(list)].sort().join(" ");
+  const twins = classes ? cells.filter((cell) => Array.isArray(cell.classes) && classKey(cell.classes) === classKey(classes)) : [];
+  const valueIn = (axis, source) => {
+    if (!source) return undefined;
+    if (!axis.prop) return axis.values.find((state) => state !== "default" && source[state] === true);
+    const value = source[axis.prop];
+    return value === undefined || value === null ? undefined : axis.values.find((v) => String(v) === String(value));
+  };
+  for (const axis of axes) {
+    const set = (value, how) => {
+      key[axis.name] = value;
+      from[axis.name] = how;
+    };
+    const fromArgs = valueIn(axis, args);
+    if (fromArgs !== undefined) {
+      set(fromArgs, "arg");
+      continue;
+    }
+    const fromProps = valueIn(axis, props) ?? (props && !axis.prop ? axis.values[0] : undefined);
+    if (fromProps !== undefined) {
+      set(fromProps, "props");
+      continue;
+    }
+    const matched = [...new Set(twins.map((cell) => cell.key[axis.name]))].filter((value) => value !== undefined);
+    if (matched.length === 1) set(matched[0], "classes");
+    else set(axis.values[0], "first");
+  }
+  return { key, from };
 }
 
 /** Where and how big a node is. Two reads of one story can differ in these by a fraction of a pixel. */
@@ -496,12 +534,16 @@ export async function captureComponent(storybook, request) {
     warnings.push(`${name}: a variant prop is already named ${STORY}, so its other stories are not drawn.`);
   } else if (others.length > 0) {
     const values = storyValues([first, ...others]);
+    // The axes' story's cells with the class list of their root element, for storyKey.
+    const mainCells = cells.map((cell, i) => ({ key: cell.key, classes: classLists[i] }));
     for (const [i, entry] of others.entries()) {
       try {
         await storybook.show(entry.id);
         const opened = await openComponent(page, `${name}, story ${entry.name}`);
         if (opened) openWarnings.add(opened);
         const { initialArgs } = await page.evaluate(storyFacts);
+        // Marks the parts again, as openComponent left them, and reads the props the component was rendered with.
+        const { props } = await page.evaluate(markComponent);
         const read = await page.evaluate(readStory, { candidates: propertyNames, withTokens: false, ...READ });
         if (read.error) throw new Error(read.error);
         if (read.truncated) {
@@ -512,7 +554,8 @@ export async function captureComponent(storybook, request) {
           warnings.push(`${name}: the story ${entry.name} draws the same as a variant already in the set, so it adds none.`);
           continue;
         }
-        stories.push({ id: entry.id, name: entry.name, value: values[i + 1], key: storyKey(allAxes, initialArgs), tree: read.tree });
+        const { key, from } = storyKey(allAxes, { args: initialArgs, props, classes: read.classes, cells: mainCells });
+        stories.push({ id: entry.id, name: entry.name, value: values[i + 1], key, from, tree: read.tree });
       } catch (error) {
         leftOut.push({ id: entry.id, name: entry.name, reason: "failed" });
         warnings.push(`Story ${entry.id} was skipped: ${error.message}`);
