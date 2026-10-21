@@ -358,7 +358,10 @@ test("every node of a drawn unit is one the data file reader accepts", async () 
 // filters, a margin on an auto layout's cross axis, and an svg attribute that a style sheet overrides.
 
 const near = (actual, expected, what = "") => assert.ok(Math.abs(actual - expected) < 0.001, `${what} ${actual} is not ${expected}`);
-const nearAll = (actual, expected, what) => expected.forEach((value, i) => (Array.isArray(value) ? nearAll(actual[i], value, what) : near(actual[i], value, what)));
+const nearAll = (actual, expected, what) => {
+  assert.equal(actual.length, expected.length, `${what}: ${actual.length} entries, not ${expected.length}`);
+  expected.forEach((value, i) => (Array.isArray(value) ? nearAll(actual[i], value, what) : near(actual[i], value, what)));
+};
 const RING_INK = [{ name: "--ring-ink", kind: "plain", syntax: "var(--ring-ink)", rgba: [74, 90, 232, 1] }];
 
 // #85 1. Box shadows are not read.
@@ -547,7 +550,7 @@ test("#85 1, 2 and 3. the reader reads box shadows with their tokens, background
   assert.deepEqual(nudge.layers.map((l) => [l.name, l.clip, l.angle ?? null, l.stops.length]), [["linear-gradient", "padding-box", null, 2], ["linear-gradient", "border-box", 135, 3]]);
   assert.deepEqual(nudge.layers[1].stops.map((s) => [s.color.join(), s.at]), [["59,75,212,1", "0%"], ["124,58,237,1", "50%"], ["139,111,232,1", "100%"]]);
   assert.deepEqual([dot.layers[0].name, dot.layers[0].shape, dot.layers[0].at], ["radial-gradient", "circle", ["25%", "50%"]]);
-  assert.deepEqual(picture.layers.map((l) => l.name), ["url"]);
+  assert.deepEqual(picture.layers.map((l) => l.name), ["url", "url"], "a bracket inside a quoted url() does not split the layers wrongly");
   assert.deepEqual(glow.children[0].filter, [{ name: "drop-shadow", x: 0, y: 0, blur: 6, color: [139, 92, 246, 0.3] }]);
   assert.deepEqual(blurred.filter.map((f) => f.name), ["blur", "grayscale"]);
 

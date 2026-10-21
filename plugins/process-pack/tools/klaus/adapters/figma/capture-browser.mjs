@@ -315,14 +315,18 @@ export function readStory(arg) {
 
     const marginOf = (style) => [style.marginTop, style.marginRight, style.marginBottom, style.marginLeft].map((v) => round(number(v)));
 
-    /** Splits text at commas, or at spaces when separator is " ", outside brackets. */
+    /** Splits text at commas, or at spaces when separator is " ", outside brackets and quotes. */
     function splitTop(text, separator) {
       const parts = [];
       let depth = 0;
       let start = 0;
+      let quote = null;
       for (let i = 0; i < text.length; i++) {
         const c = text[i];
-        if (c === "(") depth += 1;
+        if (quote !== null) {
+          if (c === quote) quote = null;
+        } else if (c === '"' || c === "'") quote = c;
+        else if (c === "(") depth += 1;
         else if (c === ")") depth -= 1;
         else if (depth === 0 && (separator === " " ? /\s/.test(c) : c === separator)) {
           parts.push(text.slice(start, i));

@@ -339,7 +339,9 @@ class Builder {
   gradient(node, layer) {
     const b = node.borderWidth;
     const p = node.padding;
-    const inset = layer.origin === "border-box" ? [0, 0, 0, 0] : layer.origin === "content-box" ? b.map((w, i) => w + p[i]) : b;
+    let inset = b;
+    if (layer.origin === "border-box") inset = [0, 0, 0, 0];
+    else if (layer.origin === "content-box") inset = b.map((w, i) => w + p[i]);
     const area = { x: inset[3], y: inset[0], w: Math.max(node.w - inset[1] - inset[3], 0.01), h: Math.max(node.h - inset[0] - inset[2], 0.01) };
     const W = Math.max(node.w, 0.01);
     const H = Math.max(node.h, 0.01);

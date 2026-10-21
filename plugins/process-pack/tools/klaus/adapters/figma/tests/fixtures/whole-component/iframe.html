@@ -201,9 +201,9 @@
           const card = h("div", "width: 200px; height: 60px; background: rgb(255, 255, 255); border-radius: 8px; box-shadow: 0 0 #0000, 0 0 #0000, inset 0 0 0 1px var(--ring-ink), 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px -1px rgba(0, 0, 0, 0.1)");
           // A gradient border, as AnswerNudgeCard draws it: a white layer on the padding box over a gradient on the border box.
           const nudge = h("div", "width: 200px; height: 60px; box-sizing: border-box; border: 1px solid transparent; border-radius: 12px; background: linear-gradient(rgb(255, 255, 255), rgb(255, 255, 255)) padding-box, linear-gradient(135deg, rgb(59, 75, 212) 0%, rgb(124, 58, 237) 50%, rgb(139, 111, 232) 100%) border-box");
-          // A dot drawn with a radial gradient, and a box whose background is an image.
+          // A dot drawn with a radial gradient, and a box whose background is two images, one with a bracket in its quoted url.
           const dot = h("div", "width: 40px; height: 20px; background-image: radial-gradient(circle at 25% 50%, rgb(16, 185, 129) 0%, rgb(16, 185, 129) 40%, transparent 41%)");
-          const picture = h("div", "width: 20px; height: 20px; background-image: url(data:image/gif;base64,R0lGODlhAQABAAAAACw=)");
+          const picture = h("div", "width: 20px; height: 20px; background-image: url('data:text/plain,a)b'), url(data:image/gif;base64,R0lGODlhAQABAAAAACw=)");
           // Filters: a glow on an svg, as PrimaRing's, and two filters Klaus does not draw.
           const glow = h("div", "");
           glow.insertAdjacentHTML("beforeend", '<svg class="glow" width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="8" fill="rgb(124, 58, 237)"/></svg>');
