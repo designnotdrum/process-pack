@@ -108,9 +108,45 @@ function paint(value, where, tokenCount) {
   number(value[4], `${where}[4]`, 0, 1);
 }
 
-const BOX_KEYS = ["k", "n", "w", "h", "x", "y", "L", "pa", "ca", "g", "fw", "fh", "p", "f", "sw", "sc", "r", "o", "clip", "ap", "gw", "gh"];
+const BOX_KEYS = ["k", "n", "w", "h", "x", "y", "L", "pa", "ca", "g", "fw", "fh", "p", "f", "sw", "sc", "r", "o", "clip", "ap", "gw", "gh", "ef", "gr", "sg"];
 const TEXT_KEYS = ["k", "v", "ff", "wt", "fs", "lh", "ls", "td", "tt", "c", "x", "y", "w", "wrap", "tr", "gw"];
-const ICON_KEYS = ["k", "s", "w", "h", "x", "y", "hid", "n", "c", "ap", "o"];
+const ICON_KEYS = ["k", "s", "w", "h", "x", "y", "hid", "n", "c", "ap", "o", "ef"];
+const MAX_EFFECTS = 16;
+const MAX_GRADIENTS = 16;
+const MAX_STOPS = 64;
+
+/** [kind, x, y, blur, spread, colour]: kind 0 a drop shadow, 1 an inner shadow, 2 a drop shadow drawn behind the node. */
+function effects(value, where, tokenCount) {
+  list(value, where, MAX_EFFECTS).forEach((effect, i) => {
+    const at = `${where}[${i}]`;
+    if (!Array.isArray(effect) || effect.length !== 6) fail(at, "must be an effect: [kind, x, y, blur, spread, colour].");
+    whole(effect[0], `${at}[0]`, 0, 2);
+    number(effect[1], `${at}[1]`, -10000, 10000);
+    number(effect[2], `${at}[2]`, -10000, 10000);
+    number(effect[3], `${at}[3]`, 0, 10000);
+    number(effect[4], `${at}[4]`, -10000, 10000);
+    paint(effect[5], `${at}[5]`, tokenCount);
+  });
+}
+
+/** [kind, transform, stops]: kind 0 linear, 1 radial, the transform as six numbers, each stop [position, red, green, blue, alpha]. */
+function gradients(value, where) {
+  list(value, where, MAX_GRADIENTS).forEach((gradient, i) => {
+    const at = `${where}[${i}]`;
+    if (!Array.isArray(gradient) || gradient.length !== 3) fail(at, "must be a gradient: [kind, transform, stops].");
+    whole(gradient[0], `${at}[0]`, 0, 1);
+    if (!Array.isArray(gradient[1]) || gradient[1].length !== 6) fail(`${at}[1]`, "must be a transform of six numbers.");
+    gradient[1].forEach((n, j) => number(n, `${at}[1][${j}]`));
+    const stops = list(gradient[2], `${at}[2]`, MAX_STOPS);
+    if (stops.length < 2) fail(`${at}[2]`, "must hold at least two stops.");
+    stops.forEach((stop, j) => {
+      if (!Array.isArray(stop) || stop.length !== 5) fail(`${at}[2][${j}]`, "must be a stop: [position, red, green, blue, alpha].");
+      number(stop[0], `${at}[2][${j}][0]`, 0, 1);
+      for (let c = 1; c <= 3; c++) whole(stop[c], `${at}[2][${j}][${c}]`, 0, 255);
+      number(stop[4], `${at}[2][${j}][4]`, 0, 1);
+    });
+  });
+}
 
 function node(value, where, { tokenCount, svgCount }) {
   if (!isObject(value)) fail(where, "must be an object.");
@@ -141,6 +177,7 @@ function node(value, where, { tokenCount, svgCount }) {
     if ("ap" in value) flag(value.ap, `${where}.ap`);
     if ("o" in value) number(value.o, `${where}.o`, 0, 1);
     if ("c" in value) paint(value.c, `${where}.c`, tokenCount);
+    if ("ef" in value) effects(value.ef, `${where}.ef`, tokenCount);
     return;
   }
   if ("L" in value) oneOf(value.L, ["H", "V"], `${where}.L`);
@@ -157,6 +194,9 @@ function node(value, where, { tokenCount, svgCount }) {
   if ("sw" in value) sides(value.sw, `${where}.sw`);
   if ("r" in value) sides(value.r, `${where}.r`);
   if ("o" in value) number(value.o, `${where}.o`, 0, 1);
+  if ("ef" in value) effects(value.ef, `${where}.ef`, tokenCount);
+  if ("gr" in value) gradients(value.gr, `${where}.gr`);
+  if ("sg" in value) gradients(value.sg, `${where}.sg`);
 }
 
 /** [node index, [child trees]], each index pointing at a node, no deeper than MAX_DEPTH. */
@@ -666,7 +706,7 @@ function writeTokenValues(tokens, complete) {
   }
 }
 
-/** A paint without its variable binding, in the colour the variable has now. */
+/** A paint or an effect without its variable binding, in the colour the variable has now. */
 function plainPaint(paint) {
   if (!paint.boundVariables || !paint.boundVariables.color) return paint;
   const copy = Object.assign({}, paint);
@@ -675,14 +715,14 @@ function plainPaint(paint) {
 }
 
 /**
- * Freezes a set that is moving to Older versions: every bound fill and stroke, on the set and
- * on everything inside it, becomes the plain colour it has at this moment. The set keeps looking
- * the way it shipped when a token changes later. The note says so on its description.
+ * Freezes a set that is moving to Older versions: every bound fill, stroke and shadow colour, on the
+ * set and on everything inside it, becomes the plain colour it has at this moment. The set keeps
+ * looking the way it shipped when a token changes later. The note says so on its description.
  */
 function freeze(root, shipped) {
   const nodes = [root].concat(root.findAll(function () { return true; }));
   nodes.forEach(function (node) {
-    ["fills", "strokes"].forEach(function (key) {
+    ["fills", "strokes", "effects"].forEach(function (key) {
       const paints = node[key];
       if (!Array.isArray(paints)) return;
       if (paints.some(function (p) { return p.boundVariables && p.boundVariables.color; })) node[key] = paints.map(plainPaint);
@@ -710,6 +750,42 @@ function setPaints(node, key, paints) {
   if (paints.some(function (p) { return p.boundVariables && p.opacity < 1; })) {
     node[key] = node[key].map(function (held, i) { return Object.assign({}, held, { opacity: paints[i].opacity === undefined ? 1 : paints[i].opacity }); });
   }
+}
+
+/**
+ * Effects from the data (spec.mjs): kind 0 a box shadow, which is not drawn under the node, 1 an
+ * inner shadow, 2 a drop-shadow() filter, which shows through what the node leaves transparent.
+ */
+function effectsOf(U, list) {
+  return list.map(function (e) {
+    const c = e[5];
+    const effect = { type: e[0] === 1 ? "INNER_SHADOW" : "DROP_SHADOW", color: { r: c[1] / 255, g: c[2] / 255, b: c[3] / 255, a: c[4] }, offset: { x: e[1], y: e[2] }, radius: e[3], spread: e[4], visible: true, blendMode: "NORMAL" };
+    if (e[0] !== 1) effect.showShadowBehindNode = e[0] === 2;
+    const variable = c[0] >= 0 ? VARIABLES[U.tk[c[0]]] : null;
+    return variable ? figma.variables.setBoundVariableForEffect(effect, "color", variable) : effect;
+  });
+}
+
+/**
+ * Sets a node's effects. A shadow colour bound to a variable loses its alpha on its first assignment
+ * and keeps it on the second, as a bound paint loses its opacity (probe in a scratch file,
+ * 2026-10-21). So a bound colour with an alpha below 1 is assigned a second time, as setPaints does.
+ */
+function setEffects(node, effects) {
+  node.effects = effects;
+  if (effects.some(function (e) { return e.boundVariables && e.color.a < 1; })) {
+    node.effects = node.effects.map(function (held, i) { return Object.assign({}, held, { color: Object.assign({}, held.color, { a: effects[i].color.a }) }); });
+  }
+}
+
+/** A gradient paint from the data: [kind, transform, stops], kind 0 linear and 1 radial. */
+function gradientOf(g) {
+  const t = g[1];
+  return {
+    type: g[0] === 1 ? "GRADIENT_RADIAL" : "GRADIENT_LINEAR",
+    gradientTransform: [[t[0], t[1], t[2]], [t[3], t[4], t[5]]],
+    gradientStops: g[2].map(function (s) { return { position: s[0], color: { r: s[1] / 255, g: s[2] / 255, b: s[3] / 255, a: s[4] } }; }),
+  };
 }
 
 // Code points Inter draws and a web font such as DM Sans often has no glyph for: Arrows (U+2190 to
@@ -779,6 +855,7 @@ function makeIcon(U, n, parent) {
     });
   }
   if (n.o !== undefined) icon.opacity = n.o;
+  if (n.ef) setEffects(icon, effectsOf(U, n.ef));
   if (n.hid) icon.visible = false;
   return icon;
 }
@@ -786,9 +863,11 @@ function makeIcon(U, n, parent) {
 async function fillBox(U, tree, f) {
   const n = U.nodes[tree[0]];
   f.name = n.n || "box";
-  setPaints(f, "fills", n.f ? [paintOf(U, n.f)] : []);
-  setPaints(f, "strokes", n.sc ? [paintOf(U, n.sc)] : []);
-  if (n.sc) {
+  // Gradients go over the background colour, and a gradient border under the border's colour.
+  setPaints(f, "fills", (n.f ? [paintOf(U, n.f)] : []).concat((n.gr || []).map(gradientOf)));
+  setPaints(f, "strokes", (n.sg || []).map(gradientOf).concat(n.sc ? [paintOf(U, n.sc)] : []));
+  if (n.ef) setEffects(f, effectsOf(U, n.ef));
+  if (n.sc || n.sg) {
     f.strokeAlign = "INSIDE";
     if (Array.isArray(n.sw)) {
       f.strokeTopWeight = n.sw[0];
@@ -819,7 +898,7 @@ async function fillBox(U, tree, f) {
     f.paddingLeft = p[3];
     f.primaryAxisAlignItems = PRIMARY[n.pa] || "MIN";
     f.counterAxisAlignItems = COUNTER[n.ca] || "MIN";
-    if (n.sc) f.strokesIncludedInLayout = true;
+    if (n.sc || n.sg) f.strokesIncludedInLayout = true;
   }
   const made = [];
   for (const child of tree[1]) {

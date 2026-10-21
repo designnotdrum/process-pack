@@ -8,7 +8,7 @@
  *
  *   plan      components whose current version is not written yet, and the screens to write
  *   estimate  calls and relay tokens, at the measured relay rate: 71,000 tokens a call plus
- *             1.4 a character of code, about 106,000 for a Button-sized component version
+ *             1.4 a character of code, about 108,000 for a Button-sized component version
  *   write     read computed styles from a static Storybook build, build the data, pack it into
  *             files of one component each by default whose code is at most 50,000 characters,
  *             and list the screenshots to upload

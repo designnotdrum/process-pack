@@ -1,5 +1,6 @@
 /**
- * The six drawing faults of process-pack issue #83, seen in Meridian's first load on 2026-10-20.
+ * The six drawing faults of process-pack issue #83, seen in Meridian's first load on 2026-10-20, and
+ * what issue #85 added to the reader after them (the tests named "#85").
  * Each test drives the spec and the generated code against the fake Plugin API, which does what a
  * scratch Figma file did in probes on 2026-10-21 (see fake-figma.mjs). The browser tests read the
  * stand-in Storybook build (fixtures/whole-component) and run only when KLAUS_TEST_REPO names a
@@ -327,6 +328,7 @@ test("5. a component whose root is an svg is read as an icon, with its gradient 
   assert.match(circle, /stroke="url\(#ring\)"/, "an attribute without a var() stays");
   assert.doesNotMatch(tree.html, /var\(/, "a stop colour given as a var() is written as the colour it resolved to");
   assert.match(tree.html, /stop-color="rgb\(74, 90, 232\)"/);
+  assert.doesNotMatch(tree.html, /data-klaus/, "the reader's marks on the page stay out of the drawing");
 });
 
 test("6. the reader reads a box that truncates its text with an ellipsis", browser, async () => {
@@ -350,4 +352,229 @@ test("every node of a drawn unit is one the data file reader accepts", async () 
   let texts = 0;
   walk(figma.root, (n) => n.type === "TEXT" && (texts += 1));
   assert.ok(texts >= 4);
+});
+
+// Process-pack issue #85: what the reader did not read after #84. Box shadows, background gradients,
+// filters, a margin on an auto layout's cross axis, and an svg attribute that a style sheet overrides.
+
+const near = (actual, expected, what = "") => assert.ok(Math.abs(actual - expected) < 0.001, `${what} ${actual} is not ${expected}`);
+const nearAll = (actual, expected, what) => expected.forEach((value, i) => (Array.isArray(value) ? nearAll(actual[i], value, what) : near(actual[i], value, what)));
+const RING_INK = [{ name: "--ring-ink", kind: "plain", syntax: "var(--ring-ink)", rgba: [74, 90, 232, 1] }];
+
+// #85 1. Box shadows are not read.
+
+/** Tailwind's shadow list on a card: two transparent placeholders, an inset ring in a token's colour, and two soft shadows. */
+const cardShadows = () => [
+  { inset: false, x: 0, y: 0, blur: 0, spread: 0, color: [0, 0, 0, 0] },
+  { inset: true, x: 0, y: 0, blur: 0, spread: 1, color: [74, 90, 232, 0.5], bind: "--ring-ink" },
+  { inset: false, x: 0, y: 1, blur: 3, spread: 0, color: [0, 0, 0, 0.1] },
+  { inset: false, x: 0, y: 1, blur: 2, spread: -1, color: [0, 0, 0, 0.1] },
+];
+
+test("#85 1. a box shadow list is drawn as effects: last shadow first, inset as an inner shadow, a token's colour bound with its alpha", async () => {
+  const card = box({ w: 200, h: 60, background: [255, 255, 255, 1], radius: [8, 8, 8, 8], shadows: cardShadows() });
+  const { figma, component } = await draw(unitOf("Card", card, { tokens: RING_INK }));
+  assert.deepEqual(
+    component.effects.map((e) => [e.type, e.offset.x, e.offset.y, e.radius, e.spread]),
+    [["DROP_SHADOW", 0, 1, 2, -1], ["DROP_SHADOW", 0, 1, 3, 0], ["INNER_SHADOW", 0, 0, 0, 1]],
+    "CSS draws its first shadow on top and Figma its last, and a transparent shadow draws nothing",
+  );
+  const [soft, , ring] = component.effects;
+  near(soft.color.a, 0.1, "a plain shadow's alpha");
+  assert.equal(soft.showShadowBehindNode, false, "a box shadow is not drawn under the box");
+  assert.ok(ring.boundVariables.color, "the ring's colour is bound to its token");
+  near(ring.color.a, 0.5, "a bound colour keeps its alpha");
+  assert.ok(figma.variableList[0].scopes.includes("EFFECT_COLOR"));
+  assert.equal(component.clipsContent, true, "Figma draws a spread only on a frame that clips");
+});
+
+test("#85 1. a spread is kept only on a frame with a fill that can clip what it holds; otherwise it is left out with a warning", () => {
+  const shadows = [
+    { inset: false, x: 0, y: 0, blur: 0, spread: 1, color: [16, 24, 40, 0.03] },
+    { inset: false, x: 0, y: 8, blur: 24, spread: -6, color: [16, 24, 40, 0.1] },
+  ];
+  const kept = unitOf("Modal", box({ w: 100, h: 60, background: [255, 255, 255, 1], shadows, children: [box({ x: 10, y: 10, w: 80, h: 40 })] }));
+  assert.equal(treeOf(kept).node.clip, 1);
+  assert.deepEqual(treeOf(kept).node.ef.map((e) => e.slice(0, 5)), [[0, 0, 8, 24, -6], [0, 0, 0, 0, 1]]);
+  assert.deepEqual(kept.warnings, []);
+
+  // Without a fill, and with a child that reaches past the box, Figma cannot draw the spread.
+  for (const tree of [box({ w: 100, h: 60, shadows }), box({ w: 100, h: 60, background: [255, 255, 255, 1], shadows, children: [box({ x: 90, y: 10, w: 20, h: 10 })] })]) {
+    const unit = unitOf("Modal", tree);
+    assert.equal(treeOf(unit).node.clip, undefined, "the frame is not made to clip");
+    assert.deepEqual(treeOf(unit).node.ef.map((e) => e.slice(0, 5)), [[0, 0, 8, 24, 0]], "the soft shadow stays without its spread, and the ring, which is only a spread, goes");
+    assert.match(unit.warnings.join("\n"), /div: a shadow's spread was left out/);
+  }
+});
+
+// #85 2. CSS gradients are not read.
+
+const stop = (color, at = null) => ({ color, at });
+const RED = [255, 0, 0, 1];
+const GREEN = [0, 179, 0, 1];
+const BLUE = [0, 0, 255, 1];
+
+test("#85 2. linear and radial gradients are drawn as gradient paints with their stops and angle, the last CSS layer first", async () => {
+  const layers = [
+    { name: "linear-gradient", angle: 135, stops: [stop(RED), stop(GREEN, "50%"), stop(BLUE)], clip: "border-box", origin: "padding-box", size: "auto" },
+    { name: "radial-gradient", shape: "ellipse", extent: null, radii: [], at: ["50%", "50%"], stops: [stop(RED, "0%"), stop(BLUE, "100%")], clip: "border-box", origin: "padding-box", size: "auto" },
+    { name: "url", clip: "border-box", origin: "padding-box", size: "auto" },
+  ];
+  const unit = unitOf("Nudge", box({ w: 200, h: 100, background: [255, 255, 255, 1], backgroundImage: true, layers }));
+  assert.deepEqual(unit.warnings, ["div: a background image or gradient was left out."], "a url() image stays out, with the warning");
+  const { component } = await draw(unit);
+  assert.deepEqual(component.fills.map((p) => p.type), ["SOLID", "GRADIENT_RADIAL", "GRADIENT_LINEAR"]);
+  const [, radial, linear] = component.fills;
+  // The transforms a scratch Figma file drew where Chrome draws them (probe, 2026-10-21): at 135deg on
+  // 200 by 100 the gradient's thirds meet the bottom left and top right corners, and the radial's
+  // farthest corner ellipse reaches 141 by 71 from the centre. A linear gradient's second row only
+  // keeps the transform invertible.
+  nearAll(linear.gradientTransform, [[0.6667, 0.3333, 0], [-0.3333, 0.6667, 0.3333]], "linear");
+  nearAll(radial.gradientTransform, [[0.7071, 0, 0.1464], [0, 0.7071, 0.1464]], "radial");
+  assert.deepEqual(linear.gradientStops.map((s) => [s.position, s.color.r, s.color.g, s.color.b, s.color.a]), [[0, 1, 0, 0, 1], [0.5, 0, 179 / 255, 0, 1], [1, 0, 0, 1, 1]]);
+  assert.deepEqual(radial.gradientStops.map((s) => s.position), [0, 1]);
+});
+
+test("#85 2. stop positions follow CSS: missing ones spread evenly, lengths along the gradient line, a circle at a point", () => {
+  const layers = [
+    { name: "linear-gradient", to: ["right"], stops: [stop(RED), stop(GREEN, "50px"), stop(GREEN), stop(BLUE)], clip: "border-box", origin: "padding-box", size: "auto" },
+    { name: "radial-gradient", shape: "circle", extent: null, radii: ["10px"], at: ["25%", "50%"], stops: [stop(GREEN, "0%"), stop(GREEN, "40%"), stop([0, 0, 0, 0], "41%")], clip: "border-box", origin: "padding-box", size: "auto" },
+  ];
+  const node = treeOf(unitOf("Dot", box({ w: 200, h: 40, backgroundImage: true, layers }))).node;
+  const [radial, linear] = node.gr;
+  assert.equal(linear[0], 0);
+  nearAll(linear[1], [1, 0, 0, 0, 1, 0], "to right is the identity");
+  assert.deepEqual(linear[2].map((s) => s[0]), [0, 0.25, 0.625, 1]);
+  assert.equal(radial[0], 1);
+  // A circle of radius 10 centred at 50, 20: 200 / 20 across, 40 / 20 down.
+  nearAll(radial[1], [10, 0, -2, 0, 2, -0.5], "circle");
+  assert.deepEqual(radial[2].map((s) => s.slice(0, 1).concat(s[4])), [[0, 1], [0.4, 1], [0.41, 0]]);
+});
+
+test("#85 2. a repeating or conic gradient, a gradient drawn as a pattern, and gradient text stay out with warnings that name them", () => {
+  const layer = (fields) => ({ name: "linear-gradient", stops: [stop(RED), stop(BLUE)], clip: "border-box", origin: "padding-box", size: "auto", ...fields });
+  const layers = [layer({ name: "repeating-linear-gradient" }), layer({ name: "conic-gradient" }), layer({ size: "16px 16px" }), layer({ clip: "text" })];
+  const unit = unitOf("Patterns", box({ w: 100, h: 40, backgroundImage: true, layers }));
+  assert.equal(treeOf(unit).node.gr, undefined);
+  assert.deepEqual(unit.warnings, [
+    "div: the background repeating-linear-gradient() was left out.",
+    "div: the background conic-gradient() was left out.",
+    "div: a background linear-gradient() at background-size 16px 16px was left out.",
+    "div: a background linear-gradient() clipped to the text was left out.",
+  ]);
+});
+
+test("#85 2. a gradient on the border box under a layer on the padding box draws as the stroke, as AnswerNudgeCard's gradient border", async () => {
+  const white = [255, 255, 255, 1];
+  const layers = [
+    { name: "linear-gradient", stops: [stop(white), stop(white)], clip: "padding-box", origin: "padding-box", size: "auto" },
+    { name: "linear-gradient", angle: 135, stops: [stop([59, 75, 212, 1], "0%"), stop([124, 58, 237, 1], "50%"), stop([139, 111, 232, 1], "100%")], clip: "border-box", origin: "border-box", size: "auto" },
+  ];
+  const nudge = box({ w: 340, h: 120, borderStyle: "solid", borderWidth: [1, 1, 1, 1], borderColor: [0, 0, 0, 0], radius: [12, 12, 12, 12], backgroundImage: true, layers });
+  const { component } = await draw(unitOf("AnswerNudgeCard", nudge));
+  assert.deepEqual(component.fills.map((p) => p.type), ["GRADIENT_LINEAR", "GRADIENT_LINEAR"]);
+  assert.deepEqual(component.fills[1].gradientStops.map((s) => s.color.r), [1, 1], "the white layer is on top");
+  assert.deepEqual(component.strokes.map((p) => p.type), ["GRADIENT_LINEAR"], "the border shows the gradient");
+  assert.equal(component.strokeWeight, 1);
+  assert.equal(component.strokeAlign, "INSIDE");
+});
+
+// #85 3. CSS filters are not read.
+
+test("#85 3. a drop-shadow() filter is drawn as a drop shadow at twice its blur, and other filters are named in a warning", async () => {
+  // PrimaRing: drop-shadow(rgba(139, 92, 246, 0.3) 0 0 6px) on its svg.
+  const ring = svg({ w: 32, h: 32, filter: [{ name: "drop-shadow", x: 0, y: 0, blur: 6, color: [139, 92, 246, 0.3] }] });
+  const unit = unitOf("PrimaRing", ring);
+  const { component } = await draw(unit);
+  const [effect] = component.children[0].effects;
+  assert.deepEqual([effect.type, effect.offset.x, effect.offset.y, effect.radius, effect.spread], ["DROP_SHADOW", 0, 0, 12, 0], "Chrome blurs drop-shadow(6px) as box-shadow blurs 12px");
+  near(effect.color.a, 0.3);
+  assert.equal(effect.showShadowBehindNode, true, "a filter's shadow shows through what the svg leaves transparent");
+
+  const blurred = unitOf("Blurred", box({ w: 20, h: 20, background: [0, 0, 0, 1], filter: [{ name: "blur" }, { name: "grayscale" }] }));
+  assert.deepEqual(blurred.warnings, ["div: the CSS filter blur() was left out.", "div: the CSS filter grayscale() was left out."]);
+  assert.equal(treeOf(blurred).node.ef, undefined);
+});
+
+// #85 4. A margin on the cross axis of an auto layout is dropped.
+
+test("#85 4. a child with a margin on its row's cross axis sits where the browser put it, in a frame of its margin box", async () => {
+  // AttachFileToCardsModal's item: a checkbox with mt-0.5 at the top of an items-start row, beside two lines of text.
+  const check = box({ tag: "span", x: 327, y: 102, w: 16, h: 16, margin: [2, 0, 0, 0], display: "flex", borderStyle: "solid", borderWidth: [1, 1, 1, 1], borderColor: [0, 0, 0, 1], radius: [2, 2, 2, 2] });
+  const words = box({ tag: "span", x: 355, y: 100, w: 157, h: 38.4, display: "flex", direction: "column", children: [text({ text: "Title", x: 355, y: 101.9, w: 40, h: 17, lineHeight: 20.8 }), text({ text: "Section", x: 355, y: 122.6, w: 40, h: 14, size: 11, lineHeight: 17.6 })] });
+  const row = box({ tag: "label", x: 315, y: 92, w: 470, h: 54.4, display: "flex", alignItems: "flex-start", gap: [12, 12], padding: [8, 12, 8, 12], children: [check, words] });
+  const tree = treeOf(unitOf("AttachFileToCardsModal", row));
+  assert.equal(tree.node.L, "H", "the row keeps its auto layout");
+  assert.equal(tree.node.g, 12);
+  const margin = tree.children[0];
+  assert.deepEqual([margin.node.n, margin.node.w, margin.node.h, margin.node.L], ["margin", 16, 18, undefined]);
+  assert.deepEqual([margin.children[0].node.n, margin.children[0].node.x, margin.children[0].node.y], ["span", 0, 2]);
+
+  const { component } = await draw(unitOf("AttachFileToCardsModal", row));
+  const drawn = component.children[0];
+  assert.equal(drawn.name, "margin");
+  assert.deepEqual([drawn.children[0].x, drawn.children[0].y], [0, 2], "the checkbox is 2px below the top of the row's content");
+});
+
+test("#85 4. a negative margin on a column's cross axis, such as a menu separator's -mx-1, reaches past the padding as it does in the browser", async () => {
+  const item = (y) => box({ x: 304, y, w: 200, h: 32, display: "flex", alignItems: "center", padding: [6, 8, 6, 8], children: [text({ text: "Item", x: 312, y: y + 7, w: 30 })] });
+  const separator = box({ x: 300, y: 140, w: 208, h: 1, margin: [4, -4, 4, -4], background: [0, 0, 0, 0.1] });
+  const menu = box({ x: 300, y: 100, w: 208, h: 81, display: "flex", direction: "column", padding: [4, 4, 4, 4], children: [item(104), separator, item(145)] });
+  const tree = treeOf(unitOf("Menu", menu));
+  assert.equal(tree.node.L, "V");
+  assert.equal(tree.node.g, 4);
+  const margin = tree.children[1];
+  assert.deepEqual([margin.node.n, margin.node.w, margin.node.h, margin.node.gw], ["margin", 200, 1, 1], "the margin box is the column's content width, and fills it");
+  assert.deepEqual([margin.children[0].node.x, margin.children[0].node.w], [-4, 208]);
+
+  const { component } = await draw(unitOf("Menu", menu));
+  const drawn = component.children[1];
+  assert.equal(drawn.layoutSizingHorizontal, "FILL");
+  assert.deepEqual([drawn.children[0].x, drawn.children[0].width], [-4, 208]);
+  assert.equal(drawn.clipsContent, false, "the separator shows past its margin box");
+});
+
+// #85 The reader, in a real browser.
+
+test("#85 1, 2 and 3. the reader reads box shadows with their tokens, background layers with their clip, and filters", browser, async () => {
+  const read = await capture("Gaps");
+  const [card, nudge, dot, picture, glow, blurred] = read.cells[0].tree.children;
+  assert.deepEqual(card.shadows.map((s) => [s.inset, s.x, s.y, s.blur, s.spread, s.color.join(), s.bind ?? null]), [
+    [true, 0, 0, 0, 1, "74,90,232,1", "--ring-ink"],
+    [false, 0, 1, 3, 0, "0,0,0,0.1", null],
+    [false, 0, 1, 2, -1, "0,0,0,0.1", null],
+  ], "the two transparent placeholders are left out");
+  assert.deepEqual(nudge.layers.map((l) => [l.name, l.clip, l.angle ?? null, l.stops.length]), [["linear-gradient", "padding-box", null, 2], ["linear-gradient", "border-box", 135, 3]]);
+  assert.deepEqual(nudge.layers[1].stops.map((s) => [s.color.join(), s.at]), [["59,75,212,1", "0%"], ["124,58,237,1", "50%"], ["139,111,232,1", "100%"]]);
+  assert.deepEqual([dot.layers[0].name, dot.layers[0].shape, dot.layers[0].at], ["radial-gradient", "circle", ["25%", "50%"]]);
+  assert.deepEqual(picture.layers.map((l) => l.name), ["url"]);
+  assert.deepEqual(glow.children[0].filter, [{ name: "drop-shadow", x: 0, y: 0, blur: 6, color: [139, 92, 246, 0.3] }]);
+  assert.deepEqual(blurred.filter.map((f) => f.name), ["blur", "grayscale"]);
+
+  const unit = buildComponentUnit({ item: { id: "Gaps", name: "Gaps", version: "1.0.0", page: "Gaps", description: "" }, capture: read, options: OPTIONS });
+  const drawn = treeOf(unit).children.map(({ node }) => node);
+  assert.equal(drawn[0].ef.length, 3);
+  assert.equal(unit.tokens.find((t) => t.css === "--ring-ink").scopes.includes("EFFECT_COLOR"), true);
+  assert.deepEqual(drawn[1].sg.length, 1, "the gradient border");
+  assert.equal(drawn[2].gr[0][0], 1, "the dot is a radial gradient");
+  assert.deepEqual(unit.warnings, ["div: a background image or gradient was left out.", "div: the CSS filter blur() was left out.", "div: the CSS filter grayscale() was left out."]);
+});
+
+test("#85 4. the reader's checkbox with a top margin sits 2px down its row", browser, async () => {
+  const read = await capture("Gaps");
+  const unit = buildComponentUnit({ item: { id: "Gaps", name: "Gaps", version: "1.0.0", page: "Gaps", description: "" }, capture: read, options: OPTIONS });
+  const row = treeOf(unit).children[6];
+  assert.equal(row.node.L, "H");
+  const margin = row.children[0];
+  assert.equal(margin.node.n, "margin");
+  assert.equal(margin.children[0].node.y, 2);
+});
+
+test("#85 5. an svg attribute that a style sheet overrides is written as the computed value", browser, async () => {
+  const read = await capture("Gaps");
+  const icon = read.cells[0].tree.children[7].children[0];
+  assert.equal(icon.kind, "svg");
+  assert.match(icon.html, /stroke-width="1.5"/, "Tailwind's stroke-[1.5] wins over the attribute's 2");
+  assert.doesNotMatch(icon.html, /stroke-width="2"/);
+  assert.doesNotMatch(icon.html, /stroke="rgb/, "an attribute the style sheet does not override, currentColor, stays as it is");
 });

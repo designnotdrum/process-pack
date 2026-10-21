@@ -10,6 +10,8 @@
  *   - A paint bound to a variable, assigned where the node held no bound paint, reads back with an
  *     opacity of 1. Assigned again, where the node's paint is bound already, it keeps its opacity.
  *   - FILL in a parent that hugs on that axis is accepted and leaves the node at its own size.
+ *   - An effect whose colour is bound to a variable behaves as a bound paint: assigned where the node
+ *     held no bound effect, its colour reads back with an alpha of 1; assigned again, it keeps its alpha.
  */
 
 let counter = 0;
@@ -22,6 +24,8 @@ export const MIXED = Symbol("mixed");
  * colour now. createFigma sets it. The fake serves one Figma at a time.
  */
 let resolvePaint = (paint) => paint;
+/** The same for an effect: the variable's red, green and blue, with the effect's own alpha. */
+let resolveEffect = (effect) => effect;
 const nextId = () => `${Math.floor(counter / 100)}:${counter++ % 100}`;
 
 class Node {
@@ -45,6 +49,14 @@ class Node {
       };
       Object.defineProperty(this, key, { enumerable: true, get: () => stored.map(resolvePaint), set: store });
     }
+    let effects = [];
+    Object.defineProperty(this, "effects", {
+      enumerable: true,
+      get: () => effects.map(resolveEffect),
+      set: (list) => {
+        effects = list.map((effect, i) => (effect.boundVariables?.color && !effects[i]?.boundVariables?.color ? { ...effect, color: { ...effect.color, a: 1 } } : effect));
+      },
+    });
     for (const [key, axis] of [["layoutSizingHorizontal", "width"], ["layoutSizingVertical", "height"]]) {
       let sizing = "FIXED";
       Object.defineProperty(this, key, {
@@ -243,6 +255,9 @@ export function createFigma({ pages = ["Button"], fonts = { "DM Sans": ["Regular
       setBoundVariableForPaint(paint, field, variable) {
         return { ...paint, boundVariables: { [field]: { type: "VARIABLE_ALIAS", id: variable.id } } };
       },
+      setBoundVariableForEffect(effect, field, variable) {
+        return { ...effect, boundVariables: { [field]: { type: "VARIABLE_ALIAS", id: variable.id } } };
+      },
     },
   };
   resolvePaint = (paint) => {
@@ -251,6 +266,13 @@ export function createFigma({ pages = ["Button"], fonts = { "DM Sans": ["Regular
     if (!variable) return paint;
     const { r, g, b } = Object.values(variable.valuesByMode)[0];
     return { ...paint, color: { r, g, b } };
+  };
+  resolveEffect = (effect) => {
+    const id = effect.boundVariables?.color?.id;
+    const variable = id && variables.find((v) => v.id === id);
+    if (!variable) return effect;
+    const { r, g, b } = Object.values(variable.valuesByMode)[0];
+    return { ...effect, color: { r, g, b, a: effect.color.a } };
   };
   figma.collections = collections;
   figma.variableList = variables;

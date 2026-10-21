@@ -315,6 +315,103 @@ export function readStory(arg) {
 
     const marginOf = (style) => [style.marginTop, style.marginRight, style.marginBottom, style.marginLeft].map((v) => round(number(v)));
 
+    /** Splits text at commas, or at spaces when separator is " ", outside brackets. */
+    function splitTop(text, separator) {
+      const parts = [];
+      let depth = 0;
+      let start = 0;
+      for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (c === "(") depth += 1;
+        else if (c === ")") depth -= 1;
+        else if (depth === 0 && (separator === " " ? /\s/.test(c) : c === separator)) {
+          parts.push(text.slice(start, i));
+          start = i + 1;
+        }
+      }
+      parts.push(text.slice(start));
+      return parts.map((part) => part.trim()).filter((part) => part !== "");
+    }
+
+    const LENGTH = /^-?[\d.]+(px)?$/;
+
+    /**
+     * One shadow as the browser computes it, for box-shadow and drop-shadow(): a colour, then x, y,
+     * blur and spread in pixels, then "inset" for an inner one.
+     */
+    function shadowOf(text) {
+      const words = splitTop(text, " ");
+      const lengths = words.filter((word) => LENGTH.test(word)).map(number);
+      const ink = words.find((word) => word !== "inset" && !LENGTH.test(word));
+      return { inset: words.includes("inset"), x: round(lengths[0] ?? 0), y: round(lengths[1] ?? 0), blur: round(lengths[2] ?? 0), spread: round(lengths[3] ?? 0), color: colorOf(ink ?? "rgb(0, 0, 0)") };
+    }
+    const shadowsOf = (css) => (css === "none" ? [] : splitTop(css, ",").map(shadowOf));
+
+    /** The functions of a filter, in order: a drop-shadow() with its shadow, any other by its name. */
+    function filterOf(css) {
+      if (css === "none") return [];
+      return splitTop(css, " ").map((part) => {
+        const open = part.indexOf("(");
+        const name = (open < 0 ? part : part.slice(0, open)).trim();
+        if (name !== "drop-shadow") return { name };
+        const { x, y, blur, color } = shadowOf(part.slice(open + 1, part.lastIndexOf(")")));
+        return { name, x, y, blur, color };
+      });
+    }
+
+    const ANGLE = { deg: 1, grad: 0.9, rad: 180 / Math.PI, turn: 360 };
+    const PLACE = { left: "0%", top: "0%", center: "50%", right: "100%", bottom: "100%" };
+
+    /**
+     * The background image layers, first on top as CSS draws them. Each has its name ("url" for an
+     * image), and the background-clip, background-origin and background-size it is drawn with. A
+     * linear or radial gradient also has its stops, each a colour and a position ("40%", "12px" or
+     * null where CSS works it out), and its geometry: for a linear one an angle in degrees, or the
+     * sides it goes to ("to": ["right", "top"]); for a radial one its shape, its extent keyword or
+     * its radii, and its centre ("at": ["25%", "50%"]). The spec turns these into Figma paints. A
+     * colour hint between two stops, and the colour space a gradient mixes in, are not read.
+     */
+    function layersOf(style) {
+      if (style.backgroundImage === "none") return [];
+      const clips = splitTop(style.backgroundClip, ",");
+      const origins = splitTop(style.backgroundOrigin, ",");
+      const sizes = splitTop(style.backgroundSize, ",");
+      return splitTop(style.backgroundImage, ",").map((image, i) => {
+        const open = image.indexOf("(");
+        const name = (open < 0 ? image : image.slice(0, open)).trim();
+        const layer = { name, clip: clips[i % clips.length], origin: origins[i % origins.length], size: sizes[i % sizes.length] };
+        if (name !== "linear-gradient" && name !== "radial-gradient") return layer;
+        const args = splitTop(image.slice(open + 1, image.lastIndexOf(")")), ",");
+        const isStop = (arg) => CSS.supports("color", splitTop(arg, " ")[0]);
+        const head = args.length > 0 && !isStop(args[0]) ? args.shift() : "";
+        layer.stops = [];
+        for (const arg of args) {
+          const words = splitTop(arg, " ");
+          if (!isStop(arg)) continue;
+          const color = colorOf(words[0]);
+          if (words.length === 1) layer.stops.push({ color, at: null });
+          for (const at of words.slice(1)) layer.stops.push({ color, at });
+        }
+        const words = splitTop(head.replace(/\bin\s+[a-z-]+(\s+(shorter|longer|increasing|decreasing)\s+hue)?/, ""), " ");
+        if (name === "linear-gradient") {
+          if (words[0] === "to") layer.to = words.slice(1);
+          else if (words.length > 0) {
+            const angle = /^(-?[\d.]+)([a-z]+)$/.exec(words[0]);
+            if (angle) layer.angle = round(Number(angle[1]) * (ANGLE[angle[2]] ?? 1));
+          }
+          return layer;
+        }
+        const at = words.indexOf("at");
+        const shape = at >= 0 ? words.slice(0, at) : words;
+        const place = at >= 0 ? words.slice(at + 1).map((word) => PLACE[word] ?? word) : [];
+        layer.radii = shape.filter((word) => /^-?[\d.]+(px|%)$/.test(word));
+        layer.shape = shape.includes("circle") || layer.radii.length === 1 ? "circle" : "ellipse";
+        layer.extent = shape.find((word) => /-(side|corner)$/.test(word)) ?? null;
+        layer.at = [place[0] ?? "50%", place[1] ?? "50%"];
+        return layer;
+      });
+    }
+
     // SVG paint properties a style sheet can set, which copied markup loses: [name, inherited, initial value].
     const SVG_PAINT = [
       ["fill", true],
@@ -331,11 +428,24 @@ export function readStory(arg) {
     ];
 
     /**
+     * Whether an svg attribute says what the browser drew: the same words once units, quotes and
+     * commas are set aside ("2" and "2px", "url(#a)" and 'url("#a")'), or the same colour in two
+     * spellings, currentColor included.
+     */
+    function sameValue(attribute, value, style) {
+      const plain = (text) => String(text).trim().toLowerCase().replace(/(\d)px\b/g, "$1").replace(/["']/g, "").replace(/\s*,\s*|\s+/g, " ");
+      if (plain(attribute) === plain(value)) return true;
+      const ink = /^currentcolor$/i.test(attribute.trim()) ? style.color : attribute;
+      return CSS.supports("color", ink) && CSS.supports("color", value) && colorOf(ink).join() === colorOf(value).join();
+    }
+
+    /**
      * Writes into a copied <svg> the paint the browser drew it with, where a style sheet set it, such
-     * as a ring whose class gives it fill: none, or where an attribute holds a var(). An attribute
-     * without a var() stays as it is. An inherited value is written only where it differs from the
-     * parent's, so an icon whose paths inherit the svg's stroke grows by nothing. The svg's own
-     * opacity is left out: the icon carries it, and Figma would apply it twice.
+     * as a ring whose class gives it fill: none, where a style sheet overrides an attribute, such as
+     * Tailwind's stroke-[1.5] over a lucide icon's stroke-width="2", or where an attribute holds a
+     * var(). An attribute the browser drew as it says stays as it is. An inherited value is written
+     * only where it differs from the parent's, so an icon whose paths inherit the svg's stroke grows
+     * by nothing. The svg's own opacity is left out: the icon carries it, and Figma would apply it twice.
      */
     function inlinePaint(svg, clone) {
       const originals = [svg, ...svg.querySelectorAll("*")];
@@ -346,8 +456,8 @@ export function readStory(arg) {
         for (const [name, inherited, initial] of SVG_PAINT) {
           if (i === 0 && name === "opacity") continue;
           const attribute = element.getAttribute(name);
-          if (attribute !== null && !attribute.includes("var(")) continue;
           const value = style.getPropertyValue(name);
+          if (attribute !== null && !attribute.includes("var(") && sameValue(attribute, value, style)) continue;
           if (attribute === null && value === (inherited ? parent?.getPropertyValue(name) : initial)) continue;
           copies[i].setAttribute(name, value.replace(/(\d)px/g, "$1"));
         }
@@ -358,6 +468,9 @@ export function readStory(arg) {
       const rect = svg.getBoundingClientRect();
       const clone = svg.cloneNode(true);
       inlinePaint(svg, clone);
+      // markComponent's marks belong to this page, not to the drawing.
+      clone.removeAttribute("data-klaus-part");
+      clone.removeAttribute("data-klaus-trigger");
       clone.setAttribute("width", String(round(rect.width)));
       clone.setAttribute("height", String(round(rect.height)));
       const [r, g, b] = colorOf(style.color);
@@ -373,6 +486,8 @@ export function readStory(arg) {
         opacity: number(style.opacity),
         // An icon's margin, such as mr-2, is part of the spacing between it and the next child.
         margin: marginOf(style),
+        // A glow such as PrimaRing's is a drop-shadow() filter on the svg.
+        filter: filterOf(style.filter),
       };
     }
 
@@ -446,6 +561,11 @@ export function readStory(arg) {
         radius: [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomRightRadius, style.borderBottomLeftRadius].map((v) => round(number(v))),
         background: colorOf(style.backgroundColor),
         backgroundImage: style.backgroundImage !== "none",
+        layers: layersOf(style),
+        // Every shadow, first on top as CSS draws them. readStory leaves out the transparent ones
+        // once it has found their tokens, such as Tailwind's 0 0 #0000 placeholders.
+        shadows: shadowsOf(style.boxShadow),
+        filter: filterOf(style.filter),
         opacity: number(style.opacity),
         clip: style.overflowX !== "visible" || style.overflowY !== "visible",
         // How it sits in a flex parent: flex-grow, and align-self as written ("auto" follows the
@@ -542,6 +662,9 @@ export function readStory(arg) {
       return properties.map(([, property]) => style[property]);
     });
     const found = watched.map(() => ({}));
+    // A shadow's colour is traced to a token on its own, by its place in the list.
+    const shadowInks = (style) => shadowsOf(style.boxShadow).map((shadow) => shadow.color.join());
+    const beforeShadows = watched.map((entry) => shadowInks(styleOf(entry)));
     const sentinel = { hsl: "123 87% 45%", rgb: "12 200 34", plain: "rgb(12, 200, 34)" };
     const holders = [document.documentElement, ...new Set(watched.map(([element]) => element))];
     for (const token of tokens) {
@@ -553,6 +676,11 @@ export function readStory(arg) {
         properties.forEach(([key, property], column) => {
           if (style[property] !== before[index][column]) (found[index][key] ??= []).push(token.name);
         });
+        if (beforeShadows[index].length > 0) {
+          shadowInks(style).forEach((ink, i) => {
+            if (ink !== beforeShadows[index][i]) ((found[index].shadows ??= [])[i] ??= []).push(token.name);
+          });
+        }
       });
       for (const [holder, value, priority] of saved) {
         if (value === "") holder.style.removeProperty(token.name);
@@ -570,6 +698,7 @@ export function readStory(arg) {
       if (node.watchIndex !== undefined) {
         const names = found[node.watchIndex];
         node.bind = { background: pick(names.background), border: pick(names.border), color: pick(names.color) };
+        if (node.shadows) node.shadows = node.shadows.map((shadow, i) => ({ ...shadow, bind: pick(names.shadows?.[i]) })).filter((shadow) => shadow.color[3] > 0);
         delete node.watchIndex;
       }
       if (node.children) node.children.forEach(attach);

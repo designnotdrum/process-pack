@@ -23,7 +23,7 @@ test("the number of components in a file is a setting", () => {
 });
 
 test("a file is closed before the next unit would take the relay's code past 50,000 characters", () => {
-  // Each description is 10,000 characters, about 13,400 once the relay encodes it. The runtime adds about 20,500.
+  // Each description is 10,000 characters, about 13,400 once the relay encodes it. The runtime adds about 21,800.
   const units = Array.from({ length: 7 }, (_, i) => tinyUnit(`C${i}`, { description: "d".repeat(10000) }));
   const { files, tooLarge } = packUnits(units, { config: CONFIG });
   assert.equal(tooLarge.length, 0);
