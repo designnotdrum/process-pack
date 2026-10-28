@@ -16,4 +16,4 @@ Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/
 
 ### Docs voice
 
-Write and update docs by `docs/agents/docs-voice.md`. The `docs-refresh` workflow applies it on every pull request.
+Write and update docs by `docs/agents/docs-voice.md`. Before `gh pr create`, the hook in `.claude/hooks/docs_refresh_gate.py` blocks until you have checked the docs against the branch and run it with `--record`.

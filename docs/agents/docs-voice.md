@@ -1,6 +1,6 @@
 # Docs voice
 
-How to write and update this repo's docs. It is adapted from the brief Meridian uses for its release notes (`scripts/release-notes/brief.md` in that repo). The `docs-refresh` workflow follows it on every pull request, and any agent editing docs by hand should follow it too.
+How to write and update this repo's docs. It is adapted from the brief Meridian uses for its release notes (`scripts/release-notes/brief.md` in that repo). Any agent editing docs follows it. In Claude Code, the repo's docs refresh hook (`.claude/hooks/docs_refresh_gate.py`) blocks `gh pr create` until the docs have been checked against the branch this way.
 
 ## Who the reader is
 

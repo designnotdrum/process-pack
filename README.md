@@ -131,10 +131,12 @@ Enforcement works in Claude Code only, on a laptop or in Cyrus. The skills, scri
 
 ## Adding or changing a skill
 
-Read [`docs/authoring.md`](plugins/process-pack/docs/authoring.md) first. Two rules matter most.
+Read [`docs/authoring.md`](plugins/process-pack/docs/authoring.md) first. Three rules matter most.
 
 1. **No proper nouns in skill text.** If a sentence stops making sense when you swap in a different person, repo or org, it belongs in a constants file.
 2. **A skill ships only when it passes its fixtures.** A top-tier model, given only the skill's text and a test fixture, has to make the call the rubric expects. If it does not, change the skill, never the fixture.
+
+3. **Docs follow [`docs/agents/docs-voice.md`](docs/agents/docs-voice.md).** In Claude Code, a hook in this repo blocks `gh pr create` until the docs have been checked against your branch.
 
 More docs:
 
