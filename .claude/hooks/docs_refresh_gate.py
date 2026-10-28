@@ -47,7 +47,7 @@ body which docs you changed, or that none needed changes."""
 
 
 def git(cwd, *args):
-    out = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=10)
+    out = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=2)
     if out.returncode != 0:
         raise RuntimeError(out.stderr.strip() or f"git {' '.join(args)} failed")
     return out.stdout.strip()
@@ -126,7 +126,11 @@ def main():
     if "--self-test" in sys.argv:
         return self_test()
     if "--record" in sys.argv:
-        record(".")
+        try:
+            record(".")
+        except Exception as exc:
+            print(f"docs-refresh-gate: could not record: {exc}", file=sys.stderr)
+            return 1
         return 0
     try:
         payload = json.load(sys.stdin)
