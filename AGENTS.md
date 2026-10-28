@@ -17,3 +17,5 @@ Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/
 ### Docs voice
 
 Write and update docs by `docs/agents/docs-voice.md`. Before `gh pr create`, `scripts/docs_refresh_gate.py` blocks it in Claude Code, Codex and OpenCode until you have checked the docs against the branch and run it with `--record`.
+
+Codex runs `.codex/hooks.json` only in a trusted project, and only after a person approves the hook. Open `codex` once in the repo's main checkout and approve it when asked. A change to the hook needs approving again. In a git worktree, Codex uses the trust of the main checkout.

@@ -28,13 +28,14 @@ Self-test (builds a throwaway git repo):
 """
 import json
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-PR_CREATE = re.compile(r"(^|[\s;&|(])gh\s+pr\s+create\b")
-SKIP = re.compile(r"(^|[\s;&|(])DOCS_REFRESH_SKIP=1\s")
+ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+SEPARATORS = {";", "&&", "||", "|", "&", "(", ")", "\n"}
 RECORD_NAME = "docs-refresh-ok"
 
 BLOCK_MESSAGE = """BLOCKED: refresh the docs for this branch before opening the pull request.
@@ -69,9 +70,35 @@ def base_ref(cwd):
     return None
 
 
+def opens_pr(command):
+    """True when some command in the line is `gh pr create` and is not
+    prefixed with DOCS_REFRESH_SKIP=1. Text that only mentions the words,
+    such as an echo argument or a quoted prompt, does not count."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace = " \t"
+    lexer.commenters = ""
+    try:
+        tokens = list(lexer)
+    except ValueError:  # unbalanced quotes: let the command through
+        return False
+    segment = []
+    for token in tokens + [";"]:
+        if token not in SEPARATORS:
+            segment.append(token)
+            continue
+        words, segment = segment, []
+        skip = False
+        while words and ASSIGNMENT.match(words[0]):
+            skip = skip or words[0] == "DOCS_REFRESH_SKIP=1"
+            words.pop(0)
+        if words[:3] == ["gh", "pr", "create"] and not skip:
+            return True
+    return False
+
+
 def decide(command, cwd):
     """Return None to allow, or the block message."""
-    if not PR_CREATE.search(command) or SKIP.search(command):
+    if not opens_pr(command):
         return None
     base = base_ref(cwd)
     if base is None or not git(cwd, "diff", "--name-only", f"{base}...HEAD"):
@@ -111,6 +138,10 @@ def self_test():
         cases.append(("no record blocks", decide("gh pr create --fill", tmp) is not None))
         cases.append(("chained command blocks", decide("git push && gh pr create", tmp) is not None))
         cases.append(("skip allows", decide("DOCS_REFRESH_SKIP=1 gh pr create", tmp) is None))
+        cases.append(("echo allows", decide("echo gh pr create", tmp) is None))
+        cases.append(("quoted text allows", decide('codex exec "then run gh pr create"', tmp) is None))
+        cases.append(("assignment prefix blocks", decide("GH_TOKEN=x gh pr create", tmp) is not None))
+        cases.append(("second line blocks", decide("git push\ngh pr create --fill", tmp) is not None))
         record(tmp)
         cases.append(("record allows", decide("gh pr create --fill", tmp) is None))
         Path(tmp, "c.txt").write_text("c\n")
