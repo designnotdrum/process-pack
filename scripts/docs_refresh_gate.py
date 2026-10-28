@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
-docs-refresh-gate: PreToolUse hook for the Bash tool, registered in this
-repo's .claude/settings.json.
+docs-refresh-gate: a check that runs before each shell command an agent runs
+in this repo. Claude Code runs it from .claude/settings.json, Codex from
+.codex/hooks.json (both as a PreToolUse hook on Bash), and OpenCode from
+.opencode/plugins/docs-refresh-gate.js.
 
 When the command is `gh pr create` and the branch differs from its base, the
 gate needs a docs refresh record that names the branch's current HEAD. With
@@ -10,7 +12,7 @@ update the docs by docs/agents/docs-voice.md, commit, and record.
 
 The record is one line, a commit sha, in <git dir>/docs-refresh-ok. Each
 worktree has its own git dir, so records never cross branches. Write it with:
-    python3 .claude/hooks/docs_refresh_gate.py --record
+    python3 scripts/docs_refresh_gate.py --record
 
 Escape hatch: `DOCS_REFRESH_SKIP=1 gh pr create ...`, used only when the user
 says so in the session.
@@ -22,7 +24,7 @@ Standard library only.
 Exit codes: 0 = allow, 2 = block (reason on stderr).
 
 Self-test (builds a throwaway git repo):
-    python3 .claude/hooks/docs_refresh_gate.py --self-test
+    python3 scripts/docs_refresh_gate.py --self-test
 """
 import json
 import re
@@ -40,7 +42,7 @@ BLOCK_MESSAGE = """BLOCKED: refresh the docs for this branch before opening the 
 1. Read docs/agents/docs-voice.md.
 2. Follow its "Updating docs for a change" section against `git diff {base}...HEAD`.
 3. Commit any doc edits.
-4. Run `python3 .claude/hooks/docs_refresh_gate.py --record`, then retry.
+4. Run `python3 scripts/docs_refresh_gate.py --record`, then retry.
 
 If nothing needed changing, step 4 alone is enough. Say in the pull request
 body which docs you changed, or that none needed changes."""

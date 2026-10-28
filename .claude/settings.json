@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/docs_refresh_gate.py\"",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/docs_refresh_gate.py\"",
             "timeout": 10
           }
         ]
