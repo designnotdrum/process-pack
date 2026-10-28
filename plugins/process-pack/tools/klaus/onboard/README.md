@@ -8,7 +8,7 @@ Builds a repo's baseline in three pull requests, in order, each on a branch stac
 | 2. The purposes | A purpose comment above each component that has none, then the inventory rebuilt from them | a writer and a checker |
 | 3. The stories | A story for each component that has none and shows no live data, and a view of the data-bound components with the screens they appear on | none |
 
-The decisions behind it are in NJM-1779 on the Klaus map (NJM-1767). The Linear build ticket is process-pack issue #30.
+The decisions behind it are in NJM-1779 on the Klaus map (NJM-1767). The build ticket is process-pack GitHub issue #30.
 
 ## Running it
 
