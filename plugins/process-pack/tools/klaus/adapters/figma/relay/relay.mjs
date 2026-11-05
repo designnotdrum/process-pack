@@ -741,7 +741,9 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
       }
       // Only a rerun on the same folder gets here, when the files sent first left this one for last.
       // No call is spent. The next Klaus run plans the unsent units alone, so this file then fits.
-      if (lastCall && variants.last === null) {
+      // The held code is not sent instead: the earlier calls may all have held the token values, and
+      // the ledger does not say whether a last call wrote them.
+      if (lastCall && variants.last === null && !stopped) {
         const error = `${file.name} was not sent: ${tooLong}`;
         planned += pending.length;
         fileRecords.push({ ...record, status: "failed", error, calls: 0, tokens: 0 });

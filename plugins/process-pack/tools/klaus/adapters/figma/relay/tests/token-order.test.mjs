@@ -266,7 +266,7 @@ test("a file too long to carry the release's tokens is sent first, and a file th
   assert.deepEqual(ledgerOf(root).components, { Button: { "1.1.0": "sent" }, Card: { "1.1.0": "sent" } });
 });
 
-test("a retry whose only unsent file cannot carry the release's tokens fails that file, not the run's other work", async () => {
+test("a retry whose only unsent file cannot carry the release's tokens fails that file and spends no call", async () => {
   const { root, folder, manifest } = await release();
   const [first, second] = manifest.files.map((file) => file.name);
   fillFile(folder, first);
@@ -297,4 +297,5 @@ test("a release where no file can carry the tokens stops before any call", async
   assert.equal(run.code, 2);
   assert.equal(run.calls.length, 0);
   assert.match(run.stderr, /is refused, so nothing was sent: .*with the tokens of the release's other files/);
+  assert.deepEqual(ledgerOf(root).components, { Button: { "1.1.0": "generated" }, Card: { "1.1.0": "generated" } }, "nothing was sent, so no mark moved to sent");
 });
