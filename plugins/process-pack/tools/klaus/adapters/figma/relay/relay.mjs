@@ -744,7 +744,7 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
       // The held code is not sent instead: the earlier calls may all have held the token values, and
       // the ledger does not say whether a last call wrote them.
       if (lastCall && variants.last === null && !stopped) {
-        const error = `${file.name} was not sent: ${tooLong}`;
+        const error = `${file.name} was not sent: ${tooLong} Or run Klaus again: it plans the unsent units alone, so the file then fits.`;
         planned += pending.length;
         fileRecords.push({ ...record, status: "failed", error, calls: 0, tokens: 0 });
         for (const entry of entries) {
@@ -754,7 +754,7 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
         }
         continue;
       }
-      record.tokenValues = lastCall ? "written at the end of the call" : "held";
+      record.tokenValues = lastCall && variants.last !== null ? "written at the end of the call" : "held";
       planned += pending.length;
       const predicted = predictTokens(chars, ratios);
       uncapped.calls += 1;

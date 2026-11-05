@@ -281,7 +281,8 @@ test("a retry whose only unsent file cannot carry the release's tokens fails tha
   assert.equal(run.code, 1, run.stderr);
   assert.equal(run.calls.length, 0, "no call is spent on a file that cannot be sent");
   assert.deepEqual(ledgerOf(root).components, { Button: { "1.1.0": "generated" }, Card: { "1.1.0": "sent" } });
-  assert.match(outputOf(run.report).failed[0].error, /with the tokens of the release's other files/);
+  assert.equal(outputOf(run.report).failed.length, 1);
+  assert.match(outputOf(run.report).failed[0].error, /with the tokens of the release's other files.*run Klaus again/);
 });
 
 test("a release where no file can carry the tokens stops before any call", async () => {
