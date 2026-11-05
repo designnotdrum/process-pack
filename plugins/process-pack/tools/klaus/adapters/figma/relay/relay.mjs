@@ -793,10 +793,6 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
         continue;
       }
       record.tokenValues = lastCall && variants.last !== null ? "written at the end of the call" : "held";
-      if (settings.options.coverPage && lastCall && variants.last !== null) {
-        record.cover = carriesCover ? "written at the end of the call" : "left out, the call has no room";
-        if (!carriesCover) warnings.push(`The cover was not updated, because ${file.name} has no room for it. The next release's last call updates it.`);
-      }
       planned += pending.length;
       const predicted = predictTokens(chars, ratios);
       uncapped.calls += 1;
@@ -811,6 +807,10 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
           if (isPending) deferred.push({ id: entry.id, kind: entry.kind, reason: stopped });
         }
         continue;
+      }
+      if (settings.options.coverPage && lastCall && variants.last !== null) {
+        record.cover = carriesCover ? "written at the end of the call" : "left out, the call has no room";
+        if (!carriesCover) warnings.push(`The cover was not updated, because ${file.name} has no room for it. The next release's last call updates it.`);
       }
       estimated.calls += 1;
       estimated.tokens += predicted;

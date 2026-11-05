@@ -58,6 +58,8 @@ test("a run stopped by a cap before the release finishes sends no cover", async 
 
   assert.equal(run.calls.length, 1);
   assert.deepEqual(run.calls.map(carriesCover), [false]);
+  const deferred = outputOf(run.report).adapter.details.files.find((file) => file.status === "deferred");
+  assert.equal(deferred.cover, undefined, "the report promises no update for a call that did not run");
 });
 
 test("a repo with no coverPage sends no cover code at all", async () => {
