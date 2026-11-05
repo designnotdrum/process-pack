@@ -12,6 +12,7 @@ import { codeFor, newKey } from "../../codegen.mjs";
 import { runCode } from "../../tests/fake-figma.mjs";
 import { newFigma } from "../../tests/helpers.mjs";
 import { reconcileCode } from "../reconcile.mjs";
+import { MAX_CODE_CHARS } from "../../settings.mjs";
 import { generatedRepo, KEY, ledgerOf, outputOf, relay } from "./helpers.mjs";
 
 // The colours Figma holds before the release, and the ones the release sends.
@@ -221,4 +222,79 @@ test("reconcile never writes a token value: its code touches no variable", async
   assert.deepEqual(result, { found: [true] });
   assert.deepEqual(figma.variableList.map((variable) => JSON.stringify(variable.valuesByMode)), before);
   assert.deepEqual(variableOf(figma, "color/primary"), OLD_PRIMARY.slice(0, 3));
+});
+
+/**
+ * Makes the file's code come close to the limit without changing its tokens, as a large story set does:
+ * its own code fits, and with the tokens of the release's other files it does not.
+ */
+function fillFile(folder, name) {
+  const data = readJson(folder, name);
+  const svgs = data.units[0].svgs ?? [];
+  const padded = (length) => ({ ...data, units: [{ ...data.units[0], svgs: [...svgs, `<svg>${"x".repeat(length)}</svg>`] }, ...data.units.slice(1)] });
+  // The relay encodes every string, so the padding is measured as the code it becomes.
+  const size = (length) => codeFor(padded(length), { key: newKey(), tokenValues: "hold" }).length;
+  let low = 0;
+  let high = MAX_CODE_CHARS;
+  while (high - low > 1) {
+    const middle = Math.floor((low + high) / 2);
+    if (size(middle) <= MAX_CODE_CHARS - 1000) low = middle;
+    else high = middle;
+  }
+  writeFileSync(path.join(folder, name), JSON.stringify(padded(low)));
+}
+
+/** Gives the file tokens no other file has, which every other file's last version must carry too. */
+function addTokens(folder, name, prefix) {
+  const data = readJson(folder, name);
+  for (let i = 0; i < 40; i += 1) data.tokens.push({ name: `color/${prefix}-${i}-padding-name`, syntax: `hsl(var(--${prefix}-${i}))`, rgba: [i, i, i, 1], scopes: ["FRAME_FILL"] });
+  writeFileSync(path.join(folder, name), JSON.stringify(data));
+}
+
+test("a file too long to carry the release's tokens is sent first, and a file that fits takes the last call", async () => {
+  const { root, folder, manifest } = await release();
+  const [first, second] = manifest.files.map((file) => file.name);
+  // Card is the manifest's last file, so without the new order it would have to be the last call.
+  fillFile(folder, second);
+  addTokens(folder, first, "button");
+
+  const run = await relay(root, [folder], { scenarios: "figma" });
+
+  assert.equal(run.code, 0, run.stderr);
+  assert.deepEqual(outputOf(run.report).adapter.details.files.map((file) => file.name), [second, first], "the file over the limit goes first");
+  assert.deepEqual(run.calls.map((call) => modeOf(call.stdin)), ["hold", "last"]);
+  assert.deepEqual(ledgerOf(root).components, { Button: { "1.1.0": "sent" }, Card: { "1.1.0": "sent" } });
+});
+
+test("a retry whose only unsent file cannot carry the release's tokens fails that file, not the run's other work", async () => {
+  const { root, folder, manifest } = await release();
+  const [first, second] = manifest.files.map((file) => file.name);
+  fillFile(folder, first);
+  addTokens(folder, second, "card");
+  const ledgerPath = path.join(root, ".klaus/figma/ledger.json");
+  const ledger = JSON.parse(readFileSync(ledgerPath, "utf8"));
+  ledger.components.Card["1.1.0"] = "sent";
+  writeFileSync(ledgerPath, JSON.stringify(ledger));
+
+  const run = await relay(root, [folder], { scenarios: "figma" });
+
+  assert.equal(run.code, 1, run.stderr);
+  assert.equal(run.calls.length, 0, "no call is spent on a file that cannot be sent");
+  assert.deepEqual(ledgerOf(root).components, { Button: { "1.1.0": "generated" }, Card: { "1.1.0": "sent" } });
+  assert.match(outputOf(run.report).failed[0].error, /with the tokens of the release's other files/);
+});
+
+test("a release where no file can carry the tokens stops before any call", async () => {
+  const { root, folder, manifest } = await release();
+  const [first, second] = manifest.files.map((file) => file.name);
+  addTokens(folder, first, "button");
+  addTokens(folder, second, "card");
+  fillFile(folder, first);
+  fillFile(folder, second);
+
+  const run = await relay(root, [folder]);
+
+  assert.equal(run.code, 2);
+  assert.equal(run.calls.length, 0);
+  assert.match(run.stderr, /is refused, so nothing was sent: .*with the tokens of the release's other files/);
 });
