@@ -333,7 +333,7 @@ function downloadArtifact({ gh, run, repo, artifact, cwd }) {
  * here only when no file that can take the last call fits.
  * @returns {Map<string, { key: number[], held: string, last: string | null, tooLong: string | null }>}  The code of each data file, by name, with the key its strings are encoded with. tooLong says why last is null.
  */
-function prepareCode(folder, manifest, options) {
+function prepareCode(folder, manifest, options, now = new Date()) {
   const refuse = (file) => (why) => {
     throw new UserError(`${file.name} is refused, so nothing was sent: ${why}`);
   };
@@ -361,6 +361,7 @@ function prepareCode(folder, manifest, options) {
     }
     read.push({ file, data });
   }
+  const cover = options.coverPage ? coverFor(options.coverPage, manifest.release, now) : null;
   const code = new Map();
   for (const { file, data } of read) {
     const fail = refuse(file);
@@ -374,16 +375,32 @@ function prepareCode(folder, manifest, options) {
     } catch (error) {
       fail(error.message);
     }
+    // The cover is optional, so a last call it would push over the limit goes without it.
+    let withCover = null;
+    if (cover) {
+      withCover = codeFor(withReleaseTokens(data, read.filter((other) => other.file !== file).map((other) => other.data)), { key, tokenValues: "last", cover });
+      if (withCover.length > MAX_CODE_CHARS) withCover = null;
+    }
     const tooLong = last.length > MAX_CODE_CHARS
       ? `its code comes to ${last.length} characters with the tokens of the release's other files, which the call that sends the release's last component unit writes, and ${MAX_CODE_CHARS} is all one call takes. Lower outputs.figma.options.componentsPerCall.`
       : null;
-    code.set(file.name, { key, held, last: tooLong ? null : last, tooLong });
+    code.set(file.name, { key, held, last: tooLong ? null : withCover ?? last, tooLong, carriesCover: !tooLong && withCover !== null });
   }
   const isComponent = (id) => manifest.ledgerEntries[id].kind === "component";
   const withComponents = manifest.files.filter((file) => file.units.some(isComponent));
   const takers = withComponents.length > 0 ? withComponents : manifest.files;
   if (takers.length > 0 && takers.every((file) => code.get(file.name).tooLong)) refuse(takers[0])(code.get(takers[0].name).tooLong);
   return code;
+}
+
+/**
+ * What the cover says for a release. A release tag such as release/2026-11-05-2 reads as the version
+ * 2026.11.05-2, and any other release as itself. Updated is the day of this run on the relay's machine.
+ */
+export function coverFor(page, release, now) {
+  const version = String(release).replace(/^release\//, "").replace(/^(\d{4})-(\d{2})-(\d{2})/, "$1.$2.$3");
+  const day = now.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+  return { page, version: `Version ${version}`, updated: `Updated ${day}` };
 }
 
 /**
@@ -519,6 +536,7 @@ async function sendFile({ codex, args, code, key, workdir, timeoutMs, fileKey, e
   const held = new Set();
   const written = new Set();
   const errors = [];
+  let cover = null;
   const text = code.toString("utf8").trim();
 
   for (const call of summary.calls) {
@@ -557,6 +575,7 @@ async function sendFile({ codex, args, code, key, workdir, timeoutMs, fileKey, e
     for (const [list, into] of [[returned.tokens?.held, held], [returned.tokens?.updated, written]]) {
       for (const name of Array.isArray(list) ? list : []) if (typeof name === "string") into.add(name);
     }
+    if (typeof returned.cover?.status === "string") cover = returned.cover.status;
     for (const warning of Array.isArray(returned.warnings) ? returned.warnings : []) warnings.push(`Figma: ${String(warning).slice(0, 300)}`);
   }
 
@@ -566,6 +585,7 @@ async function sendFile({ codex, args, code, key, workdir, timeoutMs, fileKey, e
     units,
     changed,
     tokenValues: { held: [...held].filter((name) => !written.has(name)), written: [...written] },
+    cover,
     error: errors.length > 0 ? [...new Set(errors)].join(" ") : null,
     usage: summary.usage,
     tokens: relayTokens(summary.usage),
@@ -746,7 +766,7 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
       // This call is the release's last when every other component unit is already sent. Then it
       // writes the changed token values, unless a component unit of this call fails (the runtime checks).
       const lastCall = componentIds.every((id) => file.units.includes(id) || sentIds.has(id));
-      const { key, tooLong, ...variants } = prepared.get(file.name);
+      const { key, tooLong, carriesCover, ...variants } = prepared.get(file.name);
       const text = (lastCall ? variants.last : null) ?? variants.held;
       const code = Buffer.from(text, "utf8");
       const chars = text.length;
@@ -773,6 +793,10 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
         continue;
       }
       record.tokenValues = lastCall && variants.last !== null ? "written at the end of the call" : "held";
+      if (settings.options.coverPage && lastCall && variants.last !== null) {
+        record.cover = carriesCover ? "written at the end of the call" : "left out, the call has no room";
+        if (!carriesCover) warnings.push(`The cover was not updated, because ${file.name} has no room for it. The next release's last call updates it.`);
+      }
       planned += pending.length;
       const predicted = predictTokens(chars, ratios);
       uncapped.calls += 1;
@@ -817,6 +841,7 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
         ratios.push(outcome.tokens / predictTokens(chars));
       }
 
+      if (outcome.cover) record.cover = outcome.cover;
       for (const name of outcome.tokenValues.held) tokenWaiting.add(name);
       for (const name of outcome.tokenValues.written) {
         tokenWaiting.delete(name);

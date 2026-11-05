@@ -59,6 +59,8 @@ export const DEFAULT_OPTIONS = Object.freeze({
   collectionName: "Tokens",
   /** One page for every component. Empty means one page per component, named after it. */
   page: "",
+  /** The page whose Version and Updated text layers the relay rewrites when a release finishes. Empty leaves the file's pages alone. */
+  coverPage: "",
   /** Inventory variant props that become Figma variant properties, in order. */
   axes: ["variant", "size"],
   /** Extra states to draw, as a State property: any of "loading" and "disabled". Empty keeps Variant and Size only. */
@@ -131,6 +133,8 @@ export function readOptions(settings) {
   for (const key of ["storybookDir", "screenshotsDir", "outputDir", "globals"]) text(options, key);
   name(options, "collectionName");
   name(options, "page", { empty: true });
+  name(options, "coverPage", { empty: true });
+  if ([OLDER_VERSIONS_PAGE, SCREENS_PAGE].includes(options.coverPage)) fail("coverPage", `cannot be ${JSON.stringify(options.coverPage)}, which Klaus writes itself.`);
   for (const key of ["icons", "label", "editableScreens"]) bool(options, key);
   whole(options, "componentsPerCall", 1, 50);
   whole(options, "screenVersionsKept", 1, 1000);
