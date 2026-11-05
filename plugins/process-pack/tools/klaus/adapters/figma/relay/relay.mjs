@@ -393,6 +393,9 @@ function prepareCode(folder, manifest, options, now = new Date()) {
   return code;
 }
 
+/** What a file's record says about the cover until the call has run. */
+const COVER_PLANNED = "written at the end of the call";
+
 /**
  * What the cover says for a release. A release tag such as release/2026-11-05-2 reads as the version
  * 2026.11.05-2, and any other release as itself. Updated is the day of this run on the relay's machine.
@@ -809,7 +812,7 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
         continue;
       }
       if (settings.options.coverPage && lastCall && variants.last !== null) {
-        record.cover = carriesCover ? "written at the end of the call" : "left out, the call has no room";
+        record.cover = carriesCover ? COVER_PLANNED : "left out, the call has no room";
         if (!carriesCover) warnings.push(`The cover was not updated, because ${file.name} has no room for it. The next release's last call updates it.`);
       }
       estimated.calls += 1;
@@ -841,7 +844,8 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
         ratios.push(outcome.tokens / predictTokens(chars));
       }
 
-      if (outcome.cover) record.cover = outcome.cover;
+      // Only the call's own result says the cover was written, so a call that failed never reports it.
+      if (record.cover === COVER_PLANNED) record.cover = outcome.cover ?? "not confirmed";
       for (const name of outcome.tokenValues.held) tokenWaiting.add(name);
       for (const name of outcome.tokenValues.written) {
         tokenWaiting.delete(name);
