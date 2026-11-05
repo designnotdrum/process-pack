@@ -18,7 +18,7 @@
  * or writes anywhere the repo's settings do not name, and builds each call's
  * code from the data and the runtime in this checkout. Every string from the
  * data is encoded with a new key for each call, so text in the data cannot
- * steer the model that copies the code. The Figma file is the one
+ * steer the model that runs the call. The Figma file is the one
  * klaus.config.json names; a manifest naming another file is refused.
  *
  * For each data file, the relay runs `codex exec` once. The prompt tells Codex
@@ -76,7 +76,7 @@
  *   --timeout <seconds>    For one call. Default 600.
  *   --events-dir <dir>     Keep each call's Codex events, one .jsonl per data file.
  *   --keep-codex-config    Run Codex with ~/.codex/config.toml as it is. By default the relay ignores
- *                          it and gives Codex the figma server alone, so no other server, plugin or
+ *                          it and gives Codex the figma server and the relay's klaus_code server, so no other server, plugin or
  *                          hook adds to the tokens.
  *   --dry-run              Say what would be sent and what it would cost. Makes no call.
  *   --json                 Print the run report.
@@ -190,6 +190,7 @@ export function codexArgs({ model, effort, workdir, figmaUrl, keepCodexConfig, p
     "-c", `mcp_servers.${CODE_SERVER}.command=${JSON.stringify(process.execPath)}`,
     "-c", `mcp_servers.${CODE_SERVER}.args=${JSON.stringify([CODE_SERVER_PATH, path.join(workdir, CODE_FILE)])}`,
     "-c", `mcp_servers.${CODE_SERVER}.enabled_tools=["${CODE_TOOL}"]`,
+    "-c", `mcp_servers.${CODE_SERVER}.startup_timeout_sec=${MCP_STARTUP_TIMEOUT_SECONDS}`,
     "-c", `mcp_servers.${CODE_SERVER}.tools.${CODE_TOOL}.approval_mode="approve"`,
     prompt,
   );
@@ -449,7 +450,7 @@ function spawnCodex(codex, args, cwd, timeoutMs) {
     });
     child.on("error", (error) => done({ exitCode: null, error }));
     child.on("close", (exitCode, signal) => done({ exitCode, signal }));
-    // Closed empty on purpose: Codex reads an open stdin and adds it to the prompt.
+    // Closed at once and empty: Codex reads a piped stdin to its end and adds it to the prompt.
     child.stdin.on("error", () => {});
     child.stdin.end();
   });
@@ -490,9 +491,9 @@ function judgeRun({ run, summary, timeoutMs, errors, warnings }) {
     else if (run.exitCode !== 0) errors.push(`Codex exited with ${run.exitCode ?? run.signal}: ${lastLine(run.stderr) || "no message"}`);
     else {
       const said = summary.message ? ` It replied: ${summary.message.replace(/\s+/g, " ").slice(0, 200)}` : "";
-      // A model with use_figma in front of it calls it. One that calls nothing most likely never had it.
+      // A run with no use_figma call most likely lacked the tool, or the exec tool that reaches it.
       const why = summary.otherTools.length === 0
-        ? ` The ${FIGMA_SERVER} server's tools most likely did not reach the model: its sign-in may need renewing (codex mcp login ${FIGMA_SERVER}), or it did not start within ${MCP_STARTUP_TIMEOUT_SECONDS} seconds.`
+        ? ` The ${FIGMA_SERVER} server's tools most likely did not reach the model: its sign-in may need renewing (codex mcp login ${FIGMA_SERVER}), or it did not start within ${MCP_STARTUP_TIMEOUT_SECONDS} seconds. A model without the exec tool fails the same way.`
         : "";
       errors.push(`Codex did not call ${FIGMA_TOOL}.${said}${why}`);
     }

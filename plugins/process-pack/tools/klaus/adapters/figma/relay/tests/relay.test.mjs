@@ -85,6 +85,7 @@ test("the code reaches Codex unchanged through the code server, and the prompt c
   assert.equal(args[args.indexOf("-m") + 1], DEFAULT_MODEL);
   assert.ok(args.includes('mcp_servers.figma.enabled_tools=["use_figma"]'), "Codex sees use_figma and no other Figma tool");
   assert.ok(args.includes('mcp_servers.klaus_code.enabled_tools=["read_code"]'));
+  assert.ok(args.includes("mcp_servers.klaus_code.startup_timeout_sec=60"));
   for (const off of ["features.apps=false", "features.plugins=false", "features.shell_tool=false"]) assert.ok(args.includes(off), `${off}: connectors add about 100,000 tokens a call`);
   assert.ok(args.includes('mcp_servers.figma.url="https://mcp.figma.com/mcp"'));
   assert.ok(args.includes("mcp_servers.figma.startup_timeout_sec=60"), "Figma gets time to sign in and list its tools");

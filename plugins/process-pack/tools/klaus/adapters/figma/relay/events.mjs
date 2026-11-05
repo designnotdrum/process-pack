@@ -88,7 +88,10 @@ export function summarizeEvents(events) {
       if (isFigmaCall) {
         calls.push({ status: String(item.status ?? "unknown"), arguments: readArguments(item.arguments), result: item.result ?? null, error: item.error?.message ?? null });
       } else if (item.type === "mcp_tool_call") {
-        if (item.server !== CODE_SERVER || item.tool !== CODE_TOOL) otherTools.push(`${item.server}.${item.tool}`);
+        const isCodeCall = item.server === CODE_SERVER && item.tool === CODE_TOOL;
+        if (!isCodeCall) otherTools.push(`${item.server}.${item.tool}`);
+        // Without its code the script stops before use_figma, so this is the real reason for no call.
+        else if (item.status === "failed") failures.push(`${CODE_TOOL} failed: ${item.error?.message ?? "no reason given"}`);
       }
       else if (item.type === "command_execution") otherTools.push(`a shell command (${String(item.command ?? "unknown").slice(0, 80)})`);
       else if (item.type === "agent_message" && typeof item.text === "string") message = item.text;
