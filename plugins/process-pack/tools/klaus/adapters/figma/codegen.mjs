@@ -199,7 +199,7 @@ function checkKey(key) {
  * The code of one call for the relay: every string from the data encoded with key (encodeText),
  * and the key in the code as KEY, so the runtime can decode the data before it uses any of it.
  * Text in a data file (a description, a button's words, SVG markup, a name) could be written to
- * steer the model that copies the code into use_figma. Encoded, the model sees base64 noise.
+ * steer the model that relays the call. Encoded, the model would see base64 noise.
  * The header is fixed, because a file's header lists its units by name.
  *
  * The result goes back the same way. With a KEY the runtime encodes every string it returns (unit

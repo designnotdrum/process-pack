@@ -85,4 +85,10 @@ test("the code server's read_code call is the relay's own step, not another tool
   const item = (server, tool) => ({ type: "item.completed", item: { type: "mcp_tool_call", server, tool, arguments: {}, status: "completed" } });
   const summary = summarizeEvents([item(CODE_SERVER, CODE_TOOL), item("figma", "whoami")]);
   assert.deepEqual(summary.otherTools, ["figma.whoami"]);
+  assert.equal(summary.failure, null);
+});
+
+test("a failed read_code call is the run's failure, so the report names the real cause", () => {
+  const summary = summarizeEvents([{ type: "item.completed", item: { type: "mcp_tool_call", server: CODE_SERVER, tool: CODE_TOOL, status: "failed", error: { message: "The code file could not be read" } } }]);
+  assert.match(summary.failure, /read_code failed: The code file could not be read/);
 });

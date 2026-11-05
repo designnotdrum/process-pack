@@ -3,7 +3,7 @@
  * A local MCP server with one tool, read_code, which returns the code file named on the command line.
  *
  * A model will not retype a large file exactly (see README.md, "How the code reaches use_figma"). The
- * relay starts this server for each call, and a fixed script in Codex's exec tool passes read_code's
+ * relay has Codex start this server for each call, and a fixed script in Codex's exec tool passes read_code's
  * result straight to use_figma, so the code never goes through the model.
  *
  * It speaks MCP over stdio, one JSON-RPC message a line, and needs nothing but Node.
