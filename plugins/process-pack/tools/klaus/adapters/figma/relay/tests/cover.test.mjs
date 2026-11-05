@@ -62,6 +62,52 @@ test("a run stopped by a cap before the release finishes sends no cover", async 
   assert.equal(deferred.cover, undefined, "the report promises no update for a call that did not run");
 });
 
+/** Code that gives the stub's fake file a cover page. */
+const COVER_SEED = `
+  const page = figma.createPage();
+  page.name = "Title Page";
+  const font = { family: "DM Sans", style: "Regular" };
+  await figma.loadFontAsync(font);
+  for (const name of ["Version", "Updated"]) {
+    const text = figma.createText();
+    text.name = name;
+    text.fontName = font;
+    text.characters = "old";
+    page.appendChild(text);
+  }
+`;
+const lastFile = (run) => outputOf(run.report).adapter.details.files.at(-1);
+
+test("the report's cover comes from Figma's result: written when the layers were rewritten", async () => {
+  const { root, folder } = await release();
+
+  const run = await relay(root, [folder], { scenarios: "figma", figmaSeed: [COVER_SEED], variable: quiet });
+
+  assert.equal(run.code, 0, run.stderr);
+  assert.equal(lastFile(run).cover, "written");
+});
+
+test("the report says failed when the file has no cover page, and the release still lands", async () => {
+  const { root, folder } = await release();
+
+  const run = await relay(root, [folder], { scenarios: "figma", variable: quiet });
+
+  assert.equal(run.code, 0, run.stderr);
+  assert.equal(lastFile(run).cover, "failed");
+  assert.deepEqual(ledgerOf(root).components, { Button: { "1.1.0": "sent" }, Card: { "1.1.0": "sent" } });
+});
+
+for (const scenario of ["no-call", "tool-error"]) {
+  test(`a last call that ends in ${scenario} never reports the cover as written`, async () => {
+    const { root, folder } = await release();
+
+    const run = await relay(root, [folder], { scenarios: `success,${scenario}`, variable: quiet });
+
+    assert.equal(lastFile(run).status, "failed");
+    assert.equal(lastFile(run).cover, "not confirmed");
+  });
+}
+
 test("a repo with no coverPage sends no cover code at all", async () => {
   const { root, folder } = await release(ROOMY);
 

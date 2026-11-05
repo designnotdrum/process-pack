@@ -30,6 +30,8 @@ export const RUNTIME_CODE = compact(RUNTIME);
 /** The runtime's last line. The cover update goes in front of it. */
 const RUNTIME_RETURN = 'return KEY ? encodeResult(result, "") : result;';
 
+if (!RUNTIME_CODE.endsWith(RUNTIME_RETURN)) throw new Error("runtime.js no longer ends with the line the cover update goes in front of.");
+
 /** The runtime with the cover update (cover.js) in front of its last line, for the call that carries a cover. */
 export const RUNTIME_CODE_WITH_COVER = RUNTIME_CODE.replace(RUNTIME_RETURN, () => `${compact(COVER)}\n${RUNTIME_RETURN}`);
 
