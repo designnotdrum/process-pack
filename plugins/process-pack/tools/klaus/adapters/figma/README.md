@@ -84,9 +84,11 @@ On 2026-10-18 one `use_figma` call ran `plugin/code.js`'s `applyRelease` with Bu
 
 ## Which pages it touches
 
-The code touches three kinds of page, all found or created by name: the page a component goes on (the `page` setting, or the component's name), `Older versions`, and `Screens`. It touches no other page. Figma puts every new node on the person's current page, so the code appends each node to its parent in the same step, and a unit that fails leaves nothing behind. The variables it writes are in the collection the `collectionName` setting names.
+The code touches three kinds of page, all found or created by name: the page a component goes on (the `page` setting, or the component's name), `Older versions`, and `Screens`. It touches no other page, apart from the cover page below. Figma puts every new node on the person's current page, so the code appends each node to its parent in the same step, and a unit that fails leaves nothing behind. The variables it writes are in the collection the `collectionName` setting names.
 
 Klaus cannot tell a page it made from a page a person made with the same name, because `use_figma` does not support plugin data. A person's own page named like a component, or named `Older versions` or `Screens`, is treated as Klaus's. Then a set on it named `<component> <version>` can move to `Older versions`, and on `Screens` an old frame named `<route> <release>` can be removed. In a file with pages of its own, set `page` to a page only Klaus uses.
+
+With `coverPage` set, the relay also writes to that page, in the call that sends a release's last component unit and only if every component of that call was written or was already there. The cover keeps naming the last release that finished, so a release held back by the spending cap does not show until its last unit lands. A release with nothing to send makes no call, so the cover still names the last release that changed the file. A person draws the cover: Klaus finds the two text layers by name, never creates them, and only warns if the page or a layer is missing. The code for this is `cover.js`, which goes only into that call, because every call carries `runtime.js` and code over the limit stops a release. A last call with no room for it goes without, with a warning. A date tag reads as a version number, so `release/2026-11-05` shows as `Version 2026.11.05`. The Klaus plugin does not write the cover.
 
 ## What the reader reads
 
@@ -154,6 +156,7 @@ All of them sit under `outputs.figma.options` in `klaus.config.json` and all hav
 |---|---|---|
 | `storybookDir` | `storybook-static` | A static Storybook build, relative to the repo root. |
 | `collectionName` | `Tokens` | The variable collection. It has one mode, `Light`. |
+| `coverPage` | empty | The page that shows the release, such as `Title Page`. The relay rewrites its text layers `Version` and `Updated` when a release finishes (see below). Empty leaves the file's pages alone. |
 | `page` | empty | One page for every component. Empty gives each component a page named after it. |
 | `axes` | `["variant", "size"]` | The inventory variant props that become Figma variant properties, in order. |
 | `states` | `[]` | `"loading"` and `"disabled"` add a `State` property. It is off by default so the variants keep the prototype's `Variant=..., Size=...` names. |

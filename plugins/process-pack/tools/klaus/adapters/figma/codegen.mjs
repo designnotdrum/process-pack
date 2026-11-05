@@ -13,6 +13,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 const RUNTIME = readFileSync(new URL("./runtime.js", import.meta.url), "utf8");
+const COVER = readFileSync(new URL("./cover.js", import.meta.url), "utf8");
 
 /** Drops comments, indentation and blank lines from the runtime. The code is read by Figma, not by people. */
 export function compact(source) {
@@ -25,6 +26,12 @@ export function compact(source) {
 }
 
 export const RUNTIME_CODE = compact(RUNTIME);
+
+/** The runtime's last line. The cover update goes in front of it. */
+const RUNTIME_RETURN = 'return KEY ? encodeResult(result, "") : result;';
+
+/** The runtime with the cover update (cover.js) in front of its last line, for the call that carries a cover. */
+export const RUNTIME_CODE_WITH_COVER = RUNTIME_CODE.replace(RUNTIME_RETURN, () => `${compact(COVER)}\n${RUNTIME_RETURN}`);
 
 /** JSON that carries only ASCII, so the character count is the same in every encoding. */
 export function asciiJson(value) {
@@ -87,16 +94,18 @@ export const TOKEN_VALUE_MODES = Object.freeze(["hold", "last"]);
  * keeps its index. Other markup stays a JSON string. The runtime holds no backslash either.
  *
  * @param {object} data  From dataFor, or from data-file.mjs readData.
- * @param {{ key?: number[], tokenValues?: "hold" | "last" }} [options]
+ * @param {{ key?: number[], tokenValues?: "hold" | "last", cover?: { page: string, version: string, updated: string } }} [options]
  *   With a key, the relay's code: every string encoded (encodedCode). Without one, plain code for the
  *   Klaus Figma plugin, which no model reads.
  *   tokenValues says when the call writes a changed token value (TOKEN_VALUES in runtime.js): "hold"
  *   writes none, "last" is the call that sends the release's last component unit. Left out, plain code
  *   writes the values at the end of its run, as the plugin does, and the relay's code is "last".
+ *   cover, in the relay's code only, also writes the release onto the cover page (cover.js).
  */
-export function codeFor(data, { key, tokenValues } = {}) {
+export function codeFor(data, { key, tokenValues, cover } = {}) {
   if (tokenValues !== undefined && !TOKEN_VALUE_MODES.includes(tokenValues)) throw new Error(`tokenValues must be one of ${TOKEN_VALUE_MODES.join(", ")}.`);
-  if (key !== undefined) return encodedCode(data, key, tokenValues ?? "last");
+  if (cover !== undefined && key === undefined) throw new Error("Only the relay's code carries a cover.");
+  if (key !== undefined) return encodedCode(data, key, tokenValues ?? "last", cover);
   if (!/^[\x20-\x7e]*$/.test(data.header)) throw new Error("A file header must be one line of printable ASCII.");
   const svgs = [];
   const units = data.units.map((unit) => {
@@ -207,7 +216,7 @@ function checkKey(key) {
  * except the values of a status field, and the relay decodes it (relay/events.mjs decodeResult).
  * The model keeps the result in its context, and a name in the Figma file could steer it.
  */
-function encodedCode(data, key, tokenValues) {
+function encodedCode(data, key, tokenValues, cover) {
   checkKey(key);
   return [
     "// Klaus Figma code",
@@ -217,7 +226,8 @@ function encodedCode(data, key, tokenValues) {
     `const TOKENS = ${asciiJson(encodeStrings(data.tokens, key, ""))};`,
     `const UNITS = ${asciiJson(encodeStrings(data.units, key, ""))};`,
     "const SVGS = [];",
-    RUNTIME_CODE,
+    ...(cover === undefined ? [] : [`const COVER = ${asciiJson(encodeStrings(cover, key, ""))};`]),
+    cover === undefined ? RUNTIME_CODE : RUNTIME_CODE_WITH_COVER,
     "",
   ].join("\n");
 }

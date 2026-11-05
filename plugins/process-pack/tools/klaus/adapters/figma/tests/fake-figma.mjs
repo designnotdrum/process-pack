@@ -101,6 +101,10 @@ class Node {
     return found;
   }
 
+  findOne(test) {
+    return this.findAll(test)[0] ?? null;
+  }
+
   resize(width, height) {
     if (width < 0.01 || height < 0.01) throw new Error("Resize needs a size of at least 0.01.");
     this.width = width;

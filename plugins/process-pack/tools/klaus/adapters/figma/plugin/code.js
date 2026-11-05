@@ -576,7 +576,8 @@ async function applyData(CONFIG, TOKENS, UNITS, SVGS) {
  * may switch only once and the person may be looking at it.
  *
  * Pages it touches: the page each unit names (a component's page, or Screens)
- * and Older versions, found or created by name. It touches no other page. Figma
+ * and Older versions, found or created by name. It touches no other page, apart
+ * from the cover, which cover.js writes in a release's last call. Figma
  * creates every new node on the current page, so each node is appended to its
  * parent in the same step it is created, with no await in between, and never
  * stays on the current page. The variables it writes are in CONFIG.collection.
