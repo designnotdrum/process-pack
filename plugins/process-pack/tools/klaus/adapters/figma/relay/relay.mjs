@@ -371,8 +371,8 @@ function prepareCode(folder, manifest, options) {
 
 /**
  * The manifest's files in the order to send them: those whose last version is over the limit go first,
- * so the release's last component unit is in a file that can carry the release's tokens. The order
- * changes nothing else, because every call before the last one holds the token values.
+ * so the release's last component unit is in a file that can carry the release's tokens. Every call
+ * before the last one holds the token values, so the order only changes which files a cap defers.
  */
 function sendOrder(files, prepared) {
   const fits = (file) => prepared.get(file.name).last !== null;
@@ -739,8 +739,8 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
         unitRecords.push(...entries.map((entry) => ({ ...unitBase(entry), status: "already sent", calls: 0, tokens: 0 })));
         continue;
       }
-      // Only a rerun on the same folder gets here, when the files sent first left this one for last.
-      // No call is spent. The next Klaus run plans the unsent units alone, so this file then fits.
+      // A rerun on the same folder gets here, when the files sent first left this one for last. So does
+      // a release with no component unit, where every call is a last call. No call is spent. The next Klaus run plans the unsent units alone, so this file then fits.
       // The held code is not sent instead: the earlier calls may all have held the token values, and
       // the ledger does not say whether a last call wrote them.
       if (lastCall && variants.last === null && !stopped) {
