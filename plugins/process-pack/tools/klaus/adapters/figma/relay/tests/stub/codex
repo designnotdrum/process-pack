@@ -4,8 +4,9 @@
  * `codex exec --json` output from ../fixtures.
  *
  *   codex mcp list --json   prints STUB_CODEX_MCP, or a signed-in figma server
- *   codex exec ...          reads stdin, keeps it and the arguments in STUB_CODEX_LOG
- *                           as call-<n>.stdin and call-<n>.json, and prints the fixture
+ *   codex exec ...          reads the code file named in the klaus_code server's arguments, keeps
+ *                           it and the arguments in STUB_CODEX_LOG as call-<n>.code and
+ *                           call-<n>.json, and prints the fixture
  *
  * STUB_CODEX_SCENARIOS is a comma list with one scenario a call. The last one repeats.
  *   success       use_figma ran and the code reported every unit written
@@ -59,16 +60,16 @@ if (args[0] !== "exec") {
   process.exit(2);
 }
 
-const chunks = [];
-for await (const chunk of process.stdin) chunks.push(chunk);
-const stdin = Buffer.concat(chunks);
+// The relay gives Codex the code through the klaus_code server, whose last argument is the code file.
+const serverArgs = args.find((arg) => arg.startsWith("mcp_servers.klaus_code.args="));
+const codeBytes = readFileSync(JSON.parse(serverArgs.slice(serverArgs.indexOf("=") + 1)).at(-1));
 
 const log = process.env.STUB_CODEX_LOG;
 let n = 1;
 if (log) {
   mkdirSync(log, { recursive: true });
   n = readdirSync(log).filter((name) => name.endsWith(".json")).length + 1;
-  writeFileSync(path.join(log, `call-${n}.stdin`), stdin);
+  writeFileSync(path.join(log, `call-${n}.code`), codeBytes);
   writeFileSync(path.join(log, `call-${n}.json`), JSON.stringify({ args }));
 }
 // Another relay run writing to the ledger while this call runs.
@@ -85,9 +86,9 @@ if (process.env.STUB_CODEX_OTHER_RUN_LEDGER) {
 const scenarios = (process.env.STUB_CODEX_SCENARIOS ?? "success").split(",");
 const scenario = scenarios[Math.min(n, scenarios.length) - 1];
 
-const code = stdin.toString("utf8");
+const code = codeBytes.toString("utf8");
 const prompt = args.at(-1);
-const fileKey = /fileKey: (\S+)/.exec(prompt)?.[1] ?? "";
+const fileKey = /fileKey: "([^"]+)"/.exec(prompt)?.[1] ?? "";
 
 // What the generated code returns: one entry a unit, read from its UNITS line.
 const fail = (message) => {
@@ -159,7 +160,7 @@ const runInFigma = async () => {
   }
   const seed = process.env.STUB_CODEX_FIGMA_SEED ? JSON.parse(readFileSync(process.env.STUB_CODEX_FIGMA_SEED, "utf8")) : [];
   const ran = Array.from({ length: n - 1 }, (_, i) => i + 1).filter((k) => scenarios[Math.min(k, scenarios.length) - 1] === "figma");
-  const earlier = ran.map((k) => readFileSync(path.join(log, `call-${k}.stdin`), "utf8"));
+  const earlier = ran.map((k) => readFileSync(path.join(log, `call-${k}.code`), "utf8"));
   for (const before of [...seed, ...earlier]) await runCode(before, figma);
   return runCode(code, figma);
 };

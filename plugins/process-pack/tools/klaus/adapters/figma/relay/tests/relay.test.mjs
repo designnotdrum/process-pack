@@ -65,23 +65,27 @@ test("a sent mark another run writes during a call is kept", async () => {
   assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "sent" }, Card: { "1.0.0": "sent" }, Other: { "1.0.0": "sent" } });
 });
 
-test("the code reaches Codex unchanged on stdin, and the prompt carries no code", async () => {
+test("the code reaches Codex unchanged through the code server, and the prompt carries no code", async () => {
   const { root, folder, manifest } = await generatedRepo({ perFile: 10 });
   const run = await relay(root, [folder]);
 
   assert.equal(run.calls.length, 1);
-  const built = Buffer.from(builtCode(folder, manifest.files[0].name, keyOf(run.calls[0].stdin)), "utf8");
-  assert.ok(run.calls[0].stdin.equals(built), "stdin is the code the relay built from the data, byte for byte");
+  const built = Buffer.from(builtCode(folder, manifest.files[0].name, keyOf(run.calls[0].code)), "utf8");
+  assert.ok(run.calls[0].code.equals(built), "the code file is the code the relay built from the data, byte for byte");
 
   const { args } = run.calls[0];
   const prompt = args.at(-1);
-  assert.match(prompt, /use_figma tool of the figma MCP server exactly once/);
-  assert.match(prompt, new RegExp(`fileKey: ${KEY}`));
+  assert.match(prompt, /Call your exec tool exactly once/);
+  assert.match(prompt, /tools\.mcp__klaus_code__read_code\(\{\}\)/);
+  assert.match(prompt, /tools\.mcp__figma__use_figma\(\{ fileKey: /);
+  assert.ok(prompt.includes(`fileKey: ${JSON.stringify(KEY)}`));
   assert.ok(!prompt.includes("const UNITS"), "the code is not pasted into the prompt");
   for (const flag of ["--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check"]) assert.ok(args.includes(flag), flag);
   assert.equal(args[args.indexOf("--sandbox") + 1], "read-only");
   assert.equal(args[args.indexOf("-m") + 1], DEFAULT_MODEL);
-  assert.ok(args.includes('mcp_servers.figma.enabled_tools=["use_figma"]'), "Codex sees use_figma and no other tool");
+  assert.ok(args.includes('mcp_servers.figma.enabled_tools=["use_figma"]'), "Codex sees use_figma and no other Figma tool");
+  assert.ok(args.includes('mcp_servers.klaus_code.enabled_tools=["read_code"]'));
+  for (const off of ["features.apps=false", "features.plugins=false", "features.shell_tool=false"]) assert.ok(args.includes(off), `${off}: connectors add about 100,000 tokens a call`);
   assert.ok(args.includes('mcp_servers.figma.url="https://mcp.figma.com/mcp"'));
   assert.ok(args.includes("mcp_servers.figma.startup_timeout_sec=60"), "Figma gets time to sign in and list its tools");
 });
@@ -110,7 +114,7 @@ test("a tool error leaves the units unsent and reports them, and the next run re
   const second = await relay(root, [folder]);
   assert.equal(second.code, 0);
   assert.equal(second.calls.length, 1, "the file already sent is not sent again");
-  assert.deepEqual(idsSent(second.calls[0].stdin), ["Card"]);
+  assert.deepEqual(idsSent(second.calls[0].code), ["Card"]);
   assert.deepEqual(outputOf(second.report).written, ["Card"]);
   assert.equal(outputOf(second.report).adapter.details.files[0].status, "already sent");
   assert.deepEqual(ledgerOf(root).components, { Button: { "1.0.0": "sent" }, Card: { "1.0.0": "sent" } });
@@ -290,7 +294,7 @@ test("no text from the data reaches the model: an injected description, button w
 
   const run = await relay(root, [folder]);
   assert.equal(run.code, 0, run.stderr);
-  const seen = `${run.calls[0].stdin.toString()}\n${run.calls[0].args.join("\n")}`.toLowerCase();
+  const seen = `${run.calls[0].code.toString()}\n${run.calls[0].args.join("\n")}`.toLowerCase();
   // The runtime's own words are not data, so check the probes are not in it first.
   const probes = ["</stdin>", "ignore previous instructions", "figma.root.children[0].remove", "use when", "button", "dm sans", "<svg", "viewbox", "meridian tokens", "color/primary", "hsl(var("];
   for (const probe of probes) {
@@ -303,9 +307,9 @@ test("two builds of the same data use different keys", async () => {
   const first = await generatedRepo({ components: ["Button"] });
   const second = await generatedRepo({ components: ["Button"] });
   const [a, b] = [await relay(first.root, [first.folder]), await relay(second.root, [second.folder])];
-  assert.notDeepEqual(keyOf(a.calls[0].stdin), keyOf(b.calls[0].stdin));
+  assert.notDeepEqual(keyOf(a.calls[0].code), keyOf(b.calls[0].code));
   const unitsLine = (stdin) => stdin.toString().split("\n").find((line) => line.startsWith("const UNITS = "));
-  assert.notEqual(unitsLine(a.calls[0].stdin), unitsLine(b.calls[0].stdin), "the same data reads differently in each call");
+  assert.notEqual(unitsLine(a.calls[0].code), unitsLine(b.calls[0].code), "the same data reads differently in each call");
 });
 
 test("an equal-length payload in the artifact is never sent: the relay builds the code from data", async () => {
@@ -319,9 +323,9 @@ test("an equal-length payload in the artifact is never sent: the relay builds th
   const run = await relay(root, [folder]);
   assert.equal(run.code, 0, run.stderr);
   assert.equal(run.calls.length, 1);
-  const built = builtCode(folder, name, keyOf(run.calls[0].stdin));
-  assert.ok(run.calls[0].stdin.equals(Buffer.from(built, "utf8")), "the stub was given the code the relay built");
-  assert.ok(!run.calls[0].stdin.toString().includes("p.remove()"), "the payload never reached Codex");
+  const built = builtCode(folder, name, keyOf(run.calls[0].code));
+  assert.ok(run.calls[0].code.equals(Buffer.from(built, "utf8")), "the stub was given the code the relay built");
+  assert.ok(!run.calls[0].code.toString().includes("p.remove()"), "the payload never reached Codex");
 });
 
 test("a data file replaced by code of the same length is refused before any call", async () => {

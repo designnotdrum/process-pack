@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { encodeText } from "../../codegen.mjs";
-import { decodeResult, keyIn, parseEvents, readCodeResult, relayTokens, summarizeEvents } from "../events.mjs";
+import { CODE_SERVER, CODE_TOOL, decodeResult, keyIn, parseEvents, readCodeResult, relayTokens, summarizeEvents } from "../events.mjs";
 
 const returned = { tokens: { made: [], updated: [] }, units: [{ id: "Button", status: "written" }], warnings: [] };
 const call = (status, extra = {}) => ({
@@ -79,4 +79,10 @@ test("keyIn reads the key line of a piece of code, and nothing else", () => {
   assert.equal(keyIn(`const KEY = [${KEY.map((b) => b + 300).join(",")}];`), null, "a byte is 0 to 255");
   assert.equal(keyIn("no key here"), null);
   assert.equal(keyIn(undefined), null);
+});
+
+test("the code server's read_code call is the relay's own step, not another tool", () => {
+  const item = (server, tool) => ({ type: "item.completed", item: { type: "mcp_tool_call", server, tool, arguments: {}, status: "completed" } });
+  const summary = summarizeEvents([item(CODE_SERVER, CODE_TOOL), item("figma", "whoami")]);
+  assert.deepEqual(summary.otherTools, ["figma.whoami"]);
 });

@@ -73,7 +73,7 @@ export async function generatedRepo({ components = ["Button", "Card"], perFile =
  *
  * variable is the text of the KLAUS_FIGMA_LEDGER variable before the run, or undefined when it is
  * not set. variableGetError and variableSetError make the stub gh fail that command with the text.
- * @returns {Promise<{ code: number, stdout: string, stderr: string, calls: Array<{ args: string[], stdin: Buffer }>, report: object | null, variable: string | null }>}
+ * @returns {Promise<{ code: number, stdout: string, stderr: string, calls: Array<{ args: string[], code: Buffer }>, report: object | null, variable: string | null }>}
  */
 export function relay(root, args, { scenarios = "success", mcp, ghSource, ghRun, ghCompare, otherRunLedger, names, resultText, message, otherRunMarks, warnings, figmaSeed, failDrawing, variable, variableGetError, variableSetError } = {}) {
   const log = mkdtempSync(path.join(tmpdir(), "klaus-relay-log-"));
@@ -112,7 +112,7 @@ export function relay(root, args, { scenarios = "success", mcp, ghSource, ghRun,
       const count = existsSync(dir) ? readdirSync(dir).filter((name) => name.endsWith(".json")).length : 0;
       const calls = Array.from({ length: count }, (_, i) => ({
         args: JSON.parse(readFileSync(path.join(dir, `call-${i + 1}.json`), "utf8")).args,
-        stdin: readFileSync(path.join(dir, `call-${i + 1}.stdin`)),
+        code: readFileSync(path.join(dir, `call-${i + 1}.code`)),
       }));
       let report = null;
       let reportError = null;
