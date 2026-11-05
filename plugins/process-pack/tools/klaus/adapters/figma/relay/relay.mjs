@@ -21,10 +21,10 @@
  * steer the model that copies the code. The Figma file is the one
  * klaus.config.json names; a manifest naming another file is refused.
  *
- * For each data file, in the manifest's order, the relay runs `codex exec`
- * once. The prompt tells Codex to call use_figma exactly once with the code and
- * to report the result, and nothing else. The code goes to Codex on stdin,
- * byte for byte. The relay reads Codex's JSON events, checks that the code
+ * For each data file, the relay runs `codex exec` once. The prompt tells Codex
+ * to run a fixed script in its exec tool and report the result, and nothing else.
+ * The script reads the code from a local MCP server (code-server.mjs) and passes
+ * it to use_figma, so the model never reads or retypes it. The relay reads Codex's JSON events, checks that the code
  * use_figma received is the code it built, and records a unit as sent in the
  * ledger only when the code's own result says it was written or was already
  * there. A unit that failed stays generated, so the next run retries it.
@@ -93,7 +93,7 @@ import { execFileSync, spawn } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { loadConfig } from "../../../frame/config.mjs";
 import { UserError } from "../../../frame/errors.mjs";
@@ -104,7 +104,7 @@ import { checkTargets, DataError, readData } from "../data-file.mjs";
 import { fileKeyOf, MANIFEST_VERSION } from "../index.mjs";
 import { CHANGED, entrySent, entryStatus, GENERATED, generatedComponents, markGeneratedAsSent, readLedger, recordEntry, screenCount, SENT } from "../ledger.mjs";
 import { MAX_CODE_CHARS, readOptions, relayCallTokens } from "../settings.mjs";
-import { decodeResult, FIGMA_SERVER, FIGMA_TOOL, keyIn, parseEvents, readCodeResult, relayTokens, resultText, summarizeEvents } from "./events.mjs";
+import { CODE_SERVER, CODE_TOOL, decodeResult, FIGMA_SERVER, FIGMA_TOOL, keyIn, parseEvents, readCodeResult, relayTokens, resultText, summarizeEvents } from "./events.mjs";
 import { lookupPlan, readFound, reconcileCode } from "./reconcile.mjs";
 import { ignoredWarning, mergeMarks, SHARED_LEDGER_VARIABLE, sentOnlyInShared, sentOnlySentence, sentOnlyWarning, usableMarks } from "../shared-ledger.mjs";
 import { publishVariable, readVariable } from "./variable.mjs";
@@ -146,18 +146,27 @@ export function predictTokens(chars, ratios = []) {
   return Math.ceil(relayCallTokens(chars) * Math.max(1, ...ratios));
 }
 
-/** The prompt. It holds no code: the code arrives on stdin, which Codex appends as a <stdin> block. */
+/** The file in a run's working folder that holds the current call's code. */
+const CODE_FILE = "code.js";
+const CODE_SERVER_PATH = fileURLToPath(new URL("./code-server.mjs", import.meta.url));
+
+/**
+ * The prompt. It holds no code. Codex's models reach MCP tools only from a script in the exec tool
+ * (the model catalog's tool_mode is code_mode_only), so the prompt gives the whole script, and the
+ * code goes from read_code to use_figma without passing through the model.
+ */
 export function relayPrompt({ fileKey, fileName }) {
   return [
-    "You are a relay. Your whole job is one tool call.",
-    `Call the ${FIGMA_TOOL} tool of the ${FIGMA_SERVER} MCP server exactly once, with these arguments:`,
-    `- fileKey: ${fileKey}`,
-    `- description: Klaus relay: ${fileName}`,
-    "- code: the whole text inside the <stdin> block below, character for character.",
-    "Do not change, shorten, reformat, fix or explain the code. Make no design decisions.",
-    "Call no other tool, read no skill or resource, and run no command.",
-    "If the call fails, do not retry it.",
-    "After the call, reply with the tool's result text exactly as it came back, and nothing else.",
+    "You are a relay. Your whole job is to run one script.",
+    "Call your exec tool exactly once with exactly this script. Do not change it.",
+    "",
+    `const read = await tools.mcp__${CODE_SERVER}__${CODE_TOOL}({});`,
+    `const result = await tools.mcp__${FIGMA_SERVER}__${FIGMA_TOOL}({ fileKey: ${JSON.stringify(fileKey)}, description: ${JSON.stringify(`Klaus relay: ${fileName}`)}, code: read.structuredContent.code });`,
+    "text(JSON.stringify(result));",
+    "",
+    "Make no design decisions. Call no other tool, read no skill or resource, and run no command.",
+    "If the script fails, do not retry it.",
+    "After it, reply with what it printed, exactly as it came back, and nothing else.",
   ].join("\n");
 }
 
@@ -169,12 +178,19 @@ export function codexArgs({ model, effort, workdir, figmaUrl, keepCodexConfig, p
     "-c", `model_reasoning_effort="${effort}"`,
     "-c", 'approval_policy="never"',
     "-c", "features.hooks=false",
-    // No shell tool: the model then has use_figma and Codex's built-in file tools in a read-only sandbox, and cannot run a command.
+    // Connectors and plugins add about 100,000 input tokens a call, measured on 2026-11-05.
+    "-c", "features.apps=false",
+    "-c", "features.plugins=false",
+    // No shell tool: the model runs the script in exec, which is JavaScript with no file or process access, and cannot run a command.
     "-c", "features.shell_tool=false",
     "-c", `mcp_servers.${FIGMA_SERVER}.enabled_tools=["${FIGMA_TOOL}"]`,
     // A server that has not listed its tools by then is dropped, and the model runs without use_figma.
     "-c", `mcp_servers.${FIGMA_SERVER}.startup_timeout_sec=${MCP_STARTUP_TIMEOUT_SECONDS}`,
     "-c", `mcp_servers.${FIGMA_SERVER}.tools.${FIGMA_TOOL}.approval_mode="approve"`,
+    "-c", `mcp_servers.${CODE_SERVER}.command=${JSON.stringify(process.execPath)}`,
+    "-c", `mcp_servers.${CODE_SERVER}.args=${JSON.stringify([CODE_SERVER_PATH, path.join(workdir, CODE_FILE)])}`,
+    "-c", `mcp_servers.${CODE_SERVER}.enabled_tools=["${CODE_TOOL}"]`,
+    "-c", `mcp_servers.${CODE_SERVER}.tools.${CODE_TOOL}.approval_mode="approve"`,
     prompt,
   );
   return args;
@@ -409,7 +425,7 @@ function checkCodex(codex) {
 }
 
 /** Runs one `codex exec` and collects what it printed. Never throws. */
-function spawnCodex(codex, args, input, cwd, timeoutMs) {
+function spawnCodex(codex, args, cwd, timeoutMs) {
   return new Promise((resolve) => {
     let settled = false;
     let stdout = "";
@@ -433,9 +449,9 @@ function spawnCodex(codex, args, input, cwd, timeoutMs) {
     });
     child.on("error", (error) => done({ exitCode: null, error }));
     child.on("close", (exitCode, signal) => done({ exitCode, signal }));
-    // Codex may exit before it reads all of stdin. That shows up in its exit code, not here.
+    // Closed empty on purpose: Codex reads an open stdin and adds it to the prompt.
     child.stdin.on("error", () => {});
-    child.stdin.end(input);
+    child.stdin.end();
   });
 }
 
@@ -445,11 +461,12 @@ const labelOf = (entry) => (entry.kind === "component" ? `${entry.name} ${entry.
 const lastLine = (text) => String(text).trim().split("\n").filter(Boolean).at(-1)?.slice(0, 300) ?? "";
 
 /**
- * Runs `codex exec` with the code on stdin and reads what it printed.
+ * Runs `codex exec` with the code in the working folder, for the code server, and reads what it printed.
  * @returns {Promise<{ run: object, summary: object, warnings: string[] }>}
  */
 async function runCodex({ codex, args, code, workdir, timeoutMs, eventsFile }) {
-  const run = await spawnCodex(codex, args, code, workdir, timeoutMs);
+  writeFileSync(path.join(workdir, CODE_FILE), code);
+  const run = await spawnCodex(codex, args, workdir, timeoutMs);
   if (eventsFile) {
     writeFileSync(eventsFile, run.stdout);
     if (run.stderr) writeFileSync(eventsFile.replace(/\.jsonl$/, ".stderr.txt"), run.stderr);

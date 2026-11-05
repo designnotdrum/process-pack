@@ -75,9 +75,9 @@ test("two calls, one token change: the older version in the second call keeps th
 
   const figma = await fileBefore(seed);
   assert.deepEqual(variableOf(figma, "color/primary"), OLD_PRIMARY.slice(0, 3));
-  await runCode(run.calls[0].stdin.toString(), figma);
+  await runCode(run.calls[0].code.toString(), figma);
   const afterFirst = variableOf(figma, "color/primary");
-  await runCode(run.calls[1].stdin.toString(), figma);
+  await runCode(run.calls[1].code.toString(), figma);
 
   assert.deepEqual(rgb(fillOf(figma, "Older versions", "Button 1.0.0").color), OLD_PRIMARY.slice(0, 3));
   assert.deepEqual(rgb(fillOf(figma, "Older versions", "Card 1.0.0").color), OLD_PRIMARY.slice(0, 3), "frozen before the value changed, not at the new colour");
@@ -89,7 +89,7 @@ test("two calls, one token change: the older version in the second call keeps th
     assert.deepEqual(rgb(fill.color), NEW_PRIMARY, `${set} shows the new colour`);
   }
 
-  assert.deepEqual(run.calls.map((call) => modeOf(call.stdin)), ["hold", "last"], "only the call that sends the last component unit writes token values");
+  assert.deepEqual(run.calls.map((call) => modeOf(call.code)), ["hold", "last"], "only the call that sends the last component unit writes token values");
   assert.deepEqual(outputOf(run.report).adapter.details.tokenChanges, { written: 1, waiting: 0 });
   assert.deepEqual(outputOf(run.report).warnings, []);
 });
@@ -102,10 +102,10 @@ test("a run that stops after the first call changes no token value, and the repo
   assert.equal(run.code, 0, run.stderr);
   assert.equal(run.calls.length, 1);
   const figma = await fileBefore(seed);
-  await runCode(run.calls[0].stdin.toString(), figma);
+  await runCode(run.calls[0].code.toString(), figma);
   assert.deepEqual(variableOf(figma, "color/primary"), OLD_PRIMARY.slice(0, 3), "no token value changed");
   assert.deepEqual(rgb(fillOf(figma, "Button", "Button 1.1.0").color), OLD_PRIMARY.slice(0, 3), "the new version is bound to the variable, which still holds the old colour");
-  assert.equal(modeOf(run.calls[0].stdin), "hold");
+  assert.equal(modeOf(run.calls[0].code), "hold");
 
   const output = outputOf(run.report);
   assert.deepEqual(output.adapter.details.tokenChanges, { written: 0, waiting: 1 });
@@ -120,13 +120,13 @@ test("the next run sends the release's last unit and writes the value that waite
   const first = await relay(root, [folder, "--max-calls", "1"], { scenarios: "figma", figmaSeed: seed });
 
   // The second run starts from the file the first run left.
-  const second = await relay(root, [folder], { scenarios: "figma", figmaSeed: [...seed, first.calls[0].stdin.toString()] });
+  const second = await relay(root, [folder], { scenarios: "figma", figmaSeed: [...seed, first.calls[0].code.toString()] });
 
   assert.equal(second.code, 0, second.stderr);
   assert.equal(second.calls.length, 1, "Button is already sent");
-  assert.equal(modeOf(second.calls[0].stdin), "last");
-  const figma = await fileBefore([...seed, first.calls[0].stdin.toString()]);
-  await runCode(second.calls[0].stdin.toString(), figma);
+  assert.equal(modeOf(second.calls[0].code), "last");
+  const figma = await fileBefore([...seed, first.calls[0].code.toString()]);
+  await runCode(second.calls[0].code.toString(), figma);
   assert.deepEqual(variableOf(figma, "color/primary"), NEW_PRIMARY);
   assert.deepEqual(rgb(fillOf(figma, "Older versions", "Button 1.0.0").color), OLD_PRIMARY.slice(0, 3));
   assert.deepEqual(rgb(fillOf(figma, "Older versions", "Card 1.0.0").color), OLD_PRIMARY.slice(0, 3));
@@ -141,22 +141,22 @@ test("a failed call keeps the values waiting even when a later call is the last 
 
   assert.equal(run.code, 1);
   assert.equal(run.calls.length, 2);
-  assert.deepEqual(run.calls.map((call) => modeOf(call.stdin)), ["hold", "hold"]);
+  assert.deepEqual(run.calls.map((call) => modeOf(call.code)), ["hold", "hold"]);
   const figma = await fileBefore(seed);
-  await runCode(run.calls[1].stdin.toString(), figma);
+  await runCode(run.calls[1].code.toString(), figma);
   assert.deepEqual(variableOf(figma, "color/primary"), OLD_PRIMARY.slice(0, 3));
   assert.deepEqual(variableOf(figma, "color/card-only"), OLD_CARD_ONLY.slice(0, 3));
   assert.deepEqual(outputOf(run.report).adapter.details.tokenChanges, { written: 0, waiting: 2 });
   assert.deepEqual(ledgerOf(root).components, { Button: { "1.1.0": "generated" }, Card: { "1.1.0": "sent" } });
 
   // The run that sends Button is the release's last. Its code carries the token only Card's file holds.
-  const again = await relay(root, [folder], { scenarios: "figma", figmaSeed: [...seed, run.calls[1].stdin.toString()] });
+  const again = await relay(root, [folder], { scenarios: "figma", figmaSeed: [...seed, run.calls[1].code.toString()] });
 
   assert.equal(again.code, 0, again.stderr);
   assert.equal(again.calls.length, 1);
-  assert.equal(modeOf(again.calls[0].stdin), "last");
-  const resumed = await fileBefore([...seed, run.calls[1].stdin.toString()]);
-  await runCode(again.calls[0].stdin.toString(), resumed);
+  assert.equal(modeOf(again.calls[0].code), "last");
+  const resumed = await fileBefore([...seed, run.calls[1].code.toString()]);
+  await runCode(again.calls[0].code.toString(), resumed);
   assert.deepEqual(variableOf(resumed, "color/primary"), NEW_PRIMARY);
   assert.deepEqual(variableOf(resumed, "color/card-only"), NEW_CARD_ONLY.slice(0, 3), "a token only another file carries is written by the last call too");
   assert.deepEqual(rgb(fillOf(resumed, "Older versions", "Button 1.0.0").color), OLD_PRIMARY.slice(0, 3));
@@ -177,7 +177,7 @@ test("a component that fails in the last call keeps the values waiting, because 
   const run = await relay(root, [folder], { scenarios: "figma", figmaSeed: seed, failDrawing: "FAIL" });
 
   assert.equal(run.code, 1);
-  assert.deepEqual(run.calls.map((call) => modeOf(call.stdin)), ["hold", "last"]);
+  assert.deepEqual(run.calls.map((call) => modeOf(call.code)), ["hold", "last"]);
   const output = outputOf(run.report);
   assert.deepEqual(output.failed.map((unit) => unit.id), ["Card"]);
   assert.deepEqual(output.adapter.details.tokenChanges, { written: 0, waiting: 1 });
@@ -262,7 +262,7 @@ test("a file too long to carry the release's tokens is sent first, and a file th
 
   assert.equal(run.code, 0, run.stderr);
   assert.deepEqual(outputOf(run.report).adapter.details.files.map((file) => file.name), [second, first], "the file over the limit goes first");
-  assert.deepEqual(run.calls.map((call) => modeOf(call.stdin)), ["hold", "last"]);
+  assert.deepEqual(run.calls.map((call) => modeOf(call.code)), ["hold", "last"]);
   assert.deepEqual(ledgerOf(root).components, { Button: { "1.1.0": "sent" }, Card: { "1.1.0": "sent" } });
 });
 

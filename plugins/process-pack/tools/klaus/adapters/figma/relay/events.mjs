@@ -18,6 +18,9 @@ import { decodeText, KEY_BYTES } from "../codegen.mjs";
 
 export const FIGMA_SERVER = "figma";
 export const FIGMA_TOOL = "use_figma";
+/** The local server that hands Codex the call's code (code-server.mjs), and its one tool. */
+export const CODE_SERVER = "klaus_code";
+export const CODE_TOOL = "read_code";
 
 /** Parses the JSONL. A line that is not JSON is counted, not fatal: Codex may print a warning. */
 export function parseEvents(text) {
@@ -84,7 +87,9 @@ export function summarizeEvents(events) {
     else if (event.type === "item.completed" && item) {
       if (isFigmaCall) {
         calls.push({ status: String(item.status ?? "unknown"), arguments: readArguments(item.arguments), result: item.result ?? null, error: item.error?.message ?? null });
-      } else if (item.type === "mcp_tool_call") otherTools.push(`${item.server}.${item.tool}`);
+      } else if (item.type === "mcp_tool_call") {
+        if (item.server !== CODE_SERVER || item.tool !== CODE_TOOL) otherTools.push(`${item.server}.${item.tool}`);
+      }
       else if (item.type === "command_execution") otherTools.push(`a shell command (${String(item.command ?? "unknown").slice(0, 80)})`);
       else if (item.type === "agent_message" && typeof item.text === "string") message = item.text;
       else if (item.type === "error" && item.message) failures.push(String(item.message));
