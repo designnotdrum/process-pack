@@ -62,6 +62,7 @@ if (args[0] !== "exec") {
 
 // The relay gives Codex the code through the klaus_code server, whose last argument is the code file.
 const serverArgs = args.find((arg) => arg.startsWith("mcp_servers.klaus_code.args="));
+if (!serverArgs) throw new Error("stub codex: no mcp_servers.klaus_code.args in the arguments");
 const codeBytes = readFileSync(JSON.parse(serverArgs.slice(serverArgs.indexOf("=") + 1)).at(-1));
 
 const log = process.env.STUB_CODEX_LOG;

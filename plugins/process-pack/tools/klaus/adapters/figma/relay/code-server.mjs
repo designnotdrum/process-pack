@@ -11,7 +11,7 @@
 import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
-export const TOOL = "read_code";
+const TOOL = "read_code";
 
 const file = process.argv[2];
 const send = (message) => process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
@@ -38,12 +38,25 @@ function answer({ method, params }) {
   return null;
 }
 
+function reply(message) {
+  try {
+    const result = answer(message);
+    if (result) send({ id: message.id, result });
+    else if (message.method === "tools/call") send({ id: message.id, error: { code: -32602, message: `No tool named ${message.params?.name}.` } });
+    else send({ id: message.id, error: { code: -32601, message: `No method named ${message.method}.` } });
+  } catch (error) {
+    // A code file the server cannot read must fail the call with a reason, not end the server.
+    send({ id: message.id, error: { code: -32603, message: `The code file could not be read: ${error.message}` } });
+  }
+}
+
 createInterface({ input: process.stdin }).on("line", (line) => {
-  const message = JSON.parse(line);
+  let message;
+  try {
+    message = JSON.parse(line);
+  } catch {
+    return;
+  }
   // A notification has no id and gets no reply.
-  if (message.id === undefined) return;
-  const result = answer(message);
-  if (result) send({ id: message.id, result });
-  else if (message.method === "tools/call") send({ id: message.id, error: { code: -32602, message: `No tool named ${message.params?.name}.` } });
-  else send({ id: message.id, error: { code: -32601, message: `No method named ${message.method}.` } });
+  if (message.id !== undefined) reply(message);
 });

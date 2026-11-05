@@ -56,3 +56,16 @@ test("a tool or method it does not have is an error, not an empty success", asyn
   assert.equal(replies.get(1).error.code, -32602);
   assert.equal(replies.get(2).error.code, -32601);
 });
+
+test("a code file it cannot read fails the call with the reason, and the server keeps running", async () => {
+  const missing = path.join(mkdtempSync(path.join(tmpdir(), "klaus-code-server-")), "gone.js");
+
+  const replies = await talk(missing, [
+    { id: 1, method: "tools/call", params: { name: "read_code", arguments: {} } },
+    { id: 2, method: "ping" },
+  ]);
+
+  assert.equal(replies.get(1).error.code, -32603);
+  assert.match(replies.get(1).error.message, /The code file could not be read: .*gone\.js/);
+  assert.deepEqual(replies.get(2).result, {});
+});

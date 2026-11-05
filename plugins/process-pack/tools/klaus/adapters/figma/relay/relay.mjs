@@ -181,7 +181,7 @@ export function codexArgs({ model, effort, workdir, figmaUrl, keepCodexConfig, p
     // Connectors and plugins add about 100,000 input tokens a call, measured on 2026-11-05.
     "-c", "features.apps=false",
     "-c", "features.plugins=false",
-    // No shell tool: the model then has use_figma and Codex's built-in file tools in a read-only sandbox, and cannot run a command.
+    // No shell tool: the model runs the script in exec, which is JavaScript with no file or process access, and cannot run a command.
     "-c", "features.shell_tool=false",
     "-c", `mcp_servers.${FIGMA_SERVER}.enabled_tools=["${FIGMA_TOOL}"]`,
     // A server that has not listed its tools by then is dropped, and the model runs without use_figma.
@@ -449,7 +449,7 @@ function spawnCodex(codex, args, cwd, timeoutMs) {
     });
     child.on("error", (error) => done({ exitCode: null, error }));
     child.on("close", (exitCode, signal) => done({ exitCode, signal }));
-    // Codex reads stdin when it is open, and adds what it reads to the prompt.
+    // Closed empty on purpose: Codex reads an open stdin and adds it to the prompt.
     child.stdin.on("error", () => {});
     child.stdin.end();
   });
