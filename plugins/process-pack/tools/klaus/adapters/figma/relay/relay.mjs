@@ -310,7 +310,11 @@ function downloadArtifact({ gh, run, repo, artifact, cwd }) {
  * is for the call that sends the release's last component unit: it carries the tokens of the release's
  * other files too and writes every changed value at its end (runtime.js, TOKEN_VALUES). The run picks
  * one when it reaches the file.
- * @returns {Map<string, { key: number[], held: string, last: string }>}  The code of each data file, by name, with the key its strings are encoded with.
+ *
+ * Only one file takes the last call, so a last version over the limit is no reason to stop while
+ * another file can take it: last is null then, and sendOrder sends that file earlier. The run stops
+ * here only when no file that can take the last call fits.
+ * @returns {Map<string, { key: number[], held: string, last: string | null, tooLong: string | null }>}  The code of each data file, by name, with the key its strings are encoded with. tooLong says why last is null.
  */
 function prepareCode(folder, manifest, options) {
   const refuse = (file) => (why) => {
@@ -353,12 +357,26 @@ function prepareCode(folder, manifest, options) {
     } catch (error) {
       fail(error.message);
     }
-    if (last.length > MAX_CODE_CHARS) {
-      fail(`its code comes to ${last.length} characters with the tokens of the release's other files, which the call that sends the release's last component unit writes, and ${MAX_CODE_CHARS} is all one call takes. Lower outputs.figma.options.componentsPerCall.`);
-    }
-    code.set(file.name, { key, held, last });
+    const tooLong = last.length > MAX_CODE_CHARS
+      ? `its code comes to ${last.length} characters with the tokens of the release's other files, which the call that sends the release's last component unit writes, and ${MAX_CODE_CHARS} is all one call takes. Lower outputs.figma.options.componentsPerCall.`
+      : null;
+    code.set(file.name, { key, held, last: tooLong ? null : last, tooLong });
   }
+  const isComponent = (id) => manifest.ledgerEntries[id].kind === "component";
+  const withComponents = manifest.files.filter((file) => file.units.some(isComponent));
+  const takers = withComponents.length > 0 ? withComponents : manifest.files;
+  if (takers.length > 0 && takers.every((file) => code.get(file.name).tooLong)) refuse(takers[0])(code.get(takers[0].name).tooLong);
   return code;
+}
+
+/**
+ * The manifest's files in the order to send them: those whose last version is over the limit go first,
+ * so the release's last component unit is in a file that can carry the release's tokens. The order
+ * changes nothing else, because every call before the last one holds the token values.
+ */
+function sendOrder(files, prepared) {
+  const fits = (file) => prepared.get(file.name).last !== null;
+  return [...files.filter((file) => !fits(file)), ...files.filter(fits)];
 }
 
 /** Checks Codex has a signed-in figma server, and returns its URL. */
@@ -704,14 +722,14 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
   const tokenWaiting = new Set();
 
   try {
-    for (const file of manifest.files) {
+    for (const file of sendOrder(manifest.files, prepared)) {
       const entries = file.units.map((id) => ({ id, ...manifest.ledgerEntries[id] }));
       const pending = entries.filter((entry) => !entrySent(ledger, entry));
       // This call is the release's last when every other component unit is already sent. Then it
       // writes the changed token values, unless a component unit of this call fails (the runtime checks).
       const lastCall = componentIds.every((id) => file.units.includes(id) || sentIds.has(id));
-      const { key, ...variants } = prepared.get(file.name);
-      const text = lastCall ? variants.last : variants.held;
+      const { key, tooLong, ...variants } = prepared.get(file.name);
+      const text = (lastCall ? variants.last : null) ?? variants.held;
       const code = Buffer.from(text, "utf8");
       const chars = text.length;
       const record = { name: file.name, chars, units: file.units };
@@ -721,7 +739,22 @@ async function relayRelease(options, { root, settings, ledgerPath, folder, sourc
         unitRecords.push(...entries.map((entry) => ({ ...unitBase(entry), status: "already sent", calls: 0, tokens: 0 })));
         continue;
       }
-      record.tokenValues = lastCall ? "written at the end of the call" : "held";
+      // Only a rerun on the same folder gets here, when the files sent first left this one for last.
+      // No call is spent. The next Klaus run plans the unsent units alone, so this file then fits.
+      // The held code is not sent instead: the earlier calls may all have held the token values, and
+      // the ledger does not say whether a last call wrote them.
+      if (lastCall && variants.last === null && !stopped) {
+        const error = `${file.name} was not sent: ${tooLong} Or run Klaus again: it plans the unsent units alone, so the file then fits.`;
+        planned += pending.length;
+        fileRecords.push({ ...record, status: "failed", error, calls: 0, tokens: 0 });
+        for (const entry of entries) {
+          const isPending = pending.includes(entry);
+          unitRecords.push({ ...unitBase(entry), status: isPending ? "failed" : "already sent", error: isPending ? error : undefined, calls: 0, tokens: 0 });
+          if (isPending) failed.push({ id: entry.id, error });
+        }
+        continue;
+      }
+      record.tokenValues = lastCall && variants.last !== null ? "written at the end of the call" : "held";
       planned += pending.length;
       const predicted = predictTokens(chars, ratios);
       uncapped.calls += 1;
